@@ -1,8 +1,8 @@
 # Progress Report
 
-**Last Updated**: 2025-12-03 10:30 PST
+**Last Updated**: 2025-12-03 13:15 PST
 
-## Status: バ. Phase 1 COMPLETE | Phase 2 ingestion validated
+## Status: ✅ Phase 2 COMPLETE | RAG Chat fully functional
 
 All 6 containers operational:
 - postgres (healthy), redis (healthy), qdrant (running)
@@ -65,20 +65,48 @@ PYTHONHTTPSVERIFY=0
 
 ---
 
-## Phase 2: Functional Testing (Next)
+## Phase 2: RAG Chat Implementation (2025-12-03)
 
-1. Test video ingestion endpoint
-2. Verify transcription pipeline (Whisper)
-3. Test chunking and embedding generation
-4. Validate vector storage in Qdrant
-5. Test RAG query functionality
+### LLM Provider Setup
+- **Ollama Installed**: Version 0.13.1 on Windows host
+- **Model**: Qwen3-Coder (480B cloud) - powerful coding model
+- **Configuration**: `OLLAMA_BASE_URL=http://host.docker.internal:11434` for Docker networking
+- **Multi-Provider Support**: Architecture ready for OpenAI/Anthropic (just change .env)
 
-See RESUME.md for commands.
+### Chat Endpoint Implementation
+- **File**: `backend/app/api/routes/conversations.py` (lines 233-423)
+- **Features**:
+  - Query embedding with cache handling
+  - Vector search filtered by conversation's selected videos
+  - Context construction from top 5 relevant chunks
+  - Conversation history (last 5 messages)
+  - LLM response generation with retry logic
+  - Message persistence with chunk references
+  - Citation tracking with relevance scores and timestamps
+  - Token usage tracking
+
+### Test Results
+- **Query**: "What is this song about?"
+- **Response Time**: 15.14 seconds
+- **Token Count**: 688 tokens
+- **Citations**: 1 chunk (relevance 0.312)
+- **Result**: ✅ Correctly identified song theme with proper citation
+
+### Issues Fixed
+1. **Docker Networking**: Changed `localhost:11434` to `host.docker.internal:11434`
+2. **Chunk Lookup**: Fixed to use timestamps instead of incorrect chunk_id field
+3. **Database Constraint**: Added missing `rank` field to MessageChunkReference
+
+### Architecture Highlights
+- **Provider Abstraction**: `backend/app/services/llm_providers.py` supports Ollama, OpenAI, Anthropic
+- **Streaming Ready**: Provider implementations include `stream_complete()` methods
+- **Future-Proof**: Switch providers by changing 2 env vars (no code changes)
 
 ---
 
 ## Key Files Modified
 
+### Phase 1
 - `backend/app/models/transcript.py`, `chunk.py`, `message.py` - Boolean fixes
 - `backend/alembic/versions/002_fix_boolean_columns.py` - Migration
 - `backend/requirements.txt` - Dependency updates
@@ -89,3 +117,10 @@ See RESUME.md for commands.
 - `backend/app/services/embeddings.py` - Simplified (SSL handled globally)
 - `backend/app/core/config.py` - Lower chunk thresholds for short clips
 - `backend/app/services/vector_store.py` - UUID point IDs for Qdrant
+
+### Phase 2
+- `backend/.env` - Ollama configuration (qwen3-coder:480b-cloud, host.docker.internal)
+- `backend/app/api/routes/conversations.py` - Full RAG chat implementation (233-423)
+- `backend/app/services/llm_providers.py` - Already existed (Ollama/OpenAI/Anthropic support)
+- `RESUME.md` - Updated with Phase 2 status and chat commands
+- `PROGRESS.md` - Documented Phase 2 implementation

@@ -1,7 +1,7 @@
 # Quick Resume
 
-**Last Updated**: 2025-12-03 11:05 PST
-**Status**: ✅ Phase 1 VALIDATED | Full pipeline tested end-to-end
+**Last Updated**: 2025-12-03 13:15 PST
+**Status**: ✅ Phase 2 COMPLETE | RAG Chat fully functional
 
 ## System Check
 
@@ -10,27 +10,34 @@ docker-compose ps              # All 6 running (postgres, redis, qdrant, app, wo
 curl http://localhost:8000/health  # {"status":"healthy"}
 ```
 
-## ✅ Validation Complete
+## ✅ Phase 2 Complete - RAG Chat Working
 
-All pipeline components tested and working:
-- Video ingestion, transcription, chunking, embedding, vector search
-- Run `docker-compose exec app python test_rag.py` to verify
-
-## Phase 2: Next Steps (Chat Implementation)
-
-1. **Set up LLM provider** (Ollama/OpenAI/Anthropic)
-2. **Implement chat endpoint** (`POST /conversations/{id}/messages`)
-3. **Add streaming support** for LLM responses
-4. **Citation tracking** and chunk references
+Full RAG chat implementation with:
+- ✅ LLM integration (Ollama with Qwen3-Coder)
+- ✅ Query embedding and vector search
+- ✅ Context retrieval from video transcripts
+- ✅ Conversation history management
+- ✅ Citation tracking with timestamps
+- ✅ Multi-provider support (Ollama/OpenAI/Anthropic)
 
 ```bash
-# Test RAG search (works now)
+# Test RAG search (vector store)
 docker-compose exec app python test_rag.py
 
-# Ingest additional videos
+# Ingest video
 curl -X POST http://localhost:8000/api/v1/videos/ingest \
   -H "Content-Type: application/json" \
   -d '{"youtube_url": "YOUTUBE_URL"}'
+
+# Create conversation
+curl -X POST http://localhost:8000/api/v1/conversations \
+  -H "Content-Type: application/json" \
+  -d '{"title": "My Chat", "selected_video_ids": ["VIDEO_ID"]}'
+
+# Send chat message (RAG chat)
+curl -X POST http://localhost:8000/api/v1/conversations/CONVERSATION_ID/messages \
+  -H "Content-Type: application/json" \
+  -d '{"message": "What is this about?", "stream": false}'
 ```
 
 ## Common Commands
@@ -46,11 +53,23 @@ docker-compose down                # Stop all
 ## Technical Notes
 
 - **SSL Bypass**: `backend/app/core/ssl_patch.py` (corporate environment)
-- **Models**: Whisper (base) + sentence-transformers (all-MiniLM-L6-v2, 384-dim)
+- **Models**:
+  - Whisper (base) for transcription
+  - sentence-transformers (all-MiniLM-L6-v2, 384-dim) for embeddings
+  - Qwen3-Coder (480B cloud) via Ollama for chat
 - **Model Cache**: `/hf_cache` volume (shared across app/worker/beat)
-- **Offline Mode**: `HF_HUB_OFFLINE=1` prevents network calls
+- **Offline Mode**: `HF_HUB_OFFLINE=1` prevents network calls to HuggingFace
+- **Ollama**: `host.docker.internal:11434` for Docker to Windows host access
 - **Worker**: running `--pool=solo --concurrency=1` for Whisper stability
 - **Chunking**: lowered thresholds for short clips (min_tokens=16, target=256) with single-chunk fallback
+
+## Phase 3: Next Steps (Frontend + Production)
+
+1. **Frontend Development** (Next.js)
+2. **Authentication** (JWT + OAuth)
+3. **Streaming responses** for better UX
+4. **Stripe billing integration**
+5. **Production deployment**
 
 ## Key Files
 
@@ -58,3 +77,5 @@ docker-compose down                # Stop all
 - `README.md` - Architecture overview
 - `docker-compose.yml` - Container config
 - `backend/app/core/ssl_patch.py` - SSL bypass
+- `backend/app/api/routes/conversations.py` - RAG chat endpoint
+- `backend/app/services/llm_providers.py` - Multi-provider LLM abstraction

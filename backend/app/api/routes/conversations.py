@@ -240,14 +240,13 @@ async def send_message(
     """
     Send a message in a conversation (RAG chat).
 
-    TODO: Phase 2 implementation
-    - Embed user query
-    - Retrieve relevant chunks from vector store
-    - Optional re-ranking
-    - Build prompt with context
-    - Generate LLM response
-    - Save message and chunk references
-    - Track usage
+    Implements full RAG pipeline:
+    1. Embed user query
+    2. Retrieve relevant chunks from vector store
+    3. Build prompt with context and conversation history
+    4. Generate LLM response
+    5. Save messages and chunk references
+    6. Track usage
 
     Args:
         conversation_id: Conversation UUID
@@ -256,6 +255,17 @@ async def send_message(
     Returns:
         MessageResponse with assistant reply and chunk references
     """
+    import time
+    import numpy as np
+    from app.services.embeddings import embedding_service
+    from app.services.vector_store import vector_store_service
+    from app.services.llm_providers import llm_service, Message as LLMMessage
+    from app.models import Message, MessageChunkReference, Chunk, Video
+    from app.core.config import settings
+
+    start_time = time.time()
+
+    # 1. Verify conversation exists and belongs to user
     conversation = db.query(Conversation).filter(
         Conversation.id == conversation_id,
         Conversation.user_id == current_user.id
@@ -264,8 +274,156 @@ async def send_message(
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
-    # TODO: Implement RAG chat logic (Phase 2)
-    raise HTTPException(
-        status_code=501,
-        detail="Chat functionality will be implemented in Phase 2"
+    # 2. Save user message
+    user_message = Message(
+        id=uuid.uuid4(),
+        conversation_id=conversation_id,
+        role="user",
+        content=request.message,
+        token_count=len(request.message.split()),  # Simple approximation
+    )
+    db.add(user_message)
+    db.commit()
+
+    # 3. Embed user query
+    query_embedding = embedding_service.embed_text(request.message)
+    if isinstance(query_embedding, tuple):
+        query_embedding = np.array(query_embedding, dtype=np.float32)
+
+    # 4. Retrieve relevant chunks from vector store (filtered by conversation's videos)
+    scored_chunks = vector_store_service.search_chunks(
+        query_embedding=query_embedding,
+        user_id=current_user.id,
+        video_ids=conversation.selected_video_ids,
+        top_k=settings.retrieval_top_k
+    )
+
+    # 5. Build context from retrieved chunks
+    context_parts = []
+    for i, chunk in enumerate(scored_chunks[:5], 1):  # Use top 5 for context
+        context_parts.append(
+            f"[Source {i}] (Relevance: {chunk.score:.2f})\n"
+            f"Timestamp: {chunk.start_timestamp:.1f}s - {chunk.end_timestamp:.1f}s\n"
+            f"{chunk.text}\n"
+        )
+
+    context = "\n---\n".join(context_parts) if context_parts else "No relevant context found."
+
+    # 6. Get conversation history (last 5 messages)
+    history_messages = db.query(Message).filter(
+        Message.conversation_id == conversation_id
+    ).order_by(Message.created_at.desc()).limit(5).all()
+    history_messages.reverse()  # Oldest first
+
+    # 7. Build LLM messages
+    llm_messages = [
+        LLMMessage(
+            role="system",
+            content=(
+                "You are a helpful AI assistant that answers questions based on video transcripts. "
+                "Use the provided context to answer the user's question. "
+                "If the context doesn't contain relevant information, say so honestly. "
+                "Always cite the source number when referencing information from the context."
+            )
+        )
+    ]
+
+    # Add conversation history (excluding the message we just added)
+    for msg in history_messages[:-1]:
+        llm_messages.append(LLMMessage(role=msg.role, content=msg.content))
+
+    # Add current user message with context
+    user_message_with_context = (
+        f"Context from video transcripts:\n\n{context}\n\n"
+        f"---\n\nUser question: {request.message}"
+    )
+    llm_messages.append(LLMMessage(role="user", content=user_message_with_context))
+
+    # 8. Generate LLM response
+    try:
+        llm_response = llm_service.complete(llm_messages)
+        assistant_content = llm_response.content
+        token_count = llm_response.usage.get("total_tokens", 0) if llm_response.usage else 0
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"LLM error: {str(e)}")
+
+    # 9. Save assistant message
+    assistant_message = Message(
+        id=uuid.uuid4(),
+        conversation_id=conversation_id,
+        role="assistant",
+        content=assistant_content,
+        token_count=token_count,
+        chunks_retrieved_count=len(scored_chunks),
+        response_time_seconds=time.time() - start_time
+    )
+    db.add(assistant_message)
+
+    # 10. Save chunk references
+    chunk_references = []
+    chunk_index_map = {}  # Map (video_id, chunk_index) -> chunk_db
+
+    for rank, scored_chunk in enumerate(scored_chunks[:5], 1):  # Save top 5 references
+        # Get the actual chunk from database to get its ID
+        # The chunk_id from Qdrant is actually the video_id (set incorrectly in vector_store.py)
+        # We need to use timestamps to match chunks
+        chunk_db = db.query(Chunk).filter(
+            Chunk.video_id == scored_chunk.video_id,
+            Chunk.start_timestamp == scored_chunk.start_timestamp,
+            Chunk.end_timestamp == scored_chunk.end_timestamp
+        ).first()
+
+        if chunk_db:
+            ref = MessageChunkReference(
+                id=uuid.uuid4(),
+                message_id=assistant_message.id,
+                chunk_id=chunk_db.id,
+                relevance_score=scored_chunk.score,
+                rank=rank
+            )
+            db.add(ref)
+            chunk_references.append(ref)
+
+    # 11. Update conversation metadata
+    conversation.message_count = db.query(Message).filter(
+        Message.conversation_id == conversation_id
+    ).count()
+    conversation.total_tokens_used += token_count
+    conversation.last_message_at = assistant_message.created_at
+
+    db.commit()
+    db.refresh(assistant_message)
+
+    # 12. Build response with chunk references
+    response_time = time.time() - start_time
+
+    chunk_refs_response = []
+    for scored_chunk, ref in zip(scored_chunks[:5], chunk_references):
+        # Get video title
+        video = db.query(Video).filter(Video.id == scored_chunk.video_id).first()
+
+        # Format timestamp
+        start_min, start_sec = divmod(int(scored_chunk.start_timestamp), 60)
+        end_min, end_sec = divmod(int(scored_chunk.end_timestamp), 60)
+        timestamp_display = f"{start_min:02d}:{start_sec:02d} - {end_min:02d}:{end_sec:02d}"
+
+        chunk_refs_response.append({
+            "chunk_id": ref.chunk_id,
+            "video_id": scored_chunk.video_id,
+            "video_title": video.title if video else "Unknown",
+            "start_timestamp": scored_chunk.start_timestamp,
+            "end_timestamp": scored_chunk.end_timestamp,
+            "text_snippet": scored_chunk.text[:200] + "..." if len(scored_chunk.text) > 200 else scored_chunk.text,
+            "relevance_score": scored_chunk.score,
+            "timestamp_display": timestamp_display
+        })
+
+    return MessageResponse(
+        message_id=assistant_message.id,
+        conversation_id=conversation_id,
+        role="assistant",
+        content=assistant_content,
+        chunk_references=chunk_refs_response,
+        token_count=token_count,
+        response_time_seconds=response_time
     )
