@@ -1,0 +1,55 @@
+# Web Framework
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+python-multipart==0.0.6
+
+# Database
+sqlalchemy==2.0.25
+alembic==1.13.1
+psycopg2-binary==2.9.9
+
+# Async Task Queue
+celery[redis]==5.3.6
+redis==5.0.1
+
+# YouTube & Media
+yt-dlp==2024.11.18
+
+# Speech-to-Text
+openai-whisper==20231117
+torch==2.2.0
+torchaudio==2.2.0
+
+# Embeddings & ML
+sentence-transformers==2.3.1
+tiktoken==0.6.0
+numpy==1.26.3
+
+# Vector Database
+qdrant-client==1.7.3
+
+# LLM Client Libraries
+httpx==0.27.0
+anthropic==0.18.1
+openai==1.10.0
+
+# Configuration & Validation
+pydantic==2.5.3
+pydantic-settings==2.1.0
+python-dotenv==1.0.0
+
+# Utilities
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+python-dateutil==2.8.2
+
+# Testing
+pytest==7.4.4
+pytest-asyncio==0.23.3
+pytest-cov==4.1.0
+pytest-httpx==0.30.0
+
+# Development
+black==23.12.1
+ruff==0.1.11
+mypy==1.8.0
