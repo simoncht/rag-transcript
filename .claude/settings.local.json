@@ -8,7 +8,16 @@
       "Bash(docker-compose ps:*)",
       "Bash(curl:*)",
       "Bash(docker-compose logs:*)",
-      "Bash(docker-compose build:*)"
+      "Bash(docker-compose build:*)",
+      "Bash(docker exec:*)",
+      "Bash(docker-compose restart:*)",
+      "Bash(docker-compose stop:*)",
+      "Bash(docker-compose rm:*)",
+      "Bash(docker-compose exec:*)",
+      "Bash(python -m json.tool:*)",
+      "Bash(git config:*)",
+      "Bash(git add:*)",
+      "Bash(git reset:*)"
     ],
     "deny": [],
     "ask": []

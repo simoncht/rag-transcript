@@ -59,6 +59,7 @@ services:
     volumes:
       - ./backend:/app
       - ./storage:/app/storage  # Local storage volume
+      - ./hf_cache:/root/.cache/huggingface  # Pre-downloaded HF models
     ports:
       - "8000:8000"
     environment:
@@ -70,7 +71,18 @@ services:
       - QDRANT_PORT=6333
       - STORAGE_BACKEND=local
       - LOCAL_STORAGE_PATH=/app/storage
+      - EMBEDDING_MODEL=/root/.cache/huggingface/all-MiniLM-L6-v2
+      - HF_HOME=/root/.cache/huggingface
+      - TRANSFORMERS_CACHE=/root/.cache/huggingface
+      - SENTENCE_TRANSFORMERS_HOME=/root/.cache/huggingface
+      - HF_HUB_OFFLINE=1
+      - TRANSFORMERS_OFFLINE=1
       - PYTHONUNBUFFERED=1
+      # SSL bypass for corporate environments
+      - HF_HUB_DISABLE_SSL_VERIFY=1
+      - CURL_CA_BUNDLE=
+      - REQUESTS_CA_BUNDLE=
+      - PYTHONHTTPSVERIFY=0
     depends_on:
       postgres:
         condition: service_healthy
@@ -85,10 +97,11 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: rag_transcript_worker
-    command: celery -A app.core.celery_app worker --loglevel=info --concurrency=2
+    command: celery -A app.core.celery_app worker --loglevel=info --concurrency=1 --pool=solo
     volumes:
       - ./backend:/app
       - ./storage:/app/storage
+      - ./hf_cache:/root/.cache/huggingface  # Pre-downloaded HF models
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/rag_transcript
       - REDIS_URL=redis://redis:6379/0
@@ -98,7 +111,18 @@ services:
       - QDRANT_PORT=6333
       - STORAGE_BACKEND=local
       - LOCAL_STORAGE_PATH=/app/storage
+      - EMBEDDING_MODEL=/root/.cache/huggingface/all-MiniLM-L6-v2
+      - HF_HOME=/root/.cache/huggingface
+      - TRANSFORMERS_CACHE=/root/.cache/huggingface
+      - SENTENCE_TRANSFORMERS_HOME=/root/.cache/huggingface
+      - HF_HUB_OFFLINE=1
+      - TRANSFORMERS_OFFLINE=1
       - PYTHONUNBUFFERED=1
+      # SSL bypass for corporate environments
+      - HF_HUB_DISABLE_SSL_VERIFY=1
+      - CURL_CA_BUNDLE=
+      - REQUESTS_CA_BUNDLE=
+      - PYTHONHTTPSVERIFY=0
     depends_on:
       postgres:
         condition: service_healthy
@@ -116,12 +140,24 @@ services:
     command: celery -A app.core.celery_app beat --loglevel=info
     volumes:
       - ./backend:/app
+      - ./hf_cache:/root/.cache/huggingface  # Pre-downloaded HF models
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/rag_transcript
       - REDIS_URL=redis://redis:6379/0
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - EMBEDDING_MODEL=/root/.cache/huggingface/all-MiniLM-L6-v2
+      - HF_HOME=/root/.cache/huggingface
+      - TRANSFORMERS_CACHE=/root/.cache/huggingface
+      - SENTENCE_TRANSFORMERS_HOME=/root/.cache/huggingface
+      - HF_HUB_OFFLINE=1
+      - TRANSFORMERS_OFFLINE=1
       - PYTHONUNBUFFERED=1
+      # SSL bypass for corporate environments
+      - HF_HUB_DISABLE_SSL_VERIFY=1
+      - CURL_CA_BUNDLE=
+      - REQUESTS_CA_BUNDLE=
+      - PYTHONHTTPSVERIFY=0
     depends_on:
       - redis
 

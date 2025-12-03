@@ -1,134 +1,91 @@
-# RAG Transcript System - Progress Report
+# Progress Report
 
-**Last Updated**: 2025-12-02 16:44 PST
+**Last Updated**: 2025-12-03 10:30 PST
 
-## Status: Phase 1 Testing - IN PROGRESS
+## Status: バ. Phase 1 COMPLETE | Phase 2 ingestion validated
 
-### ✅ Completed Tasks
+All 6 containers operational:
+- postgres (healthy), redis (healthy), qdrant (running)
+- app (port 8000), worker (celery, solo pool), beat (celery scheduler)
 
-1. **Fixed Boolean Type Issues**
-   - Fixed `has_speaker_labels` in `backend/app/models/transcript.py:91` (String → Boolean)
-   - Fixed `is_indexed` in `backend/app/models/chunk.py:117` (String → Boolean)
-   - Fixed `was_used_in_response` in `backend/app/models/message.py:74` (String → Boolean)
-
-2. **Created Database Migration**
-   - Created `backend/alembic/versions/002_fix_boolean_columns.py`
-   - Successfully applied migration to database
-   - All Boolean columns now use proper PostgreSQL BOOLEAN type
-
-3. **Fixed Dependency Issues**
-   - Fixed `yt-dlp` version in `requirements.txt` (updated to `2024.11.18`)
-   - Updated `torch` and `torchaudio` to version `2.2.0` for transformers compatibility
-
-4. **Fixed SSL Certificate Issue**
-   - Added `ca-certificates` to Docker container build in `backend/Dockerfile:10`
-   - Rebuilt worker and beat containers successfully
-   - All Python dependencies installed including sentence-transformers
-
-5. **Docker Services Status**
-   - ✅ postgres: Up 4 hours (healthy)
-   - ✅ redis: Up 4 hours (healthy)
-   - ✅ qdrant: Up 4 hours
-   - ✅ worker: Up and running (SSL fix applied)
-   - ✅ beat: Up and running (SSL fix applied)
-   - 🔄 app: Rebuilding with SSL certificate fix
-
-### 🔄 In Progress
-
-- **App Container Rebuild**: Currently building with CA certificates to fix SSL verification errors
-  - Background process ID: `cdcaec`
-  - Expected to complete in ~5-10 minutes
-
-### ⏳ Remaining Tasks
-
-1. **Complete App Container Rebuild**
-   - Wait for build to complete
-   - Restart app container: `docker-compose up -d app`
-
-2. **Verify System Health**
-   - Test health endpoint: `curl http://localhost:8000/health`
-   - Should return system status JSON
-
-3. **Phase 1 Complete Testing**
-   - All 6 containers running without errors
-   - Health endpoint accessible
-   - Database migrations applied
-   - Ready for Phase 2 (video ingestion testing)
-
-## Technical Details
-
-### SSL Certificate Fix
-The embedding service (sentence-transformers) downloads models from HuggingFace at initialization, which requires SSL certificates. The fix was to add `ca-certificates` package to the Dockerfile:
-
-```dockerfile
-RUN apt-get update && apt-get install -y \
-    ffmpeg \
-    git \
-    ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-```
-
-### Database Migration
-Migration `002_fix_boolean_columns.py` converts String-based boolean columns to proper BOOLEAN type:
-- `transcripts.has_speaker_labels`: VARCHAR → BOOLEAN
-- `chunks.is_indexed`: VARCHAR → BOOLEAN
-- `message_chunk_references.was_used_in_response`: VARCHAR → BOOLEAN
-
-## How to Continue
-
-1. **Check App Build Status**:
-   ```bash
-   # Monitor the build
-   docker-compose build app
-   # Or check if it's already completed
-   docker-compose ps app
-   ```
-
-2. **Once Build Completes, Restart App**:
-   ```bash
-   docker-compose up -d app
-   ```
-
-3. **Verify System Health**:
-   ```bash
-   curl http://localhost:8000/health
-   # Should return: {"status":"healthy","database":"connected",...}
-   ```
-
-4. **Check All Containers**:
-   ```bash
-   docker-compose ps
-   # All 6 services should show "Up" status
-   ```
-
-5. **View Logs** (if needed):
-   ```bash
-   docker-compose logs -f app      # App logs
-   docker-compose logs -f worker   # Worker logs
-   docker-compose logs -f beat     # Beat scheduler logs
-   ```
-
-## Next Steps (Phase 2)
-
-Once Phase 1 is complete (all containers healthy):
-- Test video ingestion endpoint
-- Verify transcription pipeline
-- Test RAG query functionality
-- Validate vector embeddings in Qdrant
-
-## Files Modified
-
-- `backend/app/models/transcript.py`
-- `backend/app/models/chunk.py`
-- `backend/app/models/message.py`
-- `backend/alembic/versions/002_fix_boolean_columns.py` (created)
-- `backend/requirements.txt`
-- `backend/Dockerfile`
-
-## Background Processes
-
-- Worker & Beat containers: Successfully built and running
-- App container: Currently rebuilding (process ID: cdcaec)
+**Verified**: Health endpoint, Whisper model, embedding model (384-dim), database migrations, full pipeline on “Me at the zoo” (chunked + indexed)
 
 ---
-**Note**: The system will be fully operational once the app container rebuild completes and all containers are healthy.
+
+## Recent Changes (2025-12-02–03)
+
+### Fixed Beat Container Configuration
+- **Issue**: Missing HuggingFace cache volume and offline mode settings
+- **Fix**: Added `/hf_cache` volume mount and offline env vars to beat service in docker-compose.yml
+- **Result**: Beat container now starts successfully without SSL errors
+
+### SSL Certificate Bypass (Corporate Environment)
+- **Issue**: Corporate SSL interception blocked HuggingFace downloads
+- **Solution**: Comprehensive SSL bypass in `backend/app/core/ssl_patch.py`
+  - Patches Python SSL, requests library, huggingface_hub
+  - Imported early in `backend/app/main.py`
+- **Result**: Models downloaded and cached (~120MB), no future downloads needed
+
+### Boolean Type Fixes
+- Fixed Boolean columns in models: `has_speaker_labels`, `is_indexed`, `was_used_in_response`
+- Created migration: `backend/alembic/versions/002_fix_boolean_columns.py`
+
+### Dependency Updates
+- Updated `yt-dlp` to 2024.11.18
+- Updated `torch` and `torchaudio` to 2.2.0
+
+### Pipeline Stabilization (2025-12-03)
+- **Issues**: Prefork workers hung Whisper; short clips produced zero chunks; Qdrant rejected string point IDs
+- **Fixes**:
+  - Worker now runs `--concurrency=1 --pool=solo` for fork-safe Whisper
+  - Chunking thresholds lowered (`chunk_min_tokens=16`, `chunk_target_tokens=256`) with a single-chunk fallback for tiny transcripts
+  - Qdrant point IDs now UUID5(`video_id`, `chunk_index`) to satisfy ID format
+- **Result**: “Me at the zoo” ingestion completes in ~12s with `chunk_count=1`, indexed successfully in Qdrant
+
+---
+
+## Docker Configuration
+
+### Key Environment Variables
+All services (app/worker/beat):
+```yaml
+HF_HUB_OFFLINE=1               # Prevent network calls to HuggingFace
+TRANSFORMERS_OFFLINE=1
+HF_HOME=/root/.cache/huggingface
+HF_HUB_DISABLE_SSL_VERIFY=1    # Corporate SSL bypass
+CURL_CA_BUNDLE=
+REQUESTS_CA_BUNDLE=
+PYTHONHTTPSVERIFY=0
+```
+
+### Volume Mounts
+- `./backend:/app` - Source code
+- `./storage:/app/storage` - Local file storage
+- `./hf_cache:/root/.cache/huggingface` - **Cached models** (app/worker/beat)
+
+---
+
+## Phase 2: Functional Testing (Next)
+
+1. Test video ingestion endpoint
+2. Verify transcription pipeline (Whisper)
+3. Test chunking and embedding generation
+4. Validate vector storage in Qdrant
+5. Test RAG query functionality
+
+See RESUME.md for commands.
+
+---
+
+## Key Files Modified
+
+- `backend/app/models/transcript.py`, `chunk.py`, `message.py` - Boolean fixes
+- `backend/alembic/versions/002_fix_boolean_columns.py` - Migration
+- `backend/requirements.txt` - Dependency updates
+- `backend/Dockerfile` - ca-certificates, SSL env vars
+- `docker-compose.yml` - SSL bypass, offline mode, beat cache volume, worker solo pool
+- `backend/app/main.py` - SSL patch import
+- `backend/app/core/ssl_patch.py` - Comprehensive SSL bypass
+- `backend/app/services/embeddings.py` - Simplified (SSL handled globally)
+- `backend/app/core/config.py` - Lower chunk thresholds for short clips
+- `backend/app/services/vector_store.py` - UUID point IDs for Qdrant

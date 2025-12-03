@@ -16,7 +16,7 @@ from app.core.celery_app import celery_app
 from app.db.base import SessionLocal
 from app.models import Video, Transcript, Chunk, Job
 from app.services.youtube import youtube_service, YouTubeDownloadError
-from app.services.transcription import transcription_service
+from app.services.transcription import TranscriptionService, transcription_service
 from app.services.chunking import TranscriptChunker, TranscriptSegment
 from app.services.enrichment import ContextualEnricher
 from app.services.embeddings import embedding_service
@@ -55,28 +55,16 @@ def update_job_status(db: Session, job_id: UUID, status: str, progress: float, c
         db.commit()
 
 
-@celery_app.task(bind=True, max_retries=3)
-def download_youtube_audio(self, video_id: str, youtube_url: str, user_id: str):
-    """
-    Download audio from YouTube video.
-
-    Args:
-        video_id: Video UUID
-        youtube_url: YouTube URL
-        user_id: User UUID
-
-    Returns:
-        Dict with audio_path and file_size_mb
-    """
+def _download_youtube_audio(video_id: str, youtube_url: str, user_id: str):
+    """Internal helper to download audio (used by Celery task and sync pipeline)."""
     db = SessionLocal()
     video_uuid = UUID(video_id)
     user_uuid = UUID(user_id)
 
     try:
-        # Update status
+        print(f"[pipeline] Download start for video={video_id}")
         update_video_status(db, video_uuid, "downloading", 10.0)
 
-        # Progress callback
         def progress_callback(progress_dict):
             if progress_dict["status"] == "downloading":
                 downloaded = progress_dict.get("downloaded_bytes", 0)
@@ -84,7 +72,6 @@ def download_youtube_audio(self, video_id: str, youtube_url: str, user_id: str):
                 percent = min(90, 10 + (downloaded / total) * 80) if total > 0 else 10
                 update_video_status(db, video_uuid, "downloading", percent)
 
-        # Download audio
         audio_path, file_size_mb = youtube_service.download_audio(
             url=youtube_url,
             user_id=user_uuid,
@@ -92,7 +79,6 @@ def download_youtube_audio(self, video_id: str, youtube_url: str, user_id: str):
             progress_callback=progress_callback
         )
 
-        # Update video record
         video = db.query(Video).filter(Video.id == video_uuid).first()
         video.audio_file_path = audio_path
         video.audio_file_size_mb = file_size_mb
@@ -100,47 +86,32 @@ def download_youtube_audio(self, video_id: str, youtube_url: str, user_id: str):
         video.progress_percent = 100.0
         db.commit()
 
+        print(f"[pipeline] Download complete for video={video_id}, size_mb={file_size_mb}")
         return {
             "audio_path": audio_path,
             "file_size_mb": file_size_mb
         }
-
     except YouTubeDownloadError as e:
         update_video_status(db, video_uuid, "failed", 0.0, str(e))
         raise
-
     except Exception as e:
-        # Retry on unexpected errors
         update_video_status(db, video_uuid, "failed", 0.0, f"Download failed: {str(e)}")
-        raise self.retry(exc=e, countdown=60)  # Retry after 1 minute
-
+        raise
     finally:
         db.close()
 
 
-@celery_app.task(bind=True, max_retries=2)
-def transcribe_audio(self, video_id: str, audio_path: str):
-    """
-    Transcribe audio file with Whisper.
-
-    Args:
-        video_id: Video UUID
-        audio_path: Path to audio file
-
-    Returns:
-        Dict with transcript data
-    """
+def _transcribe_audio(video_id: str, audio_path: str):
+    """Internal helper to transcribe audio synchronously."""
     db = SessionLocal()
     video_uuid = UUID(video_id)
 
     try:
-        # Update status
+        print(f"[pipeline] Transcription start for video={video_id}, audio={audio_path}")
         update_video_status(db, video_uuid, "transcribing", 10.0)
 
-        # Get video for context
         video = db.query(Video).filter(Video.id == video_uuid).first()
 
-        # Progress callback
         def progress_callback(progress_dict):
             status = progress_dict.get("status")
             if status == "transcribing":
@@ -148,13 +119,13 @@ def transcribe_audio(self, video_id: str, audio_path: str):
             elif status == "processing":
                 update_video_status(db, video_uuid, "transcribing", 80.0, None)
 
-        # Transcribe
-        result = transcription_service.transcribe_file(
+        # Create a fresh transcription service per process to avoid fork-safety issues
+        local_transcription_service = TranscriptionService()
+        result = local_transcription_service.transcribe_file(
             audio_path=audio_path,
             progress_callback=progress_callback
         )
 
-        # Save transcript to database
         transcript = Transcript(
             video_id=video_uuid,
             full_text=result.full_text,
@@ -174,13 +145,11 @@ def transcribe_audio(self, video_id: str, audio_path: str):
         )
         db.add(transcript)
 
-        # Update video
         video.transcription_language = result.language
         video.status = "transcribed"
         video.progress_percent = 100.0
         db.commit()
 
-        # Save transcript to storage
         transcript_data = {
             "full_text": result.full_text,
             "segments": [
@@ -198,9 +167,10 @@ def transcribe_audio(self, video_id: str, audio_path: str):
         }
         storage_service.save_transcript(video.user_id, video_uuid, transcript_data)
 
-        # Optionally delete audio file after transcription
         if settings.cleanup_audio_after_transcription:
             storage_service.delete_audio(video.user_id, video_uuid)
+
+        print(f"[pipeline] Transcription complete for video={video_id}")
 
         return {
             "transcript_id": str(transcript.id),
@@ -208,40 +178,26 @@ def transcribe_audio(self, video_id: str, audio_path: str):
             "word_count": result.word_count,
             "segment_count": len(result.segments)
         }
-
     except Exception as e:
         update_video_status(db, video_uuid, "failed", 0.0, f"Transcription failed: {str(e)}")
-        raise self.retry(exc=e, countdown=120)  # Retry after 2 minutes
-
+        raise
     finally:
         db.close()
 
 
-@celery_app.task(bind=True, max_retries=2)
-def chunk_and_enrich(self, video_id: str, transcript_id: str):
-    """
-    Chunk transcript and add contextual enrichment.
-
-    Args:
-        video_id: Video UUID
-        transcript_id: Transcript UUID
-
-    Returns:
-        Dict with chunk count
-    """
+def _chunk_and_enrich(video_id: str, transcript_id: str):
+    """Internal helper to chunk and enrich transcript."""
     db = SessionLocal()
     video_uuid = UUID(video_id)
     transcript_uuid = UUID(transcript_id)
 
     try:
-        # Update status
+        print(f"[pipeline] Chunk/enrich start for video={video_id}")
         update_video_status(db, video_uuid, "chunking", 10.0)
 
-        # Get video and transcript
         video = db.query(Video).filter(Video.id == video_uuid).first()
         transcript = db.query(Transcript).filter(Transcript.id == transcript_uuid).first()
 
-        # Convert segments to TranscriptSegment objects
         segments = [
             TranscriptSegment(
                 text=seg["text"],
@@ -252,26 +208,25 @@ def chunk_and_enrich(self, video_id: str, transcript_id: str):
             for seg in transcript.segments
         ]
 
-        # Chunk transcript
         chunker = TranscriptChunker()
         chunks = chunker.chunk_transcript(segments, video.chapters)
 
+        if not chunks and segments:
+            # Fallback: short clips can be one chunk when chapter splits are tiny
+            chunks = [chunker.create_chunk_from_segments(segments, chunk_index=0)]
+
         update_video_status(db, video_uuid, "chunking", 40.0)
 
-        # Enrich chunks
         enricher = ContextualEnricher()
         enricher.set_video_context(video.title, video.description)
-
         enriched_chunks = []
         for i, chunk in enumerate(chunks):
             enriched = enricher.enrich_chunk(chunk)
             enriched_chunks.append(enriched)
 
-            # Update progress
             progress = 40.0 + (i + 1) / len(chunks) * 50.0
             update_video_status(db, video_uuid, "enriching", progress)
 
-        # Save chunks to database
         for enriched_chunk in enriched_chunks:
             chunk = enriched_chunk.chunk
             db_chunk = Chunk(
@@ -294,45 +249,32 @@ def chunk_and_enrich(self, video_id: str, transcript_id: str):
             )
             db.add(db_chunk)
 
-        # Update video
         video.chunk_count = len(enriched_chunks)
         video.status = "chunked"
         video.progress_percent = 90.0
         db.commit()
 
+        print(f"[pipeline] Chunk/enrich complete for video={video_id}, chunks={len(enriched_chunks)}")
         return {
             "chunk_count": len(enriched_chunks)
         }
-
     except Exception as e:
         update_video_status(db, video_uuid, "failed", 0.0, f"Chunking failed: {str(e)}")
-        raise self.retry(exc=e, countdown=60)
-
+        raise
     finally:
         db.close()
 
 
-@celery_app.task(bind=True, max_retries=2)
-def embed_and_index(self, video_id: str, user_id: str):
-    """
-    Generate embeddings and index chunks in vector store.
-
-    Args:
-        video_id: Video UUID
-        user_id: User UUID
-
-    Returns:
-        Dict with indexed count
-    """
+def _embed_and_index(video_id: str, user_id: str):
+    """Internal helper to embed and index chunks."""
     db = SessionLocal()
     video_uuid = UUID(video_id)
     user_uuid = UUID(user_id)
 
     try:
-        # Update status
+        print(f"[pipeline] Embed/index start for video={video_id}")
         update_video_status(db, video_uuid, "indexing", 10.0)
 
-        # Get chunks
         chunks = db.query(Chunk).filter(
             Chunk.video_id == video_uuid,
             Chunk.is_indexed == False
@@ -342,15 +284,11 @@ def embed_and_index(self, video_id: str, user_id: str):
             update_video_status(db, video_uuid, "completed", 100.0)
             return {"indexed_count": 0}
 
-        # Prepare embedding texts
         embedding_texts = [chunk.embedding_text or chunk.text for chunk in chunks]
-
-        # Generate embeddings in batches
         embeddings = embedding_service.embed_batch(embedding_texts, show_progress=False)
 
         update_video_status(db, video_uuid, "indexing", 60.0)
 
-        # Convert chunks to EnrichedChunk format for vector store
         from app.services.enrichment import EnrichedChunk
         from app.services.chunking import Chunk as ChunkData
 
@@ -375,10 +313,8 @@ def embed_and_index(self, video_id: str, user_id: str):
             )
             enriched_chunks.append(enriched)
 
-        # Initialize vector store if needed
         vector_store_service.initialize(embedding_service.get_dimensions())
 
-        # Index in vector store
         vector_store_service.index_video_chunks(
             enriched_chunks=enriched_chunks,
             embeddings=embeddings,
@@ -386,26 +322,104 @@ def embed_and_index(self, video_id: str, user_id: str):
             video_id=video_uuid
         )
 
-        # Mark chunks as indexed
         for chunk in chunks:
             chunk.is_indexed = True
             chunk.indexed_at = datetime.utcnow()
 
-        # Update video
         video = db.query(Video).filter(Video.id == video_uuid).first()
         video.status = "completed"
         video.progress_percent = 100.0
         video.completed_at = datetime.utcnow()
         db.commit()
 
+        print(f"[pipeline] Embed/index complete for video={video_id}, indexed={len(chunks)}")
         return {"indexed_count": len(chunks)}
-
     except Exception as e:
         update_video_status(db, video_uuid, "failed", 0.0, f"Indexing failed: {str(e)}")
-        raise self.retry(exc=e, countdown=60)
-
+        raise
     finally:
         db.close()
+
+
+@celery_app.task(bind=True, max_retries=3)
+def download_youtube_audio(self, video_id: str, youtube_url: str, user_id: str):
+    """
+    Download audio from YouTube video.
+
+    Args:
+        video_id: Video UUID
+        youtube_url: YouTube URL
+        user_id: User UUID
+
+    Returns:
+        Dict with audio_path and file_size_mb
+    """
+    try:
+        return _download_youtube_audio(video_id, youtube_url, user_id)
+
+    except YouTubeDownloadError as e:
+        raise
+
+    except Exception as e:
+        # Retry on unexpected errors
+        raise self.retry(exc=e, countdown=60)  # Retry after 1 minute
+
+
+@celery_app.task(bind=True, max_retries=2)
+def transcribe_audio(self, video_id: str, audio_path: str):
+    """
+    Transcribe audio file with Whisper.
+
+    Args:
+        video_id: Video UUID
+        audio_path: Path to audio file
+
+    Returns:
+        Dict with transcript data
+    """
+    try:
+        return _transcribe_audio(video_id, audio_path)
+
+    except Exception as e:
+        raise self.retry(exc=e, countdown=120)  # Retry after 2 minutes
+
+
+@celery_app.task(bind=True, max_retries=2)
+def chunk_and_enrich(self, video_id: str, transcript_id: str):
+    """
+    Chunk transcript and add contextual enrichment.
+
+    Args:
+        video_id: Video UUID
+        transcript_id: Transcript UUID
+
+    Returns:
+        Dict with chunk count
+    """
+    try:
+        return _chunk_and_enrich(video_id, transcript_id)
+
+    except Exception as e:
+        raise self.retry(exc=e, countdown=60)
+
+
+@celery_app.task(bind=True, max_retries=2)
+def embed_and_index(self, video_id: str, user_id: str):
+    """
+    Generate embeddings and index chunks in vector store.
+
+    Args:
+        video_id: Video UUID
+        user_id: User UUID
+
+    Returns:
+        Dict with indexed count
+    """
+    try:
+        return _embed_and_index(video_id, user_id)
+
+    except Exception as e:
+        raise self.retry(exc=e, countdown=60)
 
 
 @celery_app.task
@@ -432,20 +446,28 @@ def process_video_pipeline(video_id: str, youtube_url: str, user_id: str, job_id
         update_job_status(db, UUID(job_id), "running", 0.0, "Starting pipeline")
 
         # Step 1: Download audio
+        print(f"[pipeline] Step 1: download start job={job_id}")
         update_job_status(db, UUID(job_id), "running", 10.0, "Downloading audio")
-        download_result = download_youtube_audio(video_id, youtube_url, user_id)
+        download_result = _download_youtube_audio(video_id, youtube_url, user_id)
+        print(f"[pipeline] Step 1: download done job={job_id}")
 
         # Step 2: Transcribe
+        print(f"[pipeline] Step 2: transcribe start job={job_id}")
         update_job_status(db, UUID(job_id), "running", 30.0, "Transcribing audio")
-        transcribe_result = transcribe_audio(video_id, download_result["audio_path"])
+        transcribe_result = _transcribe_audio(video_id, download_result["audio_path"])
+        print(f"[pipeline] Step 2: transcribe done job={job_id}")
 
         # Step 3: Chunk and enrich
+        print(f"[pipeline] Step 3: chunk/enrich start job={job_id}")
         update_job_status(db, UUID(job_id), "running", 60.0, "Chunking and enriching")
-        chunk_result = chunk_and_enrich(video_id, transcribe_result["transcript_id"])
+        chunk_result = _chunk_and_enrich(video_id, transcribe_result["transcript_id"])
+        print(f"[pipeline] Step 3: chunk/enrich done job={job_id}")
 
         # Step 4: Embed and index
+        print(f"[pipeline] Step 4: embed/index start job={job_id}")
         update_job_status(db, UUID(job_id), "running", 90.0, "Generating embeddings and indexing")
-        index_result = embed_and_index(video_id, user_id)
+        index_result = _embed_and_index(video_id, user_id)
+        print(f"[pipeline] Step 4: embed/index done job={job_id}")
 
         # Complete
         update_job_status(db, UUID(job_id), "completed", 100.0, "Pipeline completed")

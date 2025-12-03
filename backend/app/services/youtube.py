@@ -71,6 +71,7 @@ class YouTubeService:
             'quiet': True,
             'no_warnings': True,
             'extract_flat': False,
+            'nocheckcertificate': True,  # Bypass SSL verification (corporate environment)
         }
 
         try:
@@ -178,6 +179,7 @@ class YouTubeService:
             'quiet': False,
             'no_warnings': False,
             'extract_flat': False,
+            'nocheckcertificate': True,  # Bypass SSL verification (corporate environment)
         }
 
         # Add progress hook if provided

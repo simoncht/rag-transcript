@@ -8,6 +8,9 @@ Handles:
 - CORS setup
 - Startup/shutdown events
 """
+# IMPORTANT: Import SSL patch FIRST to bypass corporate SSL interception
+from app.core import ssl_patch  # noqa: F401
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse

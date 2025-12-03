@@ -40,7 +40,7 @@ celery_app.conf.update(
 
 # Task routes (assign tasks to specific queues)
 celery_app.conf.task_routes = {
-    "app.tasks.video_tasks.*": {"queue": "default"},
+    "app.tasks.video_tasks.*": {"queue": "celery"},
 }
 
 

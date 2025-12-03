@@ -72,6 +72,7 @@ class SentenceTransformerEmbedding(EmbeddingProvider):
         Args:
             model_name: Model name (defaults to settings.embedding_model)
         """
+        # SSL bypass is handled globally in app.core.ssl_patch
         from sentence_transformers import SentenceTransformer
 
         self.model_name = model_name or settings.embedding_model

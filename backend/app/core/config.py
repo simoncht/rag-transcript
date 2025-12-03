@@ -65,8 +65,8 @@ class Settings(BaseSettings):
     whisper_compute_type: Literal["int8", "float16", "float32"] = "int8"
 
     # Chunking Configuration
-    chunk_target_tokens: int = 512
-    chunk_min_tokens: int = 256
+    chunk_target_tokens: int = 256
+    chunk_min_tokens: int = 16
     chunk_max_tokens: int = 800
     chunk_overlap_tokens: int = 80
     chunk_max_duration_seconds: int = 90

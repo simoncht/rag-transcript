@@ -8,6 +8,7 @@ from abc import ABC, abstractmethod
 from typing import List, Dict, Optional
 from dataclasses import dataclass
 from uuid import UUID
+import uuid
 import numpy as np
 
 from qdrant_client import QdrantClient
@@ -186,7 +187,7 @@ class QdrantVectorStore(VectorStore):
                 payload["chapter_index"] = chunk.chapter_index
 
             # Create point with unique ID (video_id + chunk_index)
-            point_id = f"{video_id}_{chunk.chunk_index}"
+            point_id = str(uuid.uuid5(video_id, str(chunk.chunk_index)))
 
             point = PointStruct(
                 id=point_id,

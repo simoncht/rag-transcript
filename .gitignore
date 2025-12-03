@@ -65,6 +65,10 @@ postgres_data/
 redis_data/
 qdrant_data/
 
+# Model caches
+hf_cache/
+backend/.cache/
+
 # Testing
 .pytest_cache/
 .coverage
