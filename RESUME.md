@@ -63,13 +63,21 @@ docker-compose down                # Stop all
 - **Worker**: running `--pool=solo --concurrency=1` for Whisper stability
 - **Chunking**: lowered thresholds for short clips (min_tokens=16, target=256) with single-chunk fallback
 
-## Phase 3: Next Steps (Frontend + Production)
+## Phase 3: Next Steps (Frontend Development)
 
 1. **Frontend Development** (Next.js)
+   - Video management UI
+   - Conversation/chat interface
+   - Real-time streaming responses
 2. **Authentication** (JWT + OAuth)
-3. **Streaming responses** for better UX
-4. **Stripe billing integration**
-5. **Production deployment**
+3. **Frontend testing and validation**
+
+## Phase 4: Future (Production Ready)
+
+1. **Stripe billing integration**
+2. **Production deployment** (after frontend verified)
+3. **Monitoring & observability**
+4. **Horizontal scaling**
 
 ## Key Files
 
