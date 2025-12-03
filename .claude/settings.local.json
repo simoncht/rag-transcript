@@ -17,7 +17,18 @@
       "Bash(python -m json.tool:*)",
       "Bash(git config:*)",
       "Bash(git add:*)",
-      "Bash(git reset:*)"
+      "Bash(git reset:*)",
+      "Bash(git commit -m \"$(cat <<''EOF''\nPhase 1 complete: Pipeline validation and stabilization\n\n- SSL bypass implementation for corporate environment\n- Celery worker stabilization (solo pool for Whisper compatibility)\n- Chunking threshold adjustments for short videos\n- Docker configuration improvements (offline mode, cache volumes)\n- Pipeline validation with test script (test_rag.py)\n- Documentation consolidation (RESUME.md for quick reference)\n- Gitignore updates for model caches\n\nAll core components validated:\n- Video ingestion, transcription, chunking, embedding, vector search\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nEOF\n)\")",
+      "Bash(where:*)",
+      "Bash(ollama list:*)",
+      "Bash(test:*)",
+      "Bash(git commit -m \"$(cat <<''EOF''\nPhase 2 complete: RAG chat implementation\n\nImplemented full RAG chat endpoint with LLM integration:\n\n- LLM provider integration (Ollama with Qwen3-Coder 480B)\n- Full RAG pipeline in conversations endpoint:\n  * Query embedding with cache handling\n  * Vector search filtered by conversation videos\n  * Context construction from top 5 chunks\n  * Conversation history management (last 5 messages)\n  * LLM response generation with retry logic\n  * Citation tracking with timestamps and relevance scores\n  * Message and chunk reference persistence\n  * Token usage tracking\n\n- Multi-provider architecture ready (Ollama/OpenAI/Anthropic)\n- Docker networking fix (host.docker.internal for Windows)\n- Chunk lookup by timestamps\n- Database constraint fixes (rank field)\n\nTest results: 15s response time, 688 tokens, proper citations\nStatus: Phase 2 fully functional and validated\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nEOF\n)\")",
+      "Bash(git push:*)",
+      "Bash(git remote set-url:*)",
+      "Bash(git commit:*)",
+      "Bash(npm install)",
+      "Bash(npm run type-check:*)",
+      "Bash(npm run lint)"
     ],
     "deny": [],
     "ask": []
