@@ -1,14 +1,68 @@
 # Progress Report
 
-**Last Updated**: 2025-12-03 15:30 PST
+**Last Updated**: 2025-12-03 18:30 PST
 
-## Status: ✅ Phase 3 COMPLETE | Frontend fully functional
+## Status: 🚧 Phase 3.1 IN PROGRESS | Collections backend complete, frontend 60%
 
 All 6 containers operational:
 - postgres (healthy), redis (healthy), qdrant (running)
 - app (port 8000), worker (celery, solo pool), beat (celery scheduler)
 
 **Verified**: Health endpoint, Whisper model, embedding model (384-dim), database migrations, full pipeline on “Me at the zoo” (chunked + indexed)
+
+---
+
+## Recent Changes (2025-12-03)
+
+### Phase 3.1: Collections Implementation (In Progress)
+
+**Backend (100% Complete - Commit 07e511a)**
+- ✅ Created migration `003_add_collections.py`:
+  * `collections` table with JSONB metadata, is_default flag
+  * `collection_videos` join table (many-to-many)
+  * `collection_members` table (for Phase 4 sharing)
+  * Added `tags` column to videos table with GIN index
+  * Auto-created "Uncategorized" default collection for all users
+  * Migrated existing videos to default collection
+- ✅ Created SQLAlchemy models:
+  * `Collection`, `CollectionVideo`, `CollectionMember`
+  * Updated `Video` model with tags and collection_videos relationship
+  * Updated `User` model with collections relationship
+- ✅ Implemented 7 API endpoints:
+  * `POST /api/v1/collections` - Create collection
+  * `GET /api/v1/collections` - List with video counts/duration
+  * `GET /api/v1/collections/{id}` - Get with videos
+  * `PATCH /api/v1/collections/{id}` - Update collection
+  * `DELETE /api/v1/collections/{id}` - Delete collection
+  * `POST /api/v1/collections/{id}/videos` - Add videos
+  * `DELETE /api/v1/collections/{id}/videos/{vid}` - Remove video
+- ✅ Updated conversations endpoint:
+  * Added `collection_id` parameter support
+  * Validates either collection_id OR selected_video_ids
+  * Fetches all videos from collection automatically
+- ✅ Added video tags endpoint:
+  * `PATCH /api/v1/videos/{id}/tags`
+
+**Frontend (60% Complete - Pending Commit)**
+- ✅ TypeScript types for all collection entities
+- ✅ Collections API client (`getCollections`, `createCollection`, etc.)
+- ✅ Updated videos API with `updateTags` function
+- ✅ Collections list page at `/collections`:
+  * Display all collections with metadata
+  * Expand/collapse to show videos in collection
+  * Create/Edit/Delete collection actions
+  * Shows video count, total duration, metadata badges
+- ✅ Create/Edit Collection Modal:
+  * Full form with name, description, metadata fields
+  * Instructor, subject, semester, tags inputs
+  * Validation and error handling
+- ✅ Updated MainLayout navigation with Collections link
+
+**Remaining Frontend Work:**
+- ⏳ Update Videos page to show collections
+- ⏳ Add "Add to Collection" functionality
+- ⏳ Update Conversation creation UI for collection selection
+- ⏳ End-to-end testing
 
 ---
 

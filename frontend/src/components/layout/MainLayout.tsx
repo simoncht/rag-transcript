@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Video, MessageSquare, LogOut } from "lucide-react";
+import { Video, MessageSquare, LogOut, Folder } from "lucide-react";
 import { useAuthStore } from "@/lib/store/auth";
 
 export function MainLayout({ children }: { children: React.ReactNode }) {
@@ -11,6 +11,7 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
 
   const navigation = [
     { name: "Videos", href: "/videos", icon: Video },
+    { name: "Collections", href: "/collections", icon: Folder },
     { name: "Conversations", href: "/conversations", icon: MessageSquare },
   ];
 
