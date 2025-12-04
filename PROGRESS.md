@@ -1,8 +1,8 @@
 # Progress Report
 
-**Last Updated**: 2025-12-03 18:30 PST
+**Last Updated**: 2025-12-03 22:20 PST
 
-## Status: 🚧 Phase 3.1 IN PROGRESS | Collections backend complete, frontend 60%
+## Status: Phase 3.1 COMPLETE | Collections feature fully implemented (100%) - yt-dlp upgraded; delete UX improved
 
 All 6 containers operational:
 - postgres (healthy), redis (healthy), qdrant (running)
@@ -12,7 +12,99 @@ All 6 containers operational:
 
 ---
 
-## Recent Changes (2025-12-03)
+## Phase 4: Production Ready Planning (2025-12-04)
+
+### Planning Session Complete
+- **Objective**: Design comprehensive Phase 4 (Production Ready) implementation strategy
+- **Result**: Created `PHASE_4_PRODUCTION_READY.md` with detailed 7-sprint plan
+- **Coverage**: 7 major features, 40+ implementation tasks, 7 architectural decision points
+
+### Phase 4 Scope (31.5 days estimated, 6-8 weeks parallel):
+
+**Sprint 1: Real Authentication (6 days)**
+- JWT token generation & validation
+- OAuth (Google + GitHub) integration
+- Protected API routes with `Depends(get_current_user_jwt)`
+- Real login/signup UI (replace mock auth)
+- Secure token storage (sessionStorage + localStorage)
+- Database migration: `004_add_auth_fields.py`
+- **Files**: 15 new, 8 modified
+
+**Sprint 2: Collection Sharing (3.5 days, depends on Sprint 1)**
+- Role-based access control (owner/editor/viewer)
+- Share endpoints (email invite + shareable links)
+- Member management UI + permissions matrix
+- `CollectionMember` model already exists (prepared in Phase 3.1)
+- **Files**: 5 new, 3 modified
+
+**Sprint 3: Stripe Billing (5.5 days, depends on Sprint 1)**
+- Stripe checkout & subscription management
+- Subscription tiers: Free (2 videos, 60 min, 50 msgs, 1GB) → Pro ($29/mo) → Enterprise
+- Quota enforcement (videos, minutes, messages, storage)
+- Billing UI + usage dashboard
+- Webhook handling for subscription events
+- **Files**: 6 new, 8 modified
+
+**Sprint 4: Production Deployment (6 days, depends on Sprint 1+3)**
+- Multi-stage Docker builds (optimized images for prod)
+- AWS infrastructure (Terraform): ECS, RDS, ElastiCache, ALB, VPC
+- CI/CD pipeline (GitHub Actions): test → build → deploy
+- SSL/TLS + domain setup (Route53, ACM, nginx reverse proxy)
+- Database migration strategy (alembic + zero-downtime)
+- **Files**: 25+ new (Terraform, GitHub Actions), 5 modified
+
+**Sprint 5: Observability (4.5 days, parallel with Sprint 4)**
+- Prometheus metrics collection (HTTP latency, business metrics)
+- Grafana dashboards (overview, performance, quota)
+- Sentry error tracking (exceptions, breadcrumbs, releases)
+- CloudWatch logging aggregation
+- **Files**: 10 new, 4 modified
+
+**Sprint 6: Horizontal Scaling (3.5 days, depends on Sprint 5)**
+- Worker auto-scaling (2→20 tasks based on queue depth)
+- App auto-scaling (2→10 tasks based on CPU/requests)
+- Database connection pooling (QueuePool, pool_size=20, max_overflow=40)
+- Load balancer optimization (ALB health checks, sticky sessions)
+- **Files**: 6 modified
+
+**Sprint 7: Streaming Chat (2.5 days, optional, depends on Sprint 1)**
+- Server-Sent Events (SSE) for real-time token streaming
+- Progressive message display on frontend
+- Message saved after streaming completes
+- **Files**: 3 new, 2 modified
+
+### Critical Decisions Needed
+- **Authentication**: JWT expiration (15min access + 7day refresh?), OAuth providers
+- **Billing**: Stripe model (monthly vs annual?), free tier limit, refund policy
+- **Deployment**: AWS region, infrastructure sizing, backup/recovery targets
+- **Observability**: Alert thresholds (CPU 70%? Memory 80%?), data retention
+
+### Current Blockers
+None - all prerequisites from Phase 3.1 complete
+
+### Next Actions
+1. Team review of PHASE_4_PRODUCTION_READY.md (make architectural decisions)
+2. Create GitHub Project for Phase 4 with sprint tracking
+3. Setup development environment (AWS credentials, Stripe test account, GitHub secrets)
+4. Sprint 1 Kickoff: Create GitHub issues for authentication tasks
+
+---
+
+### Minor Fixes (2025-12-04)
+
+**Fixed MainLayout Export**:
+- **Issue**: Collections page failing to compile - MainLayout import error
+- **Root Cause**: MainLayout exported as `export function` instead of arrow function
+- **Fix**: Changed to `export const MainLayout = ({children}) => { ... }`
+- **Result**: Frontend dev server restarted, collections page compiling successfully
+- **Commit**: `748650b` - "fix: Update MainLayout to use const export for proper named import"
+
+### Video ingestion + tooling
+- Upgraded yt-dlp to 2025.11.12; rebuilt app/worker and restarted containers (HF model predownload still skipped due to SSL, expected).
+- Current ingest: https://www.youtube.com/watch?v=PSP2BFmMO9o (job 3dc87ac1-40c7-4396-a1a6-72f1f541addd, video fab596f1-cbad-4586-b6d5-6a629e6bc183).
+- Pipeline state: download done, transcription done, chunk/enrich running (LLM calls to host.docker.internal:11434), embed/index pending. UI will show pending until complete.
+- Worker concurrency unchanged (--pool=solo --concurrency=1); other ingests queue behind current job.
+- Videos page: added delete confirmation warning and bulk delete for completed/failed videos (checkbox selection + Delete Selected).
 
 ### Phase 3.1: Collections Implementation (In Progress)
 
@@ -67,6 +159,22 @@ All 6 containers operational:
 ---
 
 ## Recent Changes (2025-12-02–03)
+
+### Documentation Standards Codified (2025-12-03)
+- **Created**: `DOCUMENTATION_GUIDELINES.md` - Comprehensive standards for AI agents
+- **Purpose**: Ensure consistent documentation across Claude Code, OpenAI Codex, Cursor, etc.
+- **Covers**:
+  - When/how to update each .md file (RESUME, PROGRESS, README, PHASE_*)
+  - Level of detail expected (quick reference vs detailed history vs architecture)
+  - Update workflows (feature completion, bug fixes, minor changes)
+  - Style guidelines (markdown formatting, commit messages)
+  - Quality checklist before committing docs
+- **Key Rule**: "Future developers should understand status in <2 min (RESUME), debug past issues (PROGRESS), understand design (README), implement features (PHASE_*)"
+- **Added reference** in RESUME.md Key Files section
+
+---
+
+## Earlier Changes (2025-12-02–03)
 
 ### Fixed Beat Container Configuration
 - **Issue**: Missing HuggingFace cache volume and offline mode settings
@@ -314,3 +422,14 @@ PYTHONHTTPSVERIFY=0
    - Advanced search and filtering
    - Export transcripts and conversations
    - Video playlist management
+
+
+
+
+
+
+
+
+
+
+

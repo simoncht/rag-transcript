@@ -1,7 +1,7 @@
 # Quick Resume
 
-**Last Updated**: 2025-12-03 18:30 PST
-**Status**: 🚧 Phase 3.1 IN PROGRESS | Collections backend complete, frontend partial
+**Last Updated**: 2025-12-04 13:30 PST
+**Status**: Phase 3.1 COMPLETE | Phase 4 Planning COMPLETE | Ready for Production Sprint 1 (Authentication)
 
 ## System Check
 
@@ -61,6 +61,14 @@ docker-compose up -d               # Start all
 docker-compose down                # Stop all
 ```
 
+## In-Flight Work (Dec 3)
+
+- yt-dlp bumped to `2025.11.12`; app/worker images rebuilt and restarted.
+- Video ingest in progress for `https://www.youtube.com/watch?v=PSP2BFmMO9o` (job `3dc87ac1-40c7-4396-a1a6-72f1f541addd`, video `fab596f1-cbad-4586-b6d5-6a629e6bc183`).
+- Pipeline state: download done, transcription done, chunk/enrich running (LLM calls to host.docker.internal:11434), embed/index pending; UI shows pending until pipeline finishes.
+- Worker runs single concurrency (`--pool=solo --concurrency=1`); additional jobs will queue until this one completes.
+- Videos page: delete now shows a warning confirmation and supports bulk deletion of completed/failed videos via checkboxes + “Delete Selected.”
+
 ## Technical Notes
 
 - **SSL Bypass**: `backend/app/core/ssl_patch.py` (corporate environment)
@@ -98,67 +106,86 @@ npm run dev
 - Zustand for state management
 - React Markdown for chat rendering
 
-## 🚧 Phase 3.1: Video Collections (In Progress)
+## ✅ Phase 3.1 COMPLETE: Video Collections
 
 **See `PHASE_3_ENHANCEMENTS.md` for full specification**
 
-### ✅ Completed:
-**Backend (100%)**
+### Backend (100%)
 - ✅ Database migration (collections, collection_videos, collection_members tables)
 - ✅ SQLAlchemy models (Collection, CollectionVideo, CollectionMember)
-- ✅ API endpoints (7 endpoints: CRUD collections, add/remove videos)
-- ✅ Tags support for videos
-- ✅ Conversation creation from collections
+- ✅ 7 API endpoints (CRUD collections, add/remove videos, tags)
+- ✅ Conversation creation from collections (collection_id support)
 - ✅ Auto-created "Uncategorized" default collection
 
-**Frontend API Layer (100%)**
-- ✅ TypeScript types for collections
-- ✅ Collections API client functions
-- ✅ Videos API updateTags function
+### Frontend (100%)
+- ✅ **Collections Page** (`/collections`)
+  - List all collections with metadata badges
+  - Expand/collapse to view videos
+  - Create/Edit/Delete collections
+  - Video count and total duration stats
+- ✅ **Videos Page Integration**
+  - "Add to Collection" modal with radio selection
+  - "Manage Tags" modal for video tagging
+  - Display tags as chips
+  - Action buttons for each video
+- ✅ **Conversation Creation Enhancement**
+  - Radio buttons: Collection mode vs Custom mode
+  - Collection dropdown (select entire collection)
+  - Custom video multi-select (existing behavior)
+  - Smart validation based on mode
 
-**Frontend UI (60%)**
-- ✅ Collections list page (`/collections`)
-- ✅ Create/Edit collection modal with metadata
-- ✅ Navigation updated with Collections link
-- ⏳ Videos page integration (add to collection, show collections)
-- ⏳ Conversation creation from collections
+### Key Features Delivered:
+- **Collections/Playlists** - Organize videos by course, instructor, subject ✅
+- **Metadata & Tags** - Instructor, subject, semester, custom tags ✅
+- **Many-to-Many** - Videos can belong to multiple collections ✅
+- **Default Collection** - Auto-created "Uncategorized" for new videos ✅
+- **Flexible Chat** - Create conversations from entire collection or individual videos ✅
 
-### 🎯 Remaining Work:
-1. Update Videos page to show which collections each video belongs to
-2. Add "Add to Collection" functionality on Videos page
-3. Update Conversation creation to support selecting from collections
-4. End-to-end testing
+### Git Commits:
+- `07e511a` - Backend API and migration
+- `c9f703f` - Collections frontend UI (collections page, modal)
+- `9541d70` - Videos page enhancements (add to collection, manage tags)
+- `bcec374` - Conversation creation from collections
 
-### Key Features:
-- **Collections/Playlists** - Organize videos by course, instructor, subject
-- **Metadata & Tags** - Instructor, subject, semester, custom tags
-- **Many-to-Many** - Videos can belong to multiple collections
-- **Default Collection** - Auto-created "Uncategorized" for new videos
-- **Flexible Chat** - Create conversations from entire collection or individual videos
+## ⏳ Phase 4: Production Ready (Planning Complete)
 
-## Phase 4: Next Steps (Production Ready)
+**See `PHASE_4_PRODUCTION_READY.md` for complete 7-sprint implementation plan**
 
-1. **Collection Sharing**
-   - Owner/Editor/Viewer roles
-   - Invite links and permissions
-2. **Real Authentication**
-   - JWT token authentication (backend + frontend)
-   - OAuth integration (Google, GitHub)
-   - Secure session management
-3. **Stripe billing integration**
-   - Storage quota tracking
-   - Subscription tiers
-4. **Production deployment**
-5. **Monitoring & observability**
-6. **Horizontal scaling**
-7. **Streaming chat responses** (optional enhancement)
+### Planned Sprints:
+1. **Sprint 1**: Real Authentication (JWT + OAuth) - 6 days
+2. **Sprint 2**: Collection Sharing (RBAC + invite links) - 3.5 days
+3. **Sprint 3**: Stripe Billing Integration - 5.5 days
+4. **Sprint 4**: Production Deployment (AWS/ECS) - 6 days
+5. **Sprint 5**: Observability (Prometheus/Grafana) - 4.5 days
+6. **Sprint 6**: Horizontal Scaling - 3.5 days
+7. **Sprint 7**: Streaming Chat Responses (optional) - 2.5 days
+
+**Total Effort**: 31.5 days | **Parallel Timeline**: 6-8 weeks | **Critical Path**: Auth → Billing → Deploy → Scaling
+
+### Key Decision Points:
+- JWT token expiration strategy (15min access + 7day refresh?)
+- OAuth providers (Google/GitHub or add more?)
+- AWS region and infrastructure sizing
+- Stripe subscription model (monthly vs annual?)
+- Monitoring alert thresholds and on-call process
+
+### Ready to Start?
+✅ All Phase 3 features complete
+✅ Infrastructure requirements documented
+✅ File structure planned
+✅ Risk mitigation strategies defined
+✅ Success criteria established
+
+**Next**: Team review of PHASE_4_PRODUCTION_READY.md → Sprint 1 Kickoff
 
 ## Key Files
 
 **Documentation:**
-- `PROGRESS.md` - Detailed history
+- `DOCUMENTATION_GUIDELINES.md` - **📋 AI agent documentation standards** (read this first!)
 - `RESUME.md` - Quick reference (this file)
-- `PHASE_3_ENHANCEMENTS.md` - Video collections feature spec
+- `PROGRESS.md` - Detailed history
+- `PHASE_3_ENHANCEMENTS.md` - Video collections feature spec (Phase 3.1)
+- `PHASE_4_PRODUCTION_READY.md` - **⏳ Complete Phase 4 implementation plan** (7 sprints, 31.5 days)
 - `README.md` - Architecture overview
 
 **Backend:**
@@ -176,3 +203,6 @@ npm run dev
 - `frontend/src/lib/types/` - TypeScript type definitions
 - `frontend/src/components/layout/` - Layout components
 - `frontend/src/components/collections/` - Collection components (modal)
+
+
+
