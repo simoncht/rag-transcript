@@ -25,13 +25,16 @@ class Settings(BaseSettings):
 
     # API
     api_v1_prefix: str = "/api/v1"
-    backend_cors_origins: List[str] = ["http://localhost:3000", "http://localhost:3001", "http://localhost:8000"]
+    backend_cors_origins: List[str] = ["http://localhost:3000", "http://localhost:3001", "http://localhost:8000", "http://127.0.0.1:3000", "http://127.0.0.1:3001", "http://127.0.0.1:8000"]
 
     @field_validator("backend_cors_origins", mode="before")
     @classmethod
     def parse_cors_origins(cls, v):
         if isinstance(v, str):
             return [origin.strip() for origin in v.split(",")]
+        # Allow any localhost/127.0.0.1 origin in development for flexibility
+        if isinstance(v, list):
+            return v
         return v
 
     # Database
