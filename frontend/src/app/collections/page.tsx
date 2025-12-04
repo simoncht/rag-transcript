@@ -9,7 +9,7 @@ import {
   getCollection,
 } from "@/lib/api/collections";
 import type { Collection } from "@/lib/types";
-import MainLayout from "@/components/layout/MainLayout";
+import { MainLayout } from "@/components/layout/MainLayout";
 import { CollectionModal } from "@/components/collections/CollectionModal";
 
 export default function CollectionsPage() {

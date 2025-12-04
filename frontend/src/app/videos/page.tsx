@@ -4,19 +4,38 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { MainLayout } from "@/components/layout/MainLayout";
 import { videosApi } from "@/lib/api/videos";
+import { getCollections } from "@/lib/api/collections";
 import { Video } from "@/lib/types";
-import { Plus, Trash2, ExternalLink, Loader2 } from "lucide-react";
+import { Plus, Trash2, ExternalLink, Loader2, FolderPlus, Tag as TagIcon } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
+import { AddToCollectionModal } from "@/components/videos/AddToCollectionModal";
+import { ManageTagsModal } from "@/components/videos/ManageTagsModal";
 
 export default function VideosPage() {
   const [youtubeUrl, setYoutubeUrl] = useState("");
   const [showAddForm, setShowAddForm] = useState(false);
+  const [addToCollectionVideo, setAddToCollectionVideo] = useState<Video | null>(null);
+  const [manageTagsVideo, setManageTagsVideo] = useState<Video | null>(null);
   const queryClient = useQueryClient();
 
   const { data, isLoading } = useQuery({
     queryKey: ["videos"],
     queryFn: () => videosApi.list(),
   });
+
+  // Fetch collections to show which collections each video belongs to
+  const { data: collectionsData } = useQuery({
+    queryKey: ["collections"],
+    queryFn: getCollections,
+  });
+
+  // Helper function to get collections for a video
+  const getVideoCollections = (videoId: string) => {
+    if (!collectionsData) return [];
+    return collectionsData.collections.filter((collection) =>
+      collection.video_count > 0 // We'll need to fetch full collection details to check membership
+    );
+  };
 
   const ingestMutation = useMutation({
     mutationFn: videosApi.ingest,
@@ -139,7 +158,7 @@ export default function VideosPage() {
               <ul className="divide-y divide-gray-200">
                 {data?.videos.map((video) => (
                   <li key={video.id} className="px-6 py-4 hover:bg-gray-50">
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-start justify-between">
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center space-x-3">
                           <h3 className="text-sm font-medium text-gray-900 truncate">
@@ -153,6 +172,7 @@ export default function VideosPage() {
                             {video.status}
                           </span>
                         </div>
+
                         <div className="mt-2 flex items-center space-x-4 text-sm text-gray-500">
                           <span>{formatDuration(video.duration_seconds)}</span>
                           <span>•</span>
@@ -169,17 +189,52 @@ export default function VideosPage() {
                             View on YouTube
                           </a>
                         </div>
+
+                        {/* Tags */}
+                        {video.tags && video.tags.length > 0 && (
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            {video.tags.map((tag) => (
+                              <span
+                                key={tag}
+                                className="inline-flex items-center px-2 py-1 bg-gray-100 text-gray-700 text-xs rounded"
+                              >
+                                <TagIcon className="w-3 h-3 mr-1" />
+                                {tag}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Action Buttons */}
+                        <div className="mt-3 flex items-center gap-2">
+                          <button
+                            onClick={() => setAddToCollectionVideo(video)}
+                            className="inline-flex items-center px-3 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50 transition-colors"
+                          >
+                            <FolderPlus className="w-3.5 h-3.5 mr-1.5" />
+                            Add to Collection
+                          </button>
+                          <button
+                            onClick={() => setManageTagsVideo(video)}
+                            className="inline-flex items-center px-3 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50 transition-colors"
+                          >
+                            <TagIcon className="w-3.5 h-3.5 mr-1.5" />
+                            Manage Tags
+                          </button>
+                        </div>
+
                         {video.error_message && (
                           <p className="mt-2 text-sm text-red-600">
                             {video.error_message}
                           </p>
                         )}
                       </div>
-                      <div className="ml-4">
+                      <div className="ml-4 flex-shrink-0">
                         <button
                           onClick={() => deleteMutation.mutate(video.id)}
                           disabled={deleteMutation.isPending}
                           className="p-2 text-gray-400 hover:text-red-600 focus:outline-none"
+                          title="Delete video"
                         >
                           <Trash2 className="w-5 h-5" />
                         </button>
@@ -190,6 +245,25 @@ export default function VideosPage() {
               </ul>
             )}
           </div>
+        )}
+
+        {/* Add to Collection Modal */}
+        {addToCollectionVideo && (
+          <AddToCollectionModal
+            videoId={addToCollectionVideo.id}
+            videoTitle={addToCollectionVideo.title}
+            onClose={() => setAddToCollectionVideo(null)}
+          />
+        )}
+
+        {/* Manage Tags Modal */}
+        {manageTagsVideo && (
+          <ManageTagsModal
+            videoId={manageTagsVideo.id}
+            videoTitle={manageTagsVideo.title}
+            currentTags={manageTagsVideo.tags || []}
+            onClose={() => setManageTagsVideo(null)}
+          />
         )}
       </div>
     </MainLayout>
