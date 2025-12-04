@@ -15,7 +15,7 @@ export default function LoginPage() {
     e.preventDefault();
     setIsLoading(true);
 
-    setTimeout(() => {
+    try {
       const mockUser = {
         id: "mock-user-id",
         email: email,
@@ -23,10 +23,27 @@ export default function LoginPage() {
       };
       const mockToken = "mock-token-" + Date.now();
 
+      // Set auth in store
       setAuth(mockUser, mockToken);
+
+      // Also set in localStorage directly as backup
+      if (typeof window !== "undefined") {
+        localStorage.setItem("auth_token", mockToken);
+        localStorage.setItem("auth_user", JSON.stringify(mockUser));
+      }
+
+      console.log("Auth set, redirecting to /videos...");
+
+      // Small delay to ensure state is updated
+      setTimeout(() => {
+        setIsLoading(false);
+        // Use window.location for a hard redirect
+        window.location.href = "/videos";
+      }, 500);
+    } catch (error) {
+      console.error("Login error:", error);
       setIsLoading(false);
-      router.push("/videos");
-    }, 1000);
+    }
   };
 
   return (

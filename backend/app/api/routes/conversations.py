@@ -139,11 +139,20 @@ async def get_conversation(
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
-    # TODO: Load messages with chunk references
-    # For now, return conversation without messages
+    # Load messages for this conversation
+    from app.models import Message as MessageModel
+    from app.schemas import Message as MessageSchema
+
+    messages = db.query(MessageModel).filter(
+        MessageModel.conversation_id == conversation_id
+    ).order_by(MessageModel.created_at.asc()).all()
+
+    # Convert to response models
+    message_details = [MessageSchema.model_validate(msg) for msg in messages]
+
     return ConversationWithMessages(
         **ConversationDetail.model_validate(conversation).model_dump(),
-        messages=[]
+        messages=message_details
     )
 
 

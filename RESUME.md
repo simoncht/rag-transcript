@@ -98,23 +98,49 @@ npm run dev
 - Zustand for state management
 - React Markdown for chat rendering
 
+## Phase 3 Enhancements: Video Collections (In Progress)
+
+**See `PHASE_3_ENHANCEMENTS.md` for full specification**
+
+### Planned Features:
+1. **Collections/Playlists** - Organize videos by course, instructor, subject
+2. **Flexible Selection** - Chat with entire collection, multi-select, or single video
+3. **Metadata & Tags** - Instructor, subject, semester, custom tags
+4. **Advanced Features** - Search, filter, bulk operations, playlist import
+
+### Key Decisions:
+- Collections can be shared (Phase 4)
+- Videos can belong to multiple collections
+- Unlimited videos per collection
+- Default "Uncategorized" collection
+- Storage counted toward uploader only
+
 ## Phase 4: Next Steps (Production Ready)
 
-1. **Real Authentication**
+1. **Collection Sharing**
+   - Owner/Editor/Viewer roles
+   - Invite links and permissions
+2. **Real Authentication**
    - JWT token authentication (backend + frontend)
    - OAuth integration (Google, GitHub)
    - Secure session management
-2. **Stripe billing integration**
-3. **Production deployment**
-4. **Monitoring & observability**
-5. **Horizontal scaling**
-6. **Streaming chat responses** (optional enhancement)
+3. **Stripe billing integration**
+   - Storage quota tracking
+   - Subscription tiers
+4. **Production deployment**
+5. **Monitoring & observability**
+6. **Horizontal scaling**
+7. **Streaming chat responses** (optional enhancement)
 
 ## Key Files
 
-**Backend:**
+**Documentation:**
 - `PROGRESS.md` - Detailed history
+- `RESUME.md` - Quick reference (this file)
+- `PHASE_3_ENHANCEMENTS.md` - Video collections feature spec
 - `README.md` - Architecture overview
+
+**Backend:**
 - `docker-compose.yml` - Container config
 - `backend/app/core/ssl_patch.py` - SSL bypass
 - `backend/app/api/routes/conversations.py` - RAG chat endpoint
