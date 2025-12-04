@@ -8,6 +8,9 @@ from app.schemas.video import (
     VideoStatus,
     VideoDetail,
     VideoList,
+    VideoDeleteRequest,
+    VideoDeleteResponse,
+    VideoDeleteBreakdown,
 )
 from app.schemas.job import (
     JobStatus,
@@ -56,6 +59,9 @@ __all__ = [
     "VideoStatus",
     "VideoDetail",
     "VideoList",
+    "VideoDeleteRequest",
+    "VideoDeleteResponse",
+    "VideoDeleteBreakdown",
     # Transcript
     "TranscriptDetail",
     "TranscriptSegment",
