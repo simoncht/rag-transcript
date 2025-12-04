@@ -35,6 +35,7 @@ class User(Base):
     # Relationships
     videos = relationship("Video", back_populates="user", cascade="all, delete-orphan")
     conversations = relationship("Conversation", back_populates="user", cascade="all, delete-orphan")
+    collections = relationship("Collection", back_populates="user", cascade="all, delete-orphan")
     usage_events = relationship("UsageEvent", back_populates="user", cascade="all, delete-orphan")
 
     def __repr__(self):

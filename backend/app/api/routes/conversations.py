@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.db.base import get_db
-from app.models import Conversation, Video, User
+from app.models import Conversation, Video, User, Collection, CollectionVideo
 from app.schemas import (
     ConversationCreateRequest,
     ConversationUpdateRequest,
@@ -40,21 +40,64 @@ async def create_conversation(
     """
     Create a new conversation.
 
+    Can be created from:
+    - A collection (collection_id): Uses all videos from the collection
+    - Individual videos (selected_video_ids): Uses specified videos
+
     Args:
-        request: Conversation creation request with title and video IDs
+        request: Conversation creation request with title and collection_id OR video IDs
 
     Returns:
         ConversationDetail with created conversation
     """
+    # Determine video IDs based on collection or direct selection
+    if request.collection_id and request.selected_video_ids:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot specify both collection_id and selected_video_ids. Choose one."
+        )
+
+    if not request.collection_id and not request.selected_video_ids:
+        raise HTTPException(
+            status_code=400,
+            detail="Must specify either collection_id or selected_video_ids"
+        )
+
+    video_ids = []
+
+    if request.collection_id:
+        # Get all videos from collection
+        collection = db.query(Collection).filter(
+            Collection.id == request.collection_id,
+            Collection.user_id == current_user.id
+        ).first()
+
+        if not collection:
+            raise HTTPException(status_code=404, detail="Collection not found")
+
+        # Get video IDs from collection
+        collection_videos = db.query(CollectionVideo.video_id).filter(
+            CollectionVideo.collection_id == request.collection_id
+        ).all()
+        video_ids = [str(cv[0]) for cv in collection_videos]
+
+        if not video_ids:
+            raise HTTPException(
+                status_code=400,
+                detail="Collection has no videos"
+            )
+    else:
+        video_ids = [str(vid) for vid in request.selected_video_ids]
+
     # Validate that all videos exist and belong to user
     videos = db.query(Video).filter(
-        Video.id.in_(request.selected_video_ids),
+        Video.id.in_(video_ids),
         Video.user_id == current_user.id,
         Video.is_deleted == False,
         Video.status == "completed"
     ).all()
 
-    if len(videos) != len(request.selected_video_ids):
+    if len(videos) != len(video_ids):
         raise HTTPException(
             status_code=400,
             detail="One or more videos not found or not completed processing"

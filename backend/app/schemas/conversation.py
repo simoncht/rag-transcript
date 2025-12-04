@@ -11,13 +11,14 @@ from pydantic import BaseModel, Field
 class ConversationCreateRequest(BaseModel):
     """Request to create a new conversation."""
     title: Optional[str] = Field(None, max_length=255, description="Conversation title (auto-generated if not provided)")
-    selected_video_ids: List[UUID] = Field(..., min_items=1, description="List of video IDs to include in conversation scope")
+    collection_id: Optional[UUID] = Field(None, description="Collection ID (use all videos from collection)")
+    selected_video_ids: Optional[List[UUID]] = Field(None, min_items=1, description="List of video IDs to include in conversation scope")
 
     class Config:
         json_schema_extra = {
             "example": {
                 "title": "Discussion about React hooks",
-                "selected_video_ids": ["550e8400-e29b-41d4-a716-446655440000"]
+                "collection_id": "770e8400-e29b-41d4-a716-446655440000"
             }
         }
 

@@ -17,7 +17,7 @@ from fastapi.responses import JSONResponse
 import logging
 
 from app.core.config import settings
-from app.api.routes import videos, jobs, conversations
+from app.api.routes import videos, jobs, conversations, collections
 
 # Configure logging
 logging.basicConfig(
@@ -114,6 +114,12 @@ app.include_router(
     conversations.router,
     prefix=f"{settings.api_v1_prefix}/conversations",
     tags=["conversations"]
+)
+
+app.include_router(
+    collections.router,
+    prefix=f"{settings.api_v1_prefix}/collections",
+    tags=["collections"]
 )
 
 

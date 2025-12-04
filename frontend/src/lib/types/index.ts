@@ -1,10 +1,13 @@
 export interface Video {
   id: string;
   youtube_url: string;
+  youtube_id: string;
   title: string;
+  thumbnail_url?: string;
   duration_seconds: number;
   status: "pending" | "processing" | "completed" | "failed";
   error_message?: string;
+  tags: string[];
   created_at: string;
   updated_at: string;
 }
@@ -64,4 +67,77 @@ export interface VideoListResponse {
 export interface ConversationListResponse {
   total: number;
   conversations: Conversation[];
+}
+
+// Collection types
+export interface Collection {
+  id: string;
+  name: string;
+  description?: string;
+  metadata: {
+    instructor?: string;
+    subject?: string;
+    semester?: string;
+    tags?: string[];
+    [key: string]: any;
+  };
+  is_default: boolean;
+  video_count: number;
+  total_duration_seconds: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CollectionVideoInfo {
+  id: string;
+  title: string;
+  youtube_id: string;
+  duration_seconds?: number;
+  status: string;
+  thumbnail_url?: string;
+  tags: string[];
+  added_at: string;
+  position?: number;
+}
+
+export interface CollectionDetail extends Collection {
+  user_id: string;
+  videos: CollectionVideoInfo[];
+}
+
+export interface CollectionListResponse {
+  total: number;
+  collections: Collection[];
+}
+
+export interface CollectionCreateRequest {
+  name: string;
+  description?: string;
+  metadata?: {
+    instructor?: string;
+    subject?: string;
+    semester?: string;
+    tags?: string[];
+    [key: string]: any;
+  };
+}
+
+export interface CollectionUpdateRequest {
+  name?: string;
+  description?: string;
+  metadata?: {
+    instructor?: string;
+    subject?: string;
+    semester?: string;
+    tags?: string[];
+    [key: string]: any;
+  };
+}
+
+export interface CollectionAddVideosRequest {
+  video_ids: string[];
+}
+
+export interface VideoUpdateTagsRequest {
+  tags: string[];
 }

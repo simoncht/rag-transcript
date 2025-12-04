@@ -25,6 +25,17 @@ from app.schemas.conversation import (
     ConversationList,
     MessageResponse,
 )
+from app.schemas.collection import (
+    CollectionCreateRequest,
+    CollectionUpdateRequest,
+    CollectionAddVideosRequest,
+    VideoUpdateTagsRequest,
+    CollectionVideoInfo,
+    CollectionSummary,
+    CollectionDetail,
+    CollectionList,
+    VideoWithCollections,
+)
 
 __all__ = [
     # Video
@@ -48,4 +59,14 @@ __all__ = [
     "ConversationWithMessages",
     "ConversationList",
     "MessageResponse",
+    # Collection
+    "CollectionCreateRequest",
+    "CollectionUpdateRequest",
+    "CollectionAddVideosRequest",
+    "VideoUpdateTagsRequest",
+    "CollectionVideoInfo",
+    "CollectionSummary",
+    "CollectionDetail",
+    "CollectionList",
+    "VideoWithCollections",
 ]

@@ -4,7 +4,7 @@ Video model for storing YouTube video metadata and processing status.
 import uuid
 from datetime import datetime
 from sqlalchemy import Column, String, DateTime, Integer, Boolean, Text, ForeignKey, Float
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy.dialects.postgresql import UUID, JSONB, ARRAY
 from sqlalchemy.orm import relationship
 
 from app.db.base import Base
@@ -34,6 +34,9 @@ class Video(Base):
 
     # YouTube chapters (if available)
     chapters = Column(JSONB, nullable=True)  # [{"title": "Intro", "start_time": 0, "end_time": 120}, ...]
+
+    # Tags for organization
+    tags = Column(ARRAY(Text), default=[], nullable=False)  # ["midterm-prep", "advanced", etc.]
 
     # Processing status
     status = Column(String(50), default="pending", nullable=False, index=True)
@@ -65,6 +68,7 @@ class Video(Base):
     user = relationship("User", back_populates="videos")
     transcript = relationship("Transcript", back_populates="video", uselist=False, cascade="all, delete-orphan")
     chunks = relationship("Chunk", back_populates="video", cascade="all, delete-orphan")
+    collection_videos = relationship("CollectionVideo", back_populates="video", cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<Video(id={self.id}, title={self.title[:30]}, status={self.status})>"

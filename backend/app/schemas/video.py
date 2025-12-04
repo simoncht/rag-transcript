@@ -71,6 +71,7 @@ class VideoDetail(BaseModel):
     upload_date: Optional[datetime] = None
     language: Optional[str] = None
     chapters: Optional[List[Dict]] = None
+    tags: List[str] = Field(default_factory=list, description="Video tags")
 
     # Processing
     status: str

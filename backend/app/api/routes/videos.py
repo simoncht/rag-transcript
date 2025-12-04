@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.db.base import get_db
 from app.models import Video, Job, User
-from app.schemas import VideoIngestRequest, VideoIngestResponse, VideoDetail, VideoList
+from app.schemas import VideoIngestRequest, VideoIngestResponse, VideoDetail, VideoList, VideoUpdateTagsRequest
 from app.services.youtube import youtube_service, YouTubeDownloadError
 from app.services.usage_tracker import UsageTracker, QuotaExceededError
 from app.services.vector_store import vector_store_service
@@ -253,3 +253,36 @@ async def delete_video(
         print(f"Warning: Failed to delete video from vector store: {str(e)}")
 
     return {"message": "Video deleted successfully", "video_id": str(video_id)}
+
+
+@router.patch("/{video_id}/tags", response_model=VideoDetail)
+async def update_video_tags(
+    video_id: uuid.UUID,
+    request: VideoUpdateTagsRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Update tags for a video.
+
+    Args:
+        video_id: Video UUID
+        request: Request with tags array
+
+    Returns:
+        VideoDetail with updated video
+    """
+    video = db.query(Video).filter(
+        Video.id == video_id,
+        Video.user_id == current_user.id,
+        Video.is_deleted == False
+    ).first()
+
+    if not video:
+        raise HTTPException(status_code=404, detail="Video not found")
+
+    video.tags = request.tags
+    db.commit()
+    db.refresh(video)
+
+    return VideoDetail.model_validate(video)
