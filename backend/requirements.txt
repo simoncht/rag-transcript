@@ -13,7 +13,7 @@ celery[redis]==5.3.6
 redis==5.0.1
 
 # YouTube & Media
-yt-dlp==2024.11.18
+yt-dlp==2025.11.12
 
 # Speech-to-Text
 openai-whisper==20231117

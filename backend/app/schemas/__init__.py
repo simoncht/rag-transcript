@@ -13,6 +13,10 @@ from app.schemas.job import (
     JobStatus,
     JobDetail,
 )
+from app.schemas.transcript import (
+    TranscriptDetail,
+    TranscriptSegment,
+)
 from app.schemas.conversation import (
     ConversationCreateRequest,
     ConversationUpdateRequest,
@@ -36,6 +40,13 @@ from app.schemas.collection import (
     CollectionList,
     VideoWithCollections,
 )
+from app.schemas.usage import (
+    UsageSummary,
+    StorageBreakdown,
+    UsageCounts,
+    VectorStoreStat,
+    QuotaStat,
+)
 
 __all__ = [
     # Video
@@ -45,6 +56,9 @@ __all__ = [
     "VideoStatus",
     "VideoDetail",
     "VideoList",
+    # Transcript
+    "TranscriptDetail",
+    "TranscriptSegment",
     # Job
     "JobStatus",
     "JobDetail",
@@ -69,4 +83,10 @@ __all__ = [
     "CollectionDetail",
     "CollectionList",
     "VideoWithCollections",
+    # Usage
+    "UsageSummary",
+    "StorageBreakdown",
+    "UsageCounts",
+    "VectorStoreStat",
+    "QuotaStat",
 ]

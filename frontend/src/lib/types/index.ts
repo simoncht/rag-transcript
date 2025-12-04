@@ -5,11 +5,43 @@ export interface Video {
   title: string;
   thumbnail_url?: string;
   duration_seconds: number;
-  status: "pending" | "processing" | "completed" | "failed";
+  status:
+    | "pending"
+    | "processing"
+    | "downloading"
+    | "transcribing"
+    | "chunking"
+    | "enriching"
+    | "indexing"
+    | "completed"
+    | "failed";
+  progress_percent?: number;
   error_message?: string;
   tags: string[];
+  audio_file_size_mb?: number;
+  transcript_size_mb?: number;
+  storage_total_mb?: number;
   created_at: string;
   updated_at: string;
+}
+
+export interface TranscriptSegment {
+  text: string;
+  start: number;
+  end: number;
+  speaker?: string;
+}
+
+export interface TranscriptDetail {
+  video_id: string;
+  full_text: string;
+  language?: string;
+  duration_seconds: number;
+  word_count: number;
+  has_speaker_labels: boolean;
+  speaker_count?: number;
+  created_at: string;
+  segments: TranscriptSegment[];
 }
 
 export interface Conversation {
@@ -140,4 +172,49 @@ export interface CollectionAddVideosRequest {
 
 export interface VideoUpdateTagsRequest {
   tags: string[];
+}
+
+export interface QuotaStat {
+  used: number;
+  limit: number;
+  remaining: number;
+  percentage: number;
+}
+
+export interface StorageBreakdown {
+  total_mb: number;
+  limit_mb: number;
+  remaining_mb: number;
+  percentage: number;
+  audio_mb: number;
+  transcript_mb: number;
+  disk_usage_mb: number;
+}
+
+export interface UsageCounts {
+  videos_total: number;
+  videos_completed: number;
+  videos_processing: number;
+  videos_failed: number;
+  transcripts: number;
+  chunks: number;
+}
+
+export interface VectorStoreStat {
+  collection_name: string;
+  total_points: number;
+  vectors_count: number;
+  indexed_vectors_count: number;
+}
+
+export interface UsageSummary {
+  period_start: string;
+  period_end: string;
+  videos: QuotaStat;
+  minutes: QuotaStat;
+  messages: QuotaStat;
+  storage_mb: QuotaStat;
+  storage_breakdown: StorageBreakdown;
+  counts: UsageCounts;
+  vector_store?: VectorStoreStat;
 }

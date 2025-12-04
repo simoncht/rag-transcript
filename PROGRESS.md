@@ -1,6 +1,13 @@
 # Progress Report
 
-**Last Updated**: 2025-12-03 22:20 PST
+**Last Updated**: 2025-12-04 06:40 PST
+
+## Usage & Storage Instrumentation (2025-12-04)
+- Added usage summary API `GET /api/v1/usage/summary` with new schemas (`UsageSummary`, `StorageBreakdown`, etc.) and frontend panel; shows storage, minutes/messages, transcript/chunk counts, vector stats.
+- Usage tracker fixes: `event_metadata` field, storage adjustments via `track_storage_usage`, download/transcription/embed events tracked in pipeline (video_tasks).
+- Storage math now prefers actual transcript file sizes (fallback to text length) and uses on-disk measurements for totals; frontend displays per-video storage (audio • transcript • total) and formats tiny values as `<0.1 MB`.
+- Frontend transcript viewer improved readability (tabs: Readable auto-group paragraphs, Timeline with search, copy/download/refresh).
+- Known gap: Delete API only soft-deletes DB row + vector cleanup; audio/transcript files remain on disk (storage/local). `cleanup_audio_after_transcription` is `False` by default, so audio accumulates unless manually removed; multiple ~32 MB audio files currently present (total disk ~115 MB vs single video ~41 MB).
 
 ## Status: Phase 3.1 COMPLETE | Collections feature fully implemented (100%) - yt-dlp upgraded; delete UX improved
 

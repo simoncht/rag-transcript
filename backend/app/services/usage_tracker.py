@@ -196,7 +196,7 @@ class UsageTracker:
         event = UsageEvent(
             user_id=user_id,
             event_type="video_ingested",
-            metadata={
+            event_metadata={
                 "video_id": str(video_id),
                 "duration_seconds": duration_seconds,
                 "audio_size_mb": audio_size_mb,
@@ -237,7 +237,7 @@ class UsageTracker:
         event = UsageEvent(
             user_id=user_id,
             event_type="video_transcribed",
-            metadata={
+            event_metadata={
                 "video_id": str(video_id),
                 "duration_seconds": duration_seconds,
                 "chunk_count": chunk_count,
@@ -272,7 +272,7 @@ class UsageTracker:
         event = UsageEvent(
             user_id=user_id,
             event_type="chat_message_sent",
-            metadata={
+            event_metadata={
                 "conversation_id": str(conversation_id),
                 "message_id": str(message_id),
                 "tokens_in": tokens_in,
@@ -309,11 +309,53 @@ class UsageTracker:
         event = UsageEvent(
             user_id=user_id,
             event_type="embedding_generated",
-            metadata={
+            event_metadata={
                 "chunk_count": chunk_count,
                 "model_used": model_used,
                 "embedding_dimensions": embedding_dimensions,
             },
+        )
+        self.db.add(event)
+        self.db.commit()
+
+    def track_storage_usage(
+        self,
+        user_id: UUID,
+        delta_mb: float,
+        reason: str,
+        video_id: Optional[UUID] = None,
+        extra_metadata: Optional[Dict] = None,
+    ):
+        """
+        Track storage usage adjustments (e.g., transcript saved, audio retained/removed).
+
+        Args:
+            user_id: User ID
+            delta_mb: Amount of storage to add (positive) or remove (negative)
+            reason: Short label for the storage event
+            video_id: Optional related video
+            extra_metadata: Optional extra details
+        """
+        quota = self._get_or_create_quota(user_id)
+        new_total = quota.storage_mb_used + Decimal(delta_mb)
+        quota.storage_mb_used = new_total if new_total > 0 else Decimal(0)
+
+        metadata = extra_metadata.copy() if extra_metadata else {}
+        metadata.update(
+            {
+                "reason": reason,
+                "delta_mb": float(delta_mb),
+            }
+        )
+        if video_id:
+            metadata["video_id"] = str(video_id)
+
+        event = UsageEvent(
+            user_id=user_id,
+            event_type="storage_used",
+            event_metadata=metadata,
+            quota_category="storage",
+            quota_amount_used=Decimal(delta_mb),
         )
         self.db.add(event)
         self.db.commit()

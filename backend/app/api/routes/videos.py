@@ -9,12 +9,13 @@ Endpoints:
 """
 import uuid
 from typing import List, Optional
+from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.db.base import get_db
-from app.models import Video, Job, User
-from app.schemas import VideoIngestRequest, VideoIngestResponse, VideoDetail, VideoList, VideoUpdateTagsRequest
+from app.models import Video, Job, Transcript, User
+from app.schemas import VideoIngestRequest, VideoIngestResponse, VideoDetail, VideoList, VideoUpdateTagsRequest, TranscriptDetail
 from app.services.youtube import youtube_service, YouTubeDownloadError
 from app.services.usage_tracker import UsageTracker, QuotaExceededError
 from app.services.vector_store import vector_store_service
@@ -179,9 +180,45 @@ async def list_videos(
     # Get videos with pagination
     videos = query.order_by(Video.created_at.desc()).offset(skip).limit(limit).all()
 
+    video_ids = [v.id for v in videos]
+    transcripts = (
+        db.query(Transcript)
+        .filter(Transcript.video_id.in_(video_ids))
+        .all()
+        if video_ids
+        else []
+    )
+    transcript_map = {t.video_id: t for t in transcripts}
+
+    def get_transcript_size_mb(video: Video) -> float:
+        if video.transcript_file_path:
+            try:
+                return Path(video.transcript_file_path).stat().st_size / (1024 * 1024)
+            except Exception:
+                pass
+        transcript = transcript_map.get(video.id)
+        if transcript and transcript.full_text:
+            return len(transcript.full_text.encode("utf-8")) / (1024 * 1024)
+        return 0.0
+
+    video_details: List[VideoDetail] = []
+    for video in videos:
+        transcript_size_mb = round(get_transcript_size_mb(video), 3)
+        audio_size_mb = round(video.audio_file_size_mb or 0.0, 3)
+        storage_total_mb = round(audio_size_mb + transcript_size_mb, 3)
+        base = VideoDetail.model_validate(video)
+        video_details.append(
+            base.model_copy(
+                update={
+                    "transcript_size_mb": transcript_size_mb,
+                    "storage_total_mb": storage_total_mb,
+                }
+            )
+        )
+
     return VideoList(
         total=total,
-        videos=[VideoDetail.model_validate(v) for v in videos]
+        videos=video_details
     )
 
 
@@ -209,7 +246,53 @@ async def get_video(
     if not video:
         raise HTTPException(status_code=404, detail="Video not found")
 
-    return VideoDetail.model_validate(video)
+    transcript = db.query(Transcript).filter(Transcript.video_id == video_id).first()
+    transcript_size_mb = 0.0
+    if video.transcript_file_path:
+        try:
+            transcript_size_mb = Path(video.transcript_file_path).stat().st_size / (1024 * 1024)
+        except Exception:
+            transcript_size_mb = 0.0
+    if transcript and transcript.full_text and transcript_size_mb == 0.0:
+        transcript_size_mb = len(transcript.full_text.encode("utf-8")) / (1024 * 1024)
+    transcript_size_mb = round(transcript_size_mb, 3)
+    audio_size_mb = round(video.audio_file_size_mb or 0.0, 3)
+    storage_total_mb = round(audio_size_mb + transcript_size_mb, 3)
+
+    base = VideoDetail.model_validate(video)
+    return base.model_copy(
+        update={
+            "transcript_size_mb": transcript_size_mb,
+            "storage_total_mb": storage_total_mb,
+        }
+    )
+
+
+@router.get("/{video_id}/transcript", response_model=TranscriptDetail)
+async def get_video_transcript(
+    video_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Retrieve the full transcript for a processed video.
+
+    Returns the complete text plus time-coded segments for review.
+    """
+    video = db.query(Video).filter(
+        Video.id == video_id,
+        Video.user_id == current_user.id,
+        Video.is_deleted == False
+    ).first()
+
+    if not video:
+        raise HTTPException(status_code=404, detail="Video not found")
+
+    transcript = db.query(Transcript).filter(Transcript.video_id == video_id).first()
+    if not transcript:
+        raise HTTPException(status_code=404, detail="Transcript not available yet")
+
+    return TranscriptDetail.model_validate(transcript)
 
 
 @router.delete("/{video_id}")

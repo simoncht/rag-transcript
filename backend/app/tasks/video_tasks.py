@@ -9,6 +9,7 @@ Tasks:
 - process_video_pipeline: Orchestrate full pipeline
 """
 from uuid import UUID
+from pathlib import Path
 from datetime import datetime
 from sqlalchemy.orm import Session
 
@@ -22,6 +23,7 @@ from app.services.enrichment import ContextualEnricher
 from app.services.embeddings import embedding_service
 from app.services.vector_store import vector_store_service
 from app.services.storage import storage_service
+from app.services.usage_tracker import UsageTracker, QuotaExceededError
 from app.core.config import settings
 
 
@@ -60,6 +62,7 @@ def _download_youtube_audio(video_id: str, youtube_url: str, user_id: str):
     db = SessionLocal()
     video_uuid = UUID(video_id)
     user_uuid = UUID(user_id)
+    usage_tracker = UsageTracker(db)
 
     try:
         print(f"[pipeline] Download start for video={video_id}")
@@ -86,11 +89,35 @@ def _download_youtube_audio(video_id: str, youtube_url: str, user_id: str):
         video.progress_percent = 100.0
         db.commit()
 
+        # Track download/storage usage now that we know the file size
+        try:
+            usage_tracker.check_quota(user_uuid, "storage", file_size_mb)
+        except Exception:
+            # Quota check failure should stop the pipeline
+            raise
+
+        try:
+            usage_tracker.track_video_ingestion(
+                user_uuid,
+                video_uuid,
+                video.duration_seconds or 0,
+                file_size_mb,
+            )
+        except Exception as e:
+            print(f"[usage] Failed to track ingestion for video={video_id}: {e}")
+
         print(f"[pipeline] Download complete for video={video_id}, size_mb={file_size_mb}")
         return {
             "audio_path": audio_path,
             "file_size_mb": file_size_mb
         }
+    except QuotaExceededError as e:
+        update_video_status(db, video_uuid, "failed", 0.0, f"Storage quota exceeded: {str(e)}")
+        try:
+            storage_service.delete_audio(user_uuid, video_uuid)
+        except Exception:
+            pass
+        raise
     except YouTubeDownloadError as e:
         update_video_status(db, video_uuid, "failed", 0.0, str(e))
         raise
@@ -105,6 +132,7 @@ def _transcribe_audio(video_id: str, audio_path: str):
     """Internal helper to transcribe audio synchronously."""
     db = SessionLocal()
     video_uuid = UUID(video_id)
+    usage_tracker = UsageTracker(db)
 
     try:
         print(f"[pipeline] Transcription start for video={video_id}, audio={audio_path}")
@@ -165,10 +193,46 @@ def _transcribe_audio(video_id: str, audio_path: str):
             "duration_seconds": result.duration_seconds,
             "word_count": result.word_count
         }
-        storage_service.save_transcript(video.user_id, video_uuid, transcript_data)
+        transcript_path = storage_service.save_transcript(video.user_id, video_uuid, transcript_data)
+        video.transcript_file_path = transcript_path
+        db.commit()
+
+        transcript_size_mb = 0.0
+        try:
+            transcript_size_mb = Path(transcript_path).stat().st_size / (1024 * 1024)
+            usage_tracker.track_storage_usage(
+                video.user_id,
+                transcript_size_mb,
+                reason="transcript_saved",
+                video_id=video_uuid,
+                extra_metadata={"segments": len(result.segments)},
+            )
+        except Exception as e:
+            print(f"[usage] Failed to track transcript storage for video={video_id}: {e}")
 
         if settings.cleanup_audio_after_transcription:
-            storage_service.delete_audio(video.user_id, video_uuid)
+            audio_removed = storage_service.delete_audio(video.user_id, video_uuid)
+            try:
+                if audio_removed and video.audio_file_size_mb:
+                    usage_tracker.track_storage_usage(
+                        video.user_id,
+                        -video.audio_file_size_mb,
+                        reason="audio_cleaned",
+                        video_id=video_uuid,
+                    )
+            except Exception as e:
+                print(f"[usage] Failed to track audio cleanup for video={video_id}: {e}")
+
+        try:
+            usage_tracker.track_transcription(
+                video.user_id,
+                video_uuid,
+                result.duration_seconds,
+                len(result.segments),
+                getattr(result, "model", None) or "whisper",
+            )
+        except Exception as e:
+            print(f"[usage] Failed to track transcription event for video={video_id}: {e}")
 
         print(f"[pipeline] Transcription complete for video={video_id}")
 
@@ -270,6 +334,7 @@ def _embed_and_index(video_id: str, user_id: str):
     db = SessionLocal()
     video_uuid = UUID(video_id)
     user_uuid = UUID(user_id)
+    usage_tracker = UsageTracker(db)
 
     try:
         print(f"[pipeline] Embed/index start for video={video_id}")
@@ -332,6 +397,16 @@ def _embed_and_index(video_id: str, user_id: str):
         video.completed_at = datetime.utcnow()
         db.commit()
 
+        try:
+            usage_tracker.track_embedding_generation(
+                user_uuid,
+                len(chunks),
+                embedding_service.get_model_name(),
+                embedding_service.get_dimensions(),
+            )
+        except Exception as e:
+            print(f"[usage] Failed to track embedding event for video={video_id}: {e}")
+
         print(f"[pipeline] Embed/index complete for video={video_id}, indexed={len(chunks)}")
         return {"indexed_count": len(chunks)}
     except Exception as e:
@@ -356,6 +431,10 @@ def download_youtube_audio(self, video_id: str, youtube_url: str, user_id: str):
     """
     try:
         return _download_youtube_audio(video_id, youtube_url, user_id)
+
+    except QuotaExceededError as e:
+        # Bubble up quota failures without retries
+        raise e
 
     except YouTubeDownloadError as e:
         raise

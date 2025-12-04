@@ -6,7 +6,7 @@ Handles downloading audio from YouTube videos and extracting metadata.
 import tempfile
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, List
 from uuid import UUID
 import yt_dlp
 
@@ -25,6 +25,48 @@ class YouTubeService:
     def __init__(self):
         self.max_duration = settings.max_video_duration_seconds
         self.max_file_size = settings.max_video_file_size_mb * 1024 * 1024  # Convert to bytes
+        self._default_headers = {
+            # Modern desktop UA helps avoid 403s on some videos
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0.0.0 Safari/537.36"
+            ),
+            "Accept-Language": "en-US,en;q=0.9",
+            "Origin": "https://www.youtube.com",
+            "Referer": "https://www.youtube.com",
+        }
+
+    def _normalize_url(self, url: str) -> str:
+        """
+        Normalize YouTube URLs to canonical watch form so yt-dlp avoids odd query params.
+        """
+        video_id = self.extract_video_id(url)
+        return f"https://www.youtube.com/watch?v={video_id}"
+
+    def _common_yt_opts(self, player_client: Optional[str] = None, referer: Optional[str] = None) -> Dict:
+        """
+        Shared yt-dlp options to reduce 403/availability issues.
+        """
+        client_profiles: List[str] = [player_client] if player_client else ["android", "web", "ios"]
+        headers = dict(self._default_headers)
+        if referer:
+            headers["Referer"] = referer
+
+        return {
+            "http_headers": headers,
+            "extractor_args": {
+                "youtube": {
+                    # Try multiple client profiles; Android often avoids rate/region blocks
+                    "player_client": client_profiles,
+                }
+            },
+            "geo_bypass": True,
+            "geo_bypass_country": "US",
+            "nocheckcertificate": True,
+            # Force IPv4 to avoid IPv6-only blocks that can manifest as 403s
+            "source_address": "0.0.0.0",
+        }
 
     def extract_video_id(self, url: str) -> str:
         """
@@ -67,16 +109,18 @@ class YouTubeService:
         Raises:
             YouTubeDownloadError: If metadata extraction fails
         """
+        normalized_url = self._normalize_url(url)
+
         ydl_opts = {
-            'quiet': True,
-            'no_warnings': True,
-            'extract_flat': False,
-            'nocheckcertificate': True,  # Bypass SSL verification (corporate environment)
+            "quiet": True,
+            "no_warnings": True,
+            "extract_flat": False,
+            **self._common_yt_opts(referer=normalized_url),
         }
 
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=False)
+                info = ydl.extract_info(normalized_url, download=False)
 
                 # Extract chapter information if available
                 chapters = None
@@ -164,47 +208,89 @@ class YouTubeService:
         Raises:
             YouTubeDownloadError: If download fails
         """
+        normalized_url = self._normalize_url(url)
         # Create temporary directory for download
         temp_dir = Path(tempfile.mkdtemp())
         output_template = str(temp_dir / "audio.%(ext)s")
 
-        ydl_opts = {
-            'format': 'bestaudio/best',
-            'outtmpl': output_template,
-            'postprocessors': [{
-                'key': 'FFmpegExtractAudio',
-                'preferredcodec': 'mp3',
-                'preferredquality': '192',
-            }],
-            'quiet': False,
-            'no_warnings': False,
-            'extract_flat': False,
-            'nocheckcertificate': True,  # Bypass SSL verification (corporate environment)
-        }
+        def build_ydl_opts(player_client: str, fmt: str):
+            opts = {
+                "format": fmt,
+                "outtmpl": output_template,
+                "postprocessors": [
+                    {
+                        "key": "FFmpegExtractAudio",
+                        "preferredcodec": "mp3",
+                        "preferredquality": "192",
+                    }
+                ],
+                # Keep downloads resilient to transient 403s/throttling
+                "noplaylist": True,
+                "retries": 3,
+                "fragment_retries": 3,
+                "http_chunk_size": 10 * 1024 * 1024,  # 10MB chunks to avoid huge range requests
+                "concurrent_fragment_downloads": 3,
+                "quiet": False,
+                "no_warnings": False,
+                "extract_flat": False,
+                **self._common_yt_opts(player_client=player_client, referer=normalized_url),
+            }
 
-        # Add progress hook if provided
-        if progress_callback:
-            def progress_hook(d):
-                if d['status'] == 'downloading':
-                    progress_callback({
-                        'status': 'downloading',
-                        'downloaded_bytes': d.get('downloaded_bytes', 0),
-                        'total_bytes': d.get('total_bytes') or d.get('total_bytes_estimate', 0),
-                        'speed': d.get('speed', 0),
-                        'eta': d.get('eta', 0),
-                    })
-                elif d['status'] == 'finished':
-                    progress_callback({
-                        'status': 'processing',
-                        'message': 'Converting to MP3...'
-                    })
+            # Add progress hook if provided
+            if progress_callback:
+                def progress_hook(d):
+                    if d['status'] == 'downloading':
+                        progress_callback({
+                            'status': 'downloading',
+                            'downloaded_bytes': d.get('downloaded_bytes', 0),
+                            'total_bytes': d.get('total_bytes') or d.get('total_bytes_estimate', 0),
+                            'speed': d.get('speed', 0),
+                            'eta': d.get('eta', 0),
+                        })
+                    elif d['status'] == 'finished':
+                        progress_callback({
+                            'status': 'processing',
+                            'message': 'Converting to MP3...'
+                        })
 
-            ydl_opts['progress_hooks'] = [progress_hook]
+                opts['progress_hooks'] = [progress_hook]
+            return opts
 
         try:
-            # Download audio
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([url])
+            # Try multiple client profiles and format fallbacks to dodge 403/region blocks
+            client_candidates = ["android", "ios", "web"]
+            format_candidates = [
+                "bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio/best",
+                "bestaudio/best",
+            ]
+            errors = []
+            download_success = False
+
+            for client in client_candidates:
+                for fmt in format_candidates:
+                    try:
+                        with yt_dlp.YoutubeDL(build_ydl_opts(client, fmt)) as ydl:
+                            ydl.download([normalized_url])
+                        download_success = True
+                        break
+                    except yt_dlp.utils.DownloadError as e:
+                        # Remove any partial files before retrying with another strategy
+                        for leftover in temp_dir.glob("audio.*"):
+                            try:
+                                leftover.unlink()
+                            except Exception:
+                                pass
+                        errors.append(f"{client}/{fmt}: {str(e)}")
+                    except Exception as e:
+                        errors.append(f"{client}/{fmt}: {str(e)}")
+                if download_success:
+                    break
+
+            if not download_success:
+                raise YouTubeDownloadError(
+                    "Failed to download audio after trying multiple strategies "
+                    f"(last errors: {' | '.join(errors[-3:])})"
+                )
 
             # Find downloaded file
             audio_file = None

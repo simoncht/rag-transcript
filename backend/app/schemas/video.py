@@ -82,6 +82,8 @@ class VideoDetail(BaseModel):
     chunk_count: int
     transcription_language: Optional[str] = None
     audio_file_size_mb: Optional[float] = None
+    transcript_size_mb: Optional[float] = None
+    storage_total_mb: Optional[float] = None
 
     # Timestamps
     created_at: datetime

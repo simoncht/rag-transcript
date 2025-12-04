@@ -1,5 +1,5 @@
 import { apiClient } from "./client";
-import { Video, VideoListResponse, VideoUpdateTagsRequest } from "../types";
+import { Video, VideoListResponse, VideoUpdateTagsRequest, TranscriptDetail } from "../types";
 
 export const videosApi = {
   async list(skip = 0, limit = 50): Promise<VideoListResponse> {
@@ -29,6 +29,11 @@ export const videosApi = {
     const response = await apiClient.patch(`/videos/${videoId}/tags`, {
       tags,
     } as VideoUpdateTagsRequest);
+    return response.data;
+  },
+
+  async getTranscript(videoId: string): Promise<TranscriptDetail> {
+    const response = await apiClient.get(`/videos/${videoId}/transcript`);
     return response.data;
   },
 };
