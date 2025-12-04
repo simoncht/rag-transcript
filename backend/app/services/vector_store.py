@@ -228,6 +228,7 @@ class QdrantVectorStore(VectorStore):
         """
         # Build filter conditions
         must_conditions = []
+        should_conditions = []
 
         if user_id:
             must_conditions.append(
@@ -238,9 +239,9 @@ class QdrantVectorStore(VectorStore):
             )
 
         if video_ids:
-            # Filter by video IDs (match any)
+            # Filter by video IDs (match any - OR logic)
             for video_id in video_ids:
-                must_conditions.append(
+                should_conditions.append(
                     FieldCondition(
                         key="video_id",
                         match=MatchValue(value=str(video_id))
@@ -259,8 +260,11 @@ class QdrantVectorStore(VectorStore):
 
         # Build Qdrant filter
         query_filter = None
-        if must_conditions:
-            query_filter = Filter(must=must_conditions)
+        if must_conditions or should_conditions:
+            query_filter = Filter(
+                must=must_conditions if must_conditions else None,
+                should=should_conditions if should_conditions else None
+            )
 
         # Perform search
         search_results = self.client.search(
