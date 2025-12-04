@@ -25,7 +25,7 @@ class Settings(BaseSettings):
 
     # API
     api_v1_prefix: str = "/api/v1"
-    backend_cors_origins: List[str] = ["http://localhost:3000", "http://localhost:8000"]
+    backend_cors_origins: List[str] = ["http://localhost:3000", "http://localhost:3001", "http://localhost:8000"]
 
     @field_validator("backend_cors_origins", mode="before")
     @classmethod
