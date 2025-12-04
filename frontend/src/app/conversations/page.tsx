@@ -6,12 +6,17 @@ import { useRouter } from "next/navigation";
 import { MainLayout } from "@/components/layout/MainLayout";
 import { conversationsApi } from "@/lib/api/conversations";
 import { videosApi } from "@/lib/api/videos";
-import { Plus, Trash2, MessageSquare, Loader2 } from "lucide-react";
+import { getCollections } from "@/lib/api/collections";
+import { Plus, Trash2, MessageSquare, Loader2, Folder } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
+
+type SelectionMode = "collection" | "custom";
 
 export default function ConversationsPage() {
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [title, setTitle] = useState("");
+  const [selectionMode, setSelectionMode] = useState<SelectionMode>("collection");
+  const [selectedCollectionId, setSelectedCollectionId] = useState("");
   const [selectedVideoIds, setSelectedVideoIds] = useState<string[]>([]);
   const queryClient = useQueryClient();
   const router = useRouter();
@@ -24,16 +29,23 @@ export default function ConversationsPage() {
   const { data: videosData } = useQuery({
     queryKey: ["videos"],
     queryFn: () => videosApi.list(),
-    enabled: showCreateForm,
+    enabled: showCreateForm && selectionMode === "custom",
+  });
+
+  const { data: collectionsData } = useQuery({
+    queryKey: ["collections"],
+    queryFn: getCollections,
+    enabled: showCreateForm && selectionMode === "collection",
   });
 
   const createMutation = useMutation({
-    mutationFn: ({ title, videoIds }: { title: string; videoIds: string[] }) =>
-      conversationsApi.create(title, videoIds),
+    mutationFn: ({ title, options }: { title: string; options: { selectedVideoIds?: string[]; collectionId?: string } }) =>
+      conversationsApi.create(title, options),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["conversations"] });
       setTitle("");
       setSelectedVideoIds([]);
+      setSelectedCollectionId("");
       setShowCreateForm(false);
       router.push(`/conversations/${data.id}`);
     },
@@ -48,8 +60,10 @@ export default function ConversationsPage() {
 
   const handleCreate = (e: React.FormEvent) => {
     e.preventDefault();
-    if (selectedVideoIds.length > 0) {
-      createMutation.mutate({ title, videoIds: selectedVideoIds });
+    if (selectionMode === "collection" && selectedCollectionId) {
+      createMutation.mutate({ title, options: { collectionId: selectedCollectionId } });
+    } else if (selectionMode === "custom" && selectedVideoIds.length > 0) {
+      createMutation.mutate({ title, options: { selectedVideoIds } });
     }
   };
 
@@ -103,35 +117,95 @@ export default function ConversationsPage() {
                   className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
                 />
               </div>
+              {/* Selection Mode */}
               <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Select Videos
+                <label className="block text-sm font-medium text-gray-700 mb-3">
+                  Select videos from:
                 </label>
-                <div className="max-h-48 overflow-y-auto border border-gray-300 rounded-md">
-                  {completedVideos?.length === 0 ? (
-                    <p className="p-4 text-sm text-gray-500">
-                      No completed videos available. Please ingest videos first.
-                    </p>
-                  ) : (
-                    <div className="divide-y divide-gray-200">
-                      {completedVideos?.map((video) => (
-                        <label
-                          key={video.id}
-                          className="flex items-center p-3 hover:bg-gray-50 cursor-pointer"
-                        >
-                          <input
-                            type="checkbox"
-                            checked={selectedVideoIds.includes(video.id)}
-                            onChange={() => toggleVideoSelection(video.id)}
-                            className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-                          />
-                          <span className="ml-3 text-sm text-gray-900">
-                            {video.title}
-                          </span>
-                        </label>
-                      ))}
+                <div className="space-y-3">
+                  {/* Collection Mode */}
+                  <label className="flex items-start cursor-pointer">
+                    <input
+                      type="radio"
+                      name="selectionMode"
+                      value="collection"
+                      checked={selectionMode === "collection"}
+                      onChange={(e) => setSelectionMode(e.target.value as SelectionMode)}
+                      className="mt-1 h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300"
+                    />
+                    <div className="ml-3 flex-1">
+                      <span className="block text-sm font-medium text-gray-900">
+                        Entire Collection
+                      </span>
+                      <p className="text-xs text-gray-500 mt-1">
+                        Chat with all videos from a collection
+                      </p>
+                      {selectionMode === "collection" && (
+                        <div className="mt-3">
+                          <select
+                            value={selectedCollectionId}
+                            onChange={(e) => setSelectedCollectionId(e.target.value)}
+                            className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                          >
+                            <option value="">Select a collection...</option>
+                            {collectionsData?.collections.map((collection) => (
+                              <option key={collection.id} value={collection.id}>
+                                {collection.name} ({collection.video_count} videos)
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
                     </div>
-                  )}
+                  </label>
+
+                  {/* Custom Selection Mode */}
+                  <label className="flex items-start cursor-pointer">
+                    <input
+                      type="radio"
+                      name="selectionMode"
+                      value="custom"
+                      checked={selectionMode === "custom"}
+                      onChange={(e) => setSelectionMode(e.target.value as SelectionMode)}
+                      className="mt-1 h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300"
+                    />
+                    <div className="ml-3 flex-1">
+                      <span className="block text-sm font-medium text-gray-900">
+                        Custom Selection
+                      </span>
+                      <p className="text-xs text-gray-500 mt-1">
+                        Choose specific videos
+                      </p>
+                      {selectionMode === "custom" && (
+                        <div className="mt-3 max-h-48 overflow-y-auto border border-gray-300 rounded-md">
+                          {completedVideos?.length === 0 ? (
+                            <p className="p-4 text-sm text-gray-500">
+                              No completed videos available. Please ingest videos first.
+                            </p>
+                          ) : (
+                            <div className="divide-y divide-gray-200">
+                              {completedVideos?.map((video) => (
+                                <label
+                                  key={video.id}
+                                  className="flex items-center p-3 hover:bg-gray-50 cursor-pointer"
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={selectedVideoIds.includes(video.id)}
+                                    onChange={() => toggleVideoSelection(video.id)}
+                                    className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                                  />
+                                  <span className="ml-3 text-sm text-gray-900">
+                                    {video.title}
+                                  </span>
+                                </label>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </label>
                 </div>
               </div>
               <div className="flex justify-end space-x-3">
@@ -141,6 +215,8 @@ export default function ConversationsPage() {
                     setShowCreateForm(false);
                     setTitle("");
                     setSelectedVideoIds([]);
+                    setSelectedCollectionId("");
+                    setSelectionMode("collection");
                   }}
                   className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
                 >
@@ -149,7 +225,9 @@ export default function ConversationsPage() {
                 <button
                   type="submit"
                   disabled={
-                    selectedVideoIds.length === 0 || createMutation.isPending
+                    createMutation.isPending ||
+                    (selectionMode === "collection" && !selectedCollectionId) ||
+                    (selectionMode === "custom" && selectedVideoIds.length === 0)
                   }
                   className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
                 >

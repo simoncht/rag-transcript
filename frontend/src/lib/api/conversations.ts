@@ -21,11 +21,12 @@ export const conversationsApi = {
 
   async create(
     title: string,
-    selectedVideoIds: string[]
+    options: { selectedVideoIds?: string[]; collectionId?: string }
   ): Promise<Conversation> {
     const response = await apiClient.post("/conversations", {
       title,
-      selected_video_ids: selectedVideoIds,
+      selected_video_ids: options.selectedVideoIds,
+      collection_id: options.collectionId,
     });
     return response.data;
   },
