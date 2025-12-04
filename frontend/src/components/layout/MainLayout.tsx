@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import { Video, MessageSquare, LogOut, Folder } from "lucide-react";
 import { useAuthStore } from "@/lib/store/auth";
 
-export function MainLayout({ children }: { children: React.ReactNode }) {
+export const MainLayout = ({ children }: { children: React.ReactNode }) => {
   const pathname = usePathname();
   const { user, clearAuth } = useAuthStore();
 
@@ -72,4 +72,4 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
       <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">{children}</main>
     </div>
   );
-}
+};
