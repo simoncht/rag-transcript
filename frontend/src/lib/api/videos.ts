@@ -1,5 +1,5 @@
 import { apiClient } from "./client";
-import { Video, VideoListResponse, VideoUpdateTagsRequest, TranscriptDetail } from "../types";
+import { Video, VideoListResponse, VideoUpdateTagsRequest, TranscriptDetail, VideoDeleteRequest, VideoDeleteResponse } from "../types";
 
 export const videosApi = {
   async list(skip = 0, limit = 50): Promise<VideoListResponse> {
@@ -23,6 +23,11 @@ export const videosApi = {
 
   async delete(videoId: string): Promise<void> {
     await apiClient.delete(`/videos/${videoId}`);
+  },
+
+  async deleteMultiple(request: VideoDeleteRequest): Promise<VideoDeleteResponse> {
+    const response = await apiClient.post("/videos/delete", request);
+    return response.data;
   },
 
   async updateTags(videoId: string, tags: string[]): Promise<Video> {

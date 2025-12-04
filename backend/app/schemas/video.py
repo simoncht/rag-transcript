@@ -115,3 +115,60 @@ class VideoIngestResponse(BaseModel):
                 "message": "Video ingestion started"
             }
         }
+
+
+class VideoDeleteBreakdown(BaseModel):
+    """Storage breakdown for a single video."""
+    video_id: UUID
+    title: str
+    audio_size_mb: float
+    transcript_size_mb: float
+    index_size_mb: float
+    total_size_mb: float
+
+
+class VideoDeleteRequest(BaseModel):
+    """Request to delete videos with granular options."""
+    video_ids: List[UUID]
+    remove_from_library: bool = True  # Soft delete in DB
+    delete_search_index: bool = True  # Remove from vector store
+    delete_audio: bool = True  # Delete audio files
+    delete_transcript: bool = True  # Delete transcript files
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "video_ids": ["550e8400-e29b-41d4-a716-446655440000"],
+                "remove_from_library": True,
+                "delete_search_index": True,
+                "delete_audio": True,
+                "delete_transcript": True
+            }
+        }
+
+
+class VideoDeleteResponse(BaseModel):
+    """Response from video deletion with storage savings."""
+    deleted_count: int
+    videos: List[VideoDeleteBreakdown]
+    total_savings_mb: float
+    message: str
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "deleted_count": 1,
+                "videos": [
+                    {
+                        "video_id": "550e8400-e29b-41d4-a716-446655440000",
+                        "title": "Example Video",
+                        "audio_size_mb": 45.2,
+                        "transcript_size_mb": 0.5,
+                        "index_size_mb": 2.1,
+                        "total_size_mb": 47.8
+                    }
+                ],
+                "total_savings_mb": 47.8,
+                "message": "Videos deleted successfully"
+            }
+        }

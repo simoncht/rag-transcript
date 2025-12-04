@@ -44,6 +44,30 @@ export interface TranscriptDetail {
   segments: TranscriptSegment[];
 }
 
+export interface VideoDeleteBreakdown {
+  video_id: string;
+  title: string;
+  audio_size_mb: number;
+  transcript_size_mb: number;
+  index_size_mb: number;
+  total_size_mb: number;
+}
+
+export interface VideoDeleteRequest {
+  video_ids: string[];
+  remove_from_library: boolean;
+  delete_search_index: boolean;
+  delete_audio: boolean;
+  delete_transcript: boolean;
+}
+
+export interface VideoDeleteResponse {
+  deleted_count: number;
+  videos: VideoDeleteBreakdown[];
+  total_savings_mb: number;
+  message: string;
+}
+
 export interface Conversation {
   id: string;
   title: string;

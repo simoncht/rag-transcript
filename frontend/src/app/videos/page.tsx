@@ -6,7 +6,8 @@ import { MainLayout } from "@/components/layout/MainLayout";
 import { videosApi } from "@/lib/api/videos";
 import { usageApi } from "@/lib/api/usage";
 import { getCollections } from "@/lib/api/collections";
-import { Video } from "@/lib/types";
+import { Video, VideoDeleteRequest } from "@/lib/types";
+import { DeleteConfirmationModal } from "@/components/videos/DeleteConfirmationModal";
 import {
   Plus,
   Trash2,
@@ -32,6 +33,8 @@ export default function VideosPage() {
   const [manageTagsVideo, setManageTagsVideo] = useState<Video | null>(null);
   const [selectedVideoIds, setSelectedVideoIds] = useState<Set<string>>(new Set());
   const [openTranscriptVideoId, setOpenTranscriptVideoId] = useState<string | null>(null);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [videosToDelete, setVideosToDelete] = useState<Video[]>([]);
   const queryClient = useQueryClient();
 
   const { data: usageSummary } = useQuery({
@@ -91,12 +94,19 @@ export default function VideosPage() {
   });
 
   const bulkDeleteMutation = useMutation({
-    mutationFn: async (videoIds: string[]) => {
-      await Promise.all(videoIds.map((id) => videosApi.delete(id)));
+    mutationFn: async (request: VideoDeleteRequest) => {
+      return videosApi.deleteMultiple(request);
     },
     onSuccess: () => {
       setSelectedVideoIds(new Set());
+      setShowDeleteModal(false);
+      setVideosToDelete([]);
       queryClient.invalidateQueries({ queryKey: ["videos"] });
+      queryClient.invalidateQueries({ queryKey: ["usage-summary"] });
+    },
+    onError: (error) => {
+      console.error("Delete failed:", error);
+      alert("Failed to delete videos. Please try again.");
     },
   });
 
@@ -123,21 +133,33 @@ export default function VideosPage() {
 
   const handleDelete = (video: Video) => {
     if (!isDeletable(video)) return;
-    const confirmed = window.confirm(
-      `Delete "${video.title}"? This removes the audio, transcript, and search index. This cannot be undone.`
-    );
-    if (!confirmed) return;
-    deleteMutation.mutate(video.id);
+    setVideosToDelete([video]);
+    setShowDeleteModal(true);
   };
 
   const handleBulkDelete = () => {
     const ids = Array.from(selectedVideoIds);
     if (ids.length === 0) return;
-    const confirmed = window.confirm(
-      `Delete ${ids.length} selected video(s)? This removes audio, transcripts, and search index entries. This cannot be undone.`
-    );
-    if (!confirmed) return;
-    bulkDeleteMutation.mutate(ids);
+    const videosToDelete = data?.videos.filter((v) => ids.includes(v.id)) || [];
+    setVideosToDelete(videosToDelete);
+    setShowDeleteModal(true);
+  };
+
+  const handleConfirmDelete = async (options: {
+    removeFromLibrary: boolean;
+    deleteSearchIndex: boolean;
+    deleteAudio: boolean;
+    deleteTranscript: boolean;
+  }) => {
+    const videoIds = videosToDelete.map((v) => v.id);
+    const request: VideoDeleteRequest = {
+      video_ids: videoIds,
+      remove_from_library: options.removeFromLibrary,
+      delete_search_index: options.deleteSearchIndex,
+      delete_audio: options.deleteAudio,
+      delete_transcript: options.deleteTranscript,
+    };
+    bulkDeleteMutation.mutate(request);
   };
 
   const getStatusColor = (status: Video["status"]) => {
@@ -469,6 +491,22 @@ export default function VideosPage() {
                     }}
                   />
                 </div>
+                <div className="mt-3 p-3 bg-blue-50 rounded-md border border-blue-100">
+                  <p className="text-xs text-blue-700">
+                    <span className="font-semibold">Potential savings:</span> Delete{" "}
+                    {data?.videos.length || 0} video(s) to free{" "}
+                    {formatMb(
+                      (data?.videos.reduce(
+                        (sum, v) =>
+                          sum +
+                          (v.audio_file_size_mb || 0) +
+                          (v.transcript_size_mb || 0),
+                        0
+                      ) || 0) * 1.15
+                    )}{" "}
+                    (est.)
+                  </p>
+                </div>
               </div>
             </div>
             <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
@@ -563,7 +601,7 @@ export default function VideosPage() {
           <div className="bg-white shadow overflow-hidden sm:rounded-md">
             <div className="flex items-center justify-between px-6 py-3 border-b border-gray-200">
               <div className="text-sm text-gray-600">
-                Select completed videos to delete. Deletion removes audio, transcripts, and search index data.
+                Select completed videos. You'll choose what to delete to save space.
               </div>
               <div className="flex items-center space-x-2">
                 <button
@@ -596,7 +634,7 @@ export default function VideosPage() {
                             aria-label={`Select ${video.title} for deletion`}
                           />
                           <span className="ml-2 text-xs text-gray-500">
-                            {isDeletable(video) ? "Ready for deletion" : "Wait until completed"}
+                            {isDeletable(video) ? "Select for cleanup" : "Wait until completed"}
                           </span>
                         </div>
                         <div className="flex items-center space-x-3">
@@ -744,6 +782,16 @@ export default function VideosPage() {
             videoTitle={manageTagsVideo.title}
             currentTags={manageTagsVideo.tags || []}
             onClose={() => setManageTagsVideo(null)}
+          />
+        )}
+
+        {/* Delete Confirmation Modal */}
+        {showDeleteModal && videosToDelete.length > 0 && (
+          <DeleteConfirmationModal
+            videos={videosToDelete}
+            onConfirm={handleConfirmDelete}
+            onCancel={() => setShowDeleteModal(false)}
+            isLoading={bulkDeleteMutation.isPending}
           />
         )}
       </div>

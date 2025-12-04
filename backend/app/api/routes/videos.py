@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.db.base import get_db
 from app.models import Video, Job, Transcript, User
-from app.schemas import VideoIngestRequest, VideoIngestResponse, VideoDetail, VideoList, VideoUpdateTagsRequest, TranscriptDetail
+from app.schemas import VideoIngestRequest, VideoIngestResponse, VideoDetail, VideoList, VideoUpdateTagsRequest, TranscriptDetail, VideoDeleteRequest, VideoDeleteResponse, VideoDeleteBreakdown
 from app.services.youtube import youtube_service, YouTubeDownloadError
 from app.services.usage_tracker import UsageTracker, QuotaExceededError
 from app.services.vector_store import vector_store_service
@@ -295,6 +295,124 @@ async def get_video_transcript(
     return TranscriptDetail.model_validate(transcript)
 
 
+def _get_transcript_size_mb(video: Video) -> float:
+    """Calculate transcript size in MB."""
+    if video.transcript_file_path:
+        try:
+            return Path(video.transcript_file_path).stat().st_size / (1024 * 1024)
+        except Exception:
+            pass
+
+    transcript = video.transcript
+    if transcript and transcript.full_text:
+        return len(transcript.full_text.encode("utf-8")) / (1024 * 1024)
+    return 0.0
+
+
+def _estimate_index_size_mb(video: Video) -> float:
+    """Estimate vector index size (~3.3 KB per chunk)."""
+    if video.chunk_count == 0:
+        return 0.0
+    return (video.chunk_count * 3.3) / 1024.0
+
+
+@router.post("/delete", response_model=VideoDeleteResponse)
+async def delete_videos(
+    request: VideoDeleteRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Delete one or more videos with granular options.
+
+    Options:
+    - remove_from_library: Soft delete in database
+    - delete_search_index: Remove chunks from vector store
+    - delete_audio: Delete audio files from disk
+    - delete_transcript: Delete transcript files from disk
+
+    Args:
+        request: VideoDeleteRequest with video_ids and deletion options
+
+    Returns:
+        VideoDeleteResponse with breakdown and total savings
+    """
+    if not request.video_ids:
+        raise HTTPException(status_code=400, detail="No videos specified")
+
+    videos = db.query(Video).filter(
+        Video.id.in_(request.video_ids),
+        Video.user_id == current_user.id,
+        Video.is_deleted == False
+    ).all()
+
+    if not videos:
+        raise HTTPException(status_code=404, detail="No deletable videos found")
+
+    if len(videos) != len(request.video_ids):
+        raise HTTPException(status_code=404, detail="Some videos not found or already deleted")
+
+    breakdowns = []
+    total_savings = 0.0
+
+    for video in videos:
+        # Calculate sizes
+        audio_size = video.audio_file_size_mb or 0.0
+        transcript_size = round(_get_transcript_size_mb(video), 3)
+        index_size = round(_estimate_index_size_mb(video), 3)
+        total_size = audio_size + transcript_size + index_size
+
+        breakdown = VideoDeleteBreakdown(
+            video_id=video.id,
+            title=video.title,
+            audio_size_mb=round(audio_size, 3),
+            transcript_size_mb=transcript_size,
+            index_size_mb=index_size,
+            total_size_mb=round(total_size, 3)
+        )
+        breakdowns.append(breakdown)
+
+        # Delete files if requested
+        if request.delete_audio and video.audio_file_path:
+            try:
+                audio_path = Path(video.audio_file_path)
+                if audio_path.exists():
+                    audio_path.unlink()
+            except Exception as e:
+                print(f"Warning: Failed to delete audio file: {str(e)}")
+
+        if request.delete_transcript and video.transcript_file_path:
+            try:
+                transcript_path = Path(video.transcript_file_path)
+                if transcript_path.exists():
+                    transcript_path.unlink()
+            except Exception as e:
+                print(f"Warning: Failed to delete transcript file: {str(e)}")
+
+        # Delete from vector store if requested
+        if request.delete_search_index:
+            try:
+                vector_store_service.delete_video(video.id)
+            except Exception as e:
+                print(f"Warning: Failed to delete video from vector store: {str(e)}")
+
+        # Soft delete from database if requested
+        if request.remove_from_library:
+            video.is_deleted = True
+            video.deleted_at = None  # Will be set by model
+
+        total_savings += total_size
+
+    db.commit()
+
+    return VideoDeleteResponse(
+        deleted_count=len(videos),
+        videos=breakdowns,
+        total_savings_mb=round(total_savings, 3),
+        message=f"Successfully deleted {len(videos)} video(s)"
+    )
+
+
 @router.delete("/{video_id}")
 async def delete_video(
     video_id: uuid.UUID,
@@ -302,12 +420,9 @@ async def delete_video(
     current_user: User = Depends(get_current_user)
 ):
     """
-    Delete a video (soft delete).
+    Delete a single video (backward compatibility endpoint).
 
-    This will:
-    - Mark video as deleted in database
-    - Remove chunks from vector store
-    - Optionally clean up storage files
+    Soft deletes from library and removes from search index.
 
     Args:
         video_id: Video UUID
@@ -315,27 +430,14 @@ async def delete_video(
     Returns:
         Success message
     """
-    video = db.query(Video).filter(
-        Video.id == video_id,
-        Video.user_id == current_user.id,
-        Video.is_deleted == False
-    ).first()
-
-    if not video:
-        raise HTTPException(status_code=404, detail="Video not found")
-
-    # Soft delete video
-    video.is_deleted = True
-    video.deleted_at = None  # Will be set by model
-    db.commit()
-
-    # Delete from vector store (async, best effort)
-    try:
-        vector_store_service.delete_video(video_id)
-    except Exception as e:
-        print(f"Warning: Failed to delete video from vector store: {str(e)}")
-
-    return {"message": "Video deleted successfully", "video_id": str(video_id)}
+    request = VideoDeleteRequest(
+        video_ids=[video_id],
+        remove_from_library=True,
+        delete_search_index=True,
+        delete_audio=True,
+        delete_transcript=True
+    )
+    return await delete_videos(request, db, current_user)
 
 
 @router.patch("/{video_id}/tags", response_model=VideoDetail)
