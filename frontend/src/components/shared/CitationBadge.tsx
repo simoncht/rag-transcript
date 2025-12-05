@@ -125,7 +125,7 @@ export default function CitationBadge({
           {/* Snippet preview */}
           {citation.text_snippet && (
             <div className="mt-3 p-2 bg-bg-tertiary rounded text-xs text-text-secondary leading-relaxed border-l-2 border-accent-main">
-              <p className="line-clamp-3">"{citation.text_snippet}"</p>
+              <p className="line-clamp-3">&quot;{citation.text_snippet}&quot;</p>
             </div>
           )}
         </div>

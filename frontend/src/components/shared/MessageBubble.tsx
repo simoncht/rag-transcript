@@ -52,7 +52,7 @@ export default function MessageBubble({
           <div className="flex flex-wrap gap-2 mt-3 pt-3 border-t border-border-default">
             {citations.map((citation, index) => (
               <CitationBadge
-                key={`${citation.id}-${index}`}
+                key={`${citation.chunk_id}-${index}`}
                 citation={citation}
                 index={index + 1}
               />
