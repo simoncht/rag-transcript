@@ -1,13 +1,48 @@
 # Quick Resume
 
 **Last Updated**: 2025-12-04 (Evening) PST
-**Status**: Phase 3.1 COMPLETE | Phase 4 Planning COMPLETE | Storage Investigation COMPLETE | Pending User Decision
+**Status**: Phase 3.1 COMPLETE | Design System COMPLETE | Ready for Chat Interface Build
+
+## 🎨 Design System: Mindful Learning (NEW - Dec 4 Evening)
+
+Complete, themeable design system for sustainable learning engagement.
+
+### Design Philosophy
+Users spend hours learning and chatting. The interface must be:
+- Beautiful and approachable (warm, not cold tech)
+- Eye-friendly for extended study sessions
+- Professional with personality
+- **Trivially easy to theme/reskin** (change = 1 CSS variable file)
+
+### Color Palette
+- **Primary**: Sage Green (#5B7C6F) - main brand color
+- **Secondary**: Warm Tan (#C89E6F) - accents
+- **Accent**: Soft Terracotta (#D4A574) - citations, CTAs
+- **BG**: Cream (#FDFBF7) + Off-white (#F9F7F3)
+- **Text**: Warm Charcoal (#2C3E3F)
+
+### Components Built
+- ✅ **MessageBubble**: Chat messages with citations, timestamps, response times
+- ✅ **CitationBadge**: Expandable inline citations with relevance scores
+- ✅ **Button**: Multiple variants (primary/secondary/accent/outline/ghost)
+- ✅ **Card**: Elegant container with hover states
+- ✅ **Badge**: Status indicators
+- ✅ **MainLayout**: Navigation with new theme styling
+
+### Theme Infrastructure
+- `/frontend/src/lib/theme/` - All design tokens (colors.ts, typography.ts, spacing.ts)
+- `/frontend/tailwind.config.ts` - Tailwind integration with CSS variables
+- `/frontend/src/app/globals.css` - Global styles + CSS variable definitions
+- **DESIGN_SYSTEM.md** - Complete documentation + theming guide
+
+**See DESIGN_SYSTEM.md for full details**
 
 ## System Check
 
 ```bash
 docker-compose ps              # All 6 running (postgres, redis, qdrant, app, worker [solo], beat)
 curl http://localhost:8000/health  # {"status":"healthy"}
+npm run build                   # Frontend builds successfully (Tailwind + Next.js)
 ```
 
 ## ✅ Phase 3 Complete - Frontend Fully Functional
@@ -176,6 +211,24 @@ npm run dev
 - `c9f703f` - Collections frontend UI (collections page, modal)
 - `9541d70` - Videos page enhancements (add to collection, manage tags)
 - `bcec374` - Conversation creation from collections
+
+## Next Steps (Immediate)
+
+### Chat Interface Implementation
+The design system is ready. Next phase: build the chat interface (conversations page) with:
+1. MessageList component (scroll to bottom, performance optimized)
+2. ChatInputArea component with send button and auto-expand
+3. ConversationPanel wrapper combining the above
+4. Message streaming/loading states
+5. Error handling and retry logic
+
+All will use the new theme components automatically.
+
+### Approach
+- Use existing MessageBubble + CitationBadge components
+- Wire up to backend conversations endpoint
+- Add real-time message updates
+- Test with actual chat data
 
 ## ⏳ Phase 4: Production Ready (Planning Complete)
 
