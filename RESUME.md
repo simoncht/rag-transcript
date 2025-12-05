@@ -1,7 +1,7 @@
 # Quick Resume
 
-**Last Updated**: 2025-12-04 13:30 PST
-**Status**: Phase 3.1 COMPLETE | Phase 4 Planning COMPLETE | Ready for Production Sprint 1 (Authentication)
+**Last Updated**: 2025-12-04 (Evening) PST
+**Status**: Phase 3.1 COMPLETE | Phase 4 Planning COMPLETE | Storage Investigation COMPLETE | Pending User Decision
 
 ## System Check
 
@@ -61,13 +61,43 @@ docker-compose up -d               # Start all
 docker-compose down                # Stop all
 ```
 
-## In-Flight Work (Dec 3)
+## 🔍 Storage Investigation COMPLETE (Dec 4, Evening)
 
+**User's Question**: "Where is 170.5MB coming from if the total of 3 videos is only 52.5MB?"
+
+### Key Finding: Soft Deletion + Orphaned Files
+- **Active videos in database**: 2 (41.265 MB total audio)
+- **Files on disk**: 19 audio files (159.359 MB total)
+- **Difference**: ~118 MB of orphaned audio files from soft-deleted videos
+- **Root Cause**: System uses soft deletion (mark `is_deleted=True` in DB but leave files on disk)
+- **Correct Behavior**: Storage endpoint correctly reports 159.359 MB as actual disk consumption
+
+### Storage Calculation Logic
+Located in `backend/app/api/routes/usage.py` (lines 108-125):
+- Calculates `audio_mb` from active (non-deleted) videos in database
+- Scans entire filesystem with `storage_service.get_storage_usage()` to get actual disk usage
+- Returns `max(database_tracked, actual_disk_usage)` to ensure accuracy
+- Result: Reports true disk consumption even though users only see 2 videos
+
+### Files Involved
+- `backend/app/api/routes/usage.py:108-125` - Storage calculation endpoint
+- `backend/app/services/storage.py:218-236` - Filesystem scanning implementation
+- Database: soft-deleted videos marked `is_deleted=True` but files remain
+
+### ⏳ PENDING USER DECISION
+Three options for handling orphaned files:
+1. **Add "Cleanup Orphaned Files" Button** - Remove 118 MB of soft-deleted audio from disk
+2. **Improve Storage Display** - Show breakdown (active files, orphaned files, total)
+3. **Both** - Implement cleanup mechanism AND improved UI display
+
+**Next Step**: User selects which approach (1, 2, or both) → Implementation begins
+
+### In-Flight Work (Dec 3-4)
 - yt-dlp bumped to `2025.11.12`; app/worker images rebuilt and restarted.
 - Video ingest in progress for `https://www.youtube.com/watch?v=PSP2BFmMO9o` (job `3dc87ac1-40c7-4396-a1a6-72f1f541addd`, video `fab596f1-cbad-4586-b6d5-6a629e6bc183`).
 - Pipeline state: download done, transcription done, chunk/enrich running (LLM calls to host.docker.internal:11434), embed/index pending; UI shows pending until pipeline finishes.
 - Worker runs single concurrency (`--pool=solo --concurrency=1`); additional jobs will queue until this one completes.
-- Videos page: delete now shows a warning confirmation and supports bulk deletion of completed/failed videos via checkboxes + “Delete Selected.”
+- Videos page: delete now shows a warning confirmation and supports bulk deletion of completed/failed videos via checkboxes + "Delete Selected."
 
 ## Technical Notes
 

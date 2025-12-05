@@ -1,6 +1,125 @@
 # Progress Report
 
-**Last Updated**: 2025-12-04 06:40 PST
+**Last Updated**: 2025-12-04 (Evening) PST
+
+## Storage Discrepancy Investigation (2025-12-04 Evening)
+
+### User's Original Question
+"I am still confused where is 170.5mb coming from is the total of the 3 videos is only 52.5"
+
+### Investigation Process & Findings
+
+**Step 1: API Response Analysis**
+- Called `GET /api/v1/usage/summary` endpoint
+- Response showed: `"audio_mb": 41.265, "transcript_mb": 0.022, "disk_usage_mb": 159.359`
+- Discrepancy: frontend displays ~170.5 MB but visible video sum is only ~52.5 MB
+
+**Step 2: Database Query**
+- Checked active videos: `GET /api/v1/videos`
+- Result: Only 2 active videos (Larry David 9.65 MB + Bashar 31.60 MB = 41.25 MB)
+- Soft-deleted videos: At least 17 videos with `is_deleted=True`
+
+**Step 3: Filesystem Analysis**
+- Scanned `/storage/audio/` directory
+- Found: 19 audio files totaling 159.359 MB
+- Pattern: 15 files ~447 KB each (repeated) + 4 larger files (9.7, 32, 32, 44 MB)
+- Only 2 files match active videos in database
+
+**Step 4: Code Path Investigation**
+- `backend/app/api/routes/usage.py:108-125` - Storage calculation logic
+- `backend/app/services/storage.py:218-236` - Filesystem scanner implementation
+
+### Root Cause: Soft Deletion Architecture
+
+**Problem**: The system uses soft deletion:
+- When a video is deleted via API, it's marked `is_deleted=True` in database
+- BUT the actual audio/transcript files remain on disk in `/storage/audio/{user_id}/` and `/storage/transcripts/{user_id}/`
+- These orphaned files consume disk space but aren't linked to any active database record
+
+**Example from actual data**:
+```
+Database (active):
+- Larry David: 9.65 MB
+- Bashar: 31.60 MB
+Total: 41.25 MB
+
+Filesystem (all files):
+- 15 files × 447 KB: ~6.7 MB
+- 9.7 MB file
+- 32 MB file
+- 32 MB file
+- 44 MB file
+- 32 MB file (dup)
+Total: 159.359 MB
+
+Orphaned: 159.359 - 41.265 = ~118 MB
+```
+
+### Storage Calculation Logic (Correct Behavior)
+
+Located in `backend/app/api/routes/usage.py` lines 108-125:
+
+1. **Database audio**: Sums only non-deleted videos' `audio_file_size_mb` → 41.265 MB
+2. **Filesystem scan**: `storage_service.get_storage_usage(user_id)` recursively walks `/storage/audio/{user_id}/` and `/storage/transcripts/{user_id}/` → 159.359 MB
+3. **Final value**: `max(database_tracked, filesystem_actual)` → **159.359 MB**
+4. **Reasoning**: Use maximum to ensure reported usage matches actual disk consumption
+
+### Why This Is Correct
+
+The system correctly reports 159.359 MB because:
+- That's what actually exists on disk
+- Users can't delete files from the filesystem without backend support
+- Soft-deleted videos shouldn't disappear from user's quota immediately
+- The 118 MB of orphaned files is a real issue that needs cleanup
+
+### ⏳ PENDING: User Decision on Resolution
+
+Three options presented:
+
+**Option 1: Add "Cleanup Orphaned Files" Button**
+- Create endpoint that hard-deletes files for soft-deleted videos
+- Remove 118 MB orphaned audio from disk
+- Updates quota to reflect actual usage
+- Implementation: New endpoint `DELETE /api/v1/storage/cleanup` + UI button
+
+**Option 2: Improve Storage Display**
+- Update frontend storage breakdown to show:
+  - Active files: 41.265 MB (2 videos)
+  - Orphaned files: 118 MB (soft-deleted)
+  - Total disk: 159.359 MB
+- Helps users understand where space is going
+- Educational but doesn't free space
+
+**Option 3: Both**
+- Implement cleanup mechanism (removes orphaned files)
+- Improve UI display (shows breakdown before/after cleanup)
+- Best user experience and educational
+
+### Code Files Identified
+
+**Backend - Storage Calculation**
+- `backend/app/api/routes/usage.py:108-125` - GET /api/v1/usage/summary endpoint
+- `backend/app/services/storage.py:218-236` - LocalStorageService.get_storage_usage()
+
+**Backend - Soft Deletion**
+- `backend/app/api/routes/videos.py` - DELETE /api/v1/videos/{id} endpoint
+- `backend/app/models/video.py` - Video model with `is_deleted` field
+
+**Frontend - Storage Display**
+- `frontend/src/app/components/usage-panel/` - Where storage breakdown is shown
+- `frontend/src/lib/api/videos.ts` - useUsageSummary hook
+
+### Next Steps (Waiting for User Input)
+
+1. User selects: Option 1, 2, or 3
+2. Implementation:
+   - **If Option 1**: Create cleanup endpoint + hard-delete logic
+   - **If Option 2**: Update storage breakdown UI in frontend
+   - **If Option 3**: Do both above
+3. Test: Verify orphaned files removed and quota updated correctly
+4. Consider: Add config option `CLEANUP_SOFT_DELETED_FILES_AFTER_DAYS=X`
+
+---
 
 ## Usage & Storage Instrumentation (2025-12-04)
 - Added usage summary API `GET /api/v1/usage/summary` with new schemas (`UsageSummary`, `StorageBreakdown`, etc.) and frontend panel; shows storage, minutes/messages, transcript/chunk counts, vector stats.
