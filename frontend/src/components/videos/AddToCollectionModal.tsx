@@ -73,7 +73,11 @@ export function AddToCollectionModal({
         <form onSubmit={handleSubmit} className="p-6">
           <div className="mb-4">
             <p className="text-sm text-gray-600 mb-4">
-              Add <span className="font-medium text-gray-900">"{videoTitle}"</span> to:
+              Add{" "}
+              <span className="font-medium text-gray-900">
+                &ldquo;{videoTitle}&rdquo;
+              </span>{" "}
+              to:
             </p>
 
             {isLoading ? (

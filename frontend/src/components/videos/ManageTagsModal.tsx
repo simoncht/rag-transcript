@@ -71,7 +71,10 @@ export function ManageTagsModal({
         <form onSubmit={handleSubmit} className="p-6">
           <div className="mb-4">
             <p className="text-sm text-gray-600 mb-4">
-              Tags for <span className="font-medium text-gray-900">"{videoTitle}"</span>
+              Tags for{" "}
+              <span className="font-medium text-gray-900">
+                &ldquo;{videoTitle}&rdquo;
+              </span>
             </p>
 
             {/* Current Tags */}

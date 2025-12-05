@@ -1,16 +1,18 @@
-"use client";
+﻿"use client";
 
 import { useState } from "react";
+import Image from "next/image";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Plus, Folder, Trash2, Edit, MessageSquare, Video as VideoIcon } from "lucide-react";
-import {
-  getCollections,
-  deleteCollection,
-  getCollection,
-} from "@/lib/api/collections";
+import { getCollections, deleteCollection, getCollection } from "@/lib/api/collections";
 import type { Collection } from "@/lib/types";
 import { MainLayout } from "@/components/layout/MainLayout";
 import { CollectionModal } from "@/components/collections/CollectionModal";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Separator } from "@/components/ui/separator";
+import { cn } from "@/lib/utils";
 
 export default function CollectionsPage() {
   const queryClient = useQueryClient();
@@ -18,13 +20,11 @@ export default function CollectionsPage() {
   const [editingCollection, setEditingCollection] = useState<Collection | null>(null);
   const [expandedCollectionId, setExpandedCollectionId] = useState<string | null>(null);
 
-  // Fetch collections
   const { data, isLoading, error } = useQuery({
     queryKey: ["collections"],
     queryFn: getCollections,
   });
 
-  // Delete collection mutation
   const deleteMutation = useMutation({
     mutationFn: deleteCollection,
     onSuccess: () => {
@@ -32,7 +32,6 @@ export default function CollectionsPage() {
     },
   });
 
-  // Fetch expanded collection details
   const { data: expandedCollection } = useQuery({
     queryKey: ["collection", expandedCollectionId],
     queryFn: () => getCollection(expandedCollectionId!),
@@ -48,8 +47,8 @@ export default function CollectionsPage() {
     if (confirm(`Are you sure you want to delete the collection "${name}"? Videos will not be deleted.`)) {
       try {
         await deleteMutation.mutateAsync(id);
-      } catch (error) {
-        console.error("Failed to delete collection:", error);
+      } catch (err) {
+        console.error("Failed to delete collection:", err);
         alert("Failed to delete collection. Please try again.");
       }
     }
@@ -71,8 +70,8 @@ export default function CollectionsPage() {
   if (isLoading) {
     return (
       <MainLayout>
-        <div className="flex items-center justify-center h-64">
-          <div className="text-gray-500">Loading collections...</div>
+        <div className="flex h-64 items-center justify-center text-muted-foreground">
+          Loading collections...
         </div>
       </MainLayout>
     );
@@ -81,210 +80,235 @@ export default function CollectionsPage() {
   if (error) {
     return (
       <MainLayout>
-        <div className="flex items-center justify-center h-64">
-          <div className="text-red-500">Error loading collections: {(error as Error).message}</div>
+        <div className="flex h-64 items-center justify-center text-sm text-destructive">
+          Error loading collections: {(error as Error).message}
         </div>
       </MainLayout>
     );
   }
 
+  const collections = data?.collections ?? [];
+
   return (
     <MainLayout>
       <div className="space-y-6">
-        {/* Header */}
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900">Collections</h1>
-            <p className="text-gray-600 mt-1">
-              Organize your videos into collections by course, instructor, or topic
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <div className="space-y-1">
+            <p className="text-sm font-medium text-muted-foreground">Library organization</p>
+            <h1 className="text-3xl font-semibold tracking-tight">Collections</h1>
+            <p className="text-sm text-muted-foreground">
+              Group related videos by course, instructor, or topic to make retrieval easier.
             </p>
           </div>
-          <button
-            onClick={() => setShowCreateModal(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-          >
-            <Plus className="w-5 h-5" />
-            New Collection
-          </button>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <Button variant="outline" size="sm" className="gap-2" disabled>
+              <MessageSquare className="h-4 w-4" />
+              Coming soon: shared collections
+            </Button>
+            <Button onClick={() => setShowCreateModal(true)} className="gap-2">
+              <Plus className="h-4 w-4" />
+              New collection
+            </Button>
+          </div>
         </div>
 
-        {/* Collections List */}
-        {data && data.collections.length === 0 ? (
-          <div className="text-center py-12 bg-gray-50 rounded-lg border-2 border-dashed border-gray-300">
-            <Folder className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-            <h3 className="text-lg font-medium text-gray-900 mb-2">No collections yet</h3>
-            <p className="text-gray-600 mb-4">
-              Create your first collection to organize your videos
-            </p>
-            <button
-              onClick={() => setShowCreateModal(true)}
-              className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-            >
-              <Plus className="w-5 h-5" />
-              Create Collection
-            </button>
-          </div>
+        {collections.length === 0 ? (
+          <Card className="border-dashed">
+            <CardHeader className="flex items-center justify-center text-center">
+              <Folder className="mb-3 h-10 w-10 text-muted-foreground" />
+              <CardTitle>No collections yet</CardTitle>
+              <CardDescription>
+                Create your first collection to organize your videos into courses, cohorts, or topics.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="flex justify-center pb-6">
+              <Button onClick={() => setShowCreateModal(true)} className="gap-2">
+                <Plus className="h-4 w-4" />
+                Create collection
+              </Button>
+            </CardContent>
+          </Card>
         ) : (
           <div className="space-y-4">
-            {data?.collections.map((collection) => {
+            {collections.map((collection) => {
               const isExpanded = expandedCollectionId === collection.id;
               const collectionDetails = isExpanded ? expandedCollection : null;
 
               return (
-                <div
-                  key={collection.id}
-                  className="bg-white rounded-lg border border-gray-200 hover:border-gray-300 transition-colors"
-                >
-                  {/* Collection Header */}
-                  <div className="p-6">
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-3">
-                          <Folder
-                            className={`w-6 h-6 ${
-                              collection.is_default ? "text-gray-400" : "text-blue-600"
-                            }`}
-                          />
-                          <div>
-                            <h3 className="text-xl font-semibold text-gray-900">
-                              {collection.name}
-                              {collection.is_default && (
-                                <span className="ml-2 text-sm font-normal text-gray-500">
-                                  (Default)
-                                </span>
-                              )}
-                            </h3>
-                            {collection.description && (
-                              <p className="text-gray-600 mt-1">{collection.description}</p>
-                            )}
-                          </div>
+                <Card key={collection.id} className="overflow-hidden">
+                  <CardHeader className="flex flex-row items-start justify-between gap-4">
+                    <div className="flex flex-1 items-start gap-3">
+                      <div
+                        className={cn(
+                          "flex h-9 w-9 items-center justify-center rounded-md border",
+                          collection.is_default ? "border-muted text-muted-foreground" : "border-primary/40 text-primary",
+                        )}
+                      >
+                        <Folder className="h-4 w-4" />
+                      </div>
+                      <div className="space-y-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h3 className="text-base font-semibold leading-none">
+                            {collection.name}
+                          </h3>
+                          {collection.is_default && (
+                            <Badge variant="outline" className="text-xs">
+                              Default
+                            </Badge>
+                          )}
+                          {collection.video_count > 0 && (
+                            <Badge variant="secondary" className="flex items-center gap-1 text-xs">
+                              <VideoIcon className="h-3 w-3" />
+                              {collection.video_count} {collection.video_count === 1 ? "video" : "videos"}
+                            </Badge>
+                          )}
+                          {collection.total_duration_seconds > 0 && (
+                            <Badge variant="secondary" className="text-xs">
+                              {formatDuration(collection.total_duration_seconds)} total
+                            </Badge>
+                          )}
                         </div>
-
-                        {/* Metadata */}
+                        {collection.description && (
+                          <p className="text-sm text-muted-foreground">
+                            {collection.description}
+                          </p>
+                        )}
                         {collection.metadata && Object.keys(collection.metadata).length > 0 && (
-                          <div className="mt-3 flex flex-wrap gap-2 ml-9">
+                          <div className="flex flex-wrap gap-2 pt-1">
                             {collection.metadata.instructor && (
-                              <span className="px-2 py-1 bg-purple-100 text-purple-700 text-sm rounded">
-                                👨‍🏫 {collection.metadata.instructor}
-                              </span>
+                              <Badge variant="outline" className="text-xs">
+                                Instructor: {collection.metadata.instructor}
+                              </Badge>
                             )}
                             {collection.metadata.subject && (
-                              <span className="px-2 py-1 bg-green-100 text-green-700 text-sm rounded">
-                                📚 {collection.metadata.subject}
-                              </span>
+                              <Badge variant="outline" className="text-xs">
+                                Subject: {collection.metadata.subject}
+                              </Badge>
                             )}
                             {collection.metadata.semester && (
-                              <span className="px-2 py-1 bg-orange-100 text-orange-700 text-sm rounded">
-                                📅 {collection.metadata.semester}
-                              </span>
+                              <Badge variant="outline" className="text-xs">
+                                Semester: {collection.metadata.semester}
+                              </Badge>
                             )}
                             {collection.metadata.tags?.map((tag: string) => (
-                              <span
-                                key={tag}
-                                className="px-2 py-1 bg-gray-100 text-gray-700 text-sm rounded"
-                              >
+                              <Badge key={tag} variant="secondary" className="text-xs">
                                 #{tag}
-                              </span>
+                              </Badge>
                             ))}
                           </div>
                         )}
-
-                        {/* Stats */}
-                        <div className="mt-3 flex items-center gap-4 text-sm text-gray-600 ml-9">
-                          <span className="flex items-center gap-1">
-                            <VideoIcon className="w-4 h-4" />
-                            {collection.video_count} {collection.video_count === 1 ? "video" : "videos"}
-                          </span>
-                          {collection.total_duration_seconds > 0 && (
-                            <span>• {formatDuration(collection.total_duration_seconds)} total</span>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Actions */}
-                      <div className="flex items-center gap-2 ml-4">
-                        <button
-                          onClick={() => handleToggleExpand(collection.id)}
-                          className="px-3 py-1 text-sm text-gray-700 bg-gray-100 rounded hover:bg-gray-200 transition-colors"
-                        >
-                          {isExpanded ? "Collapse" : "Expand"}
-                        </button>
-                        {!collection.is_default && (
-                          <>
-                            <button
-                              onClick={() => setEditingCollection(collection)}
-                              className="p-2 text-gray-600 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors"
-                              title="Edit collection"
-                            >
-                              <Edit className="w-5 h-5" />
-                            </button>
-                            <button
-                              onClick={() => handleDelete(collection.id, collection.name, collection.is_default)}
-                              className="p-2 text-gray-600 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
-                              title="Delete collection"
-                            >
-                              <Trash2 className="w-5 h-5" />
-                            </button>
-                          </>
-                        )}
                       </div>
                     </div>
-                  </div>
-
-                  {/* Expanded Videos List */}
-                  {isExpanded && collectionDetails && (
-                    <div className="border-t border-gray-200 bg-gray-50 p-6">
-                      {collectionDetails.videos.length === 0 ? (
-                        <p className="text-gray-500 text-center py-4">No videos in this collection</p>
-                      ) : (
-                        <div className="space-y-2">
-                          <h4 className="font-medium text-gray-900 mb-3">Videos in this collection:</h4>
-                          {collectionDetails.videos.map((video) => (
-                            <div
-                              key={video.id}
-                              className="flex items-center justify-between p-3 bg-white rounded border border-gray-200"
-                            >
-                              <div className="flex items-center gap-3 flex-1">
-                                {video.thumbnail_url && (
-                                  <img
-                                    src={video.thumbnail_url}
-                                    alt={video.title}
-                                    className="w-20 h-12 object-cover rounded"
-                                  />
-                                )}
-                                <div className="flex-1 min-w-0">
-                                  <h5 className="font-medium text-gray-900 truncate">{video.title}</h5>
-                                  <div className="flex items-center gap-2 text-sm text-gray-600 mt-1">
-                                    {video.duration_seconds && (
-                                      <span>{formatDuration(video.duration_seconds)}</span>
-                                    )}
-                                    <span className="capitalize">• {video.status}</span>
-                                    {video.tags && video.tags.length > 0 && (
-                                      <span className="flex gap-1 ml-2">
-                                        {video.tags.map((tag) => (
-                                          <span key={tag} className="px-1.5 py-0.5 bg-gray-100 text-xs rounded">
-                                            #{tag}
-                                          </span>
-                                        ))}
-                                      </span>
-                                    )}
-                                  </div>
-                                </div>
-                              </div>
-                            </div>
-                          ))}
+                    <div className="flex flex-col items-end gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="gap-1"
+                        onClick={() => handleToggleExpand(collection.id)}
+                      >
+                        {isExpanded ? "Hide videos" : "Show videos"}
+                      </Button>
+                      {!collection.is_default && (
+                        <div className="flex gap-1">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="text-muted-foreground hover:text-foreground"
+                            onClick={() => setEditingCollection(collection)}
+                            title="Edit collection"
+                          >
+                            <Edit className="h-4 w-4" />
+                            <span className="sr-only">Edit collection</span>
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="text-muted-foreground hover:text-destructive"
+                            onClick={() => handleDelete(collection.id, collection.name, collection.is_default)}
+                            title="Delete collection"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                            <span className="sr-only">Delete collection</span>
+                          </Button>
                         </div>
                       )}
                     </div>
+                  </CardHeader>
+
+                  {isExpanded && collectionDetails && (
+                    <>
+                      <Separator />
+                      <CardContent className="bg-muted/40">
+                        {collectionDetails.videos.length === 0 ? (
+                          <p className="py-4 text-center text-sm text-muted-foreground">
+                            No videos in this collection yet.
+                          </p>
+                        ) : (
+                          <div className="space-y-2 pt-3">
+                            <p className="text-sm font-medium text-foreground">
+                              Videos in this collection
+                            </p>
+                            <div className="space-y-2">
+                              {collectionDetails.videos.map((video) => (
+                                <div
+                                  key={video.id}
+                                  className="flex items-center justify-between rounded-md border bg-background p-3"
+                                >
+                                  <div className="flex flex-1 items-center gap-3">
+                                    {video.thumbnail_url && (
+                                      <Image
+                                        src={video.thumbnail_url}
+                                        alt={video.title}
+                                        width={80}
+                                        height={48}
+                                        className="h-12 w-20 rounded object-cover"
+                                        unoptimized
+                                      />
+                                    )}
+                                    <div className="min-w-0 flex-1">
+                                      <p className="truncate text-sm font-medium text-foreground">
+                                        {video.title}
+                                      </p>
+                                      <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                                        {video.duration_seconds && (
+                                          <span>{formatDuration(video.duration_seconds)}</span>
+                                        )}
+                                        {video.status && (
+                                          <span className="capitalize">
+                                            Status: {video.status}
+                                          </span>
+                                        )}
+                                        {video.tags && video.tags.length > 0 && (
+                                          <span className="flex flex-wrap gap-1">
+                                            {video.tags.map((tag) => (
+                                              <Badge
+                                                key={tag}
+                                                variant="secondary"
+                                                className="text-[11px]"
+                                              >
+                                                #{tag}
+                                              </Badge>
+                                            ))}
+                                          </span>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </CardContent>
+                    </>
                   )}
-                </div>
+                </Card>
               );
             })}
           </div>
         )}
       </div>
 
-      {/* Create/Edit Modal */}
       {(showCreateModal || editingCollection) && (
         <CollectionModal
           collection={editingCollection}

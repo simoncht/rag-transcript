@@ -30,7 +30,17 @@
       "Bash(npm run type-check:*)",
       "Bash(npm run lint)",
       "Bash(npm run dev:*)",
-      "Bash(npm run build:*)"
+      "Bash(npm run build:*)",
+      "Bash(lsof:*)",
+      "Bash(xargs kill:*)",
+      "Bash(time curl:*)",
+      "Bash(docker ps:*)",
+      "Bash(timeout 5 curl:*)",
+      "Bash(docker-compose down:*)",
+      "Bash(find:*)",
+      "Bash(docker restart:*)",
+      "Bash(timeout 10 curl:*)",
+      "Bash(timeout 8 curl:*)"
     ],
     "deny": [],
     "ask": []

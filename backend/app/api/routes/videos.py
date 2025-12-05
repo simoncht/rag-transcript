@@ -191,11 +191,7 @@ async def list_videos(
     transcript_map = {t.video_id: t for t in transcripts}
 
     def get_transcript_size_mb(video: Video) -> float:
-        if video.transcript_file_path:
-            try:
-                return Path(video.transcript_file_path).stat().st_size / (1024 * 1024)
-            except Exception:
-                pass
+        # Calculate from transcript in database (no file I/O)
         transcript = transcript_map.get(video.id)
         if transcript and transcript.full_text:
             return len(transcript.full_text.encode("utf-8")) / (1024 * 1024)
@@ -248,12 +244,7 @@ async def get_video(
 
     transcript = db.query(Transcript).filter(Transcript.video_id == video_id).first()
     transcript_size_mb = 0.0
-    if video.transcript_file_path:
-        try:
-            transcript_size_mb = Path(video.transcript_file_path).stat().st_size / (1024 * 1024)
-        except Exception:
-            transcript_size_mb = 0.0
-    if transcript and transcript.full_text and transcript_size_mb == 0.0:
+    if transcript and transcript.full_text:
         transcript_size_mb = len(transcript.full_text.encode("utf-8")) / (1024 * 1024)
     transcript_size_mb = round(transcript_size_mb, 3)
     audio_size_mb = round(video.audio_file_size_mb or 0.0, 3)
@@ -296,13 +287,7 @@ async def get_video_transcript(
 
 
 def _get_transcript_size_mb(video: Video) -> float:
-    """Calculate transcript size in MB."""
-    if video.transcript_file_path:
-        try:
-            return Path(video.transcript_file_path).stat().st_size / (1024 * 1024)
-        except Exception:
-            pass
-
+    """Calculate transcript size in MB (from database, no file I/O)."""
     transcript = video.transcript
     if transcript and transcript.full_text:
         return len(transcript.full_text.encode("utf-8")) / (1024 * 1024)

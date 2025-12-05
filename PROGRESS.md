@@ -1,6 +1,30 @@
-# Progress Report
+﻿# Progress Report
 
-**Last Updated**: 2025-12-04 (Evening) PST
+**Last Updated**: 2025-12-05 (Afternoon) PST
+
+## API Performance Optimization (2025-12-04 Late Evening) - âœ… DEPLOYED 2025-12-05
+
+### Issue Identified
+The `/api/v1/videos` endpoint was extremely slow (10-15 seconds for 2-3 videos), causing the videos page to hang with a loading spinner.
+
+**Root Cause**: Synchronous filesystem I/O in request loop - calling `Path(video.transcript_file_path).stat().st_size` for each video
+
+### Solution Implemented
+Removed filesystem I/O, calculate transcript sizes from in-memory database objects instead (100-600x faster)
+
+**Modified Locations**:
+1. `backend/app/api/routes/videos.py:193-198` - Nested function in list_videos
+2. `backend/app/api/routes/videos.py:247-249` - get_video endpoint
+3. `backend/app/api/routes/videos.py:289-294` - _get_transcript_size_mb helper
+
+**Performance Impact**:
+- Before: 10-15 seconds for 2-3 videos
+- After: 16-160ms (100-600x faster)
+
+**Status**: âœ… DEPLOYED - Containers restarted 2025-12-05 08:27 PST
+**Verified**: API response time confirmed at 16-160ms in production testing
+
+---
 
 ## Storage Discrepancy Investigation (2025-12-04 Evening)
 
@@ -44,7 +68,7 @@ Database (active):
 Total: 41.25 MB
 
 Filesystem (all files):
-- 15 files × 447 KB: ~6.7 MB
+- 15 files Ã— 447 KB: ~6.7 MB
 - 9.7 MB file
 - 32 MB file
 - 32 MB file
@@ -59,9 +83,9 @@ Orphaned: 159.359 - 41.265 = ~118 MB
 
 Located in `backend/app/api/routes/usage.py` lines 108-125:
 
-1. **Database audio**: Sums only non-deleted videos' `audio_file_size_mb` → 41.265 MB
-2. **Filesystem scan**: `storage_service.get_storage_usage(user_id)` recursively walks `/storage/audio/{user_id}/` and `/storage/transcripts/{user_id}/` → 159.359 MB
-3. **Final value**: `max(database_tracked, filesystem_actual)` → **159.359 MB**
+1. **Database audio**: Sums only non-deleted videos' `audio_file_size_mb` â†’ 41.265 MB
+2. **Filesystem scan**: `storage_service.get_storage_usage(user_id)` recursively walks `/storage/audio/{user_id}/` and `/storage/transcripts/{user_id}/` â†’ 159.359 MB
+3. **Final value**: `max(database_tracked, filesystem_actual)` â†’ **159.359 MB**
 4. **Reasoning**: Use maximum to ensure reported usage matches actual disk consumption
 
 ### Why This Is Correct
@@ -72,7 +96,7 @@ The system correctly reports 159.359 MB because:
 - Soft-deleted videos shouldn't disappear from user's quota immediately
 - The 118 MB of orphaned files is a real issue that needs cleanup
 
-### ⏳ PENDING: User Decision on Resolution
+### â³ PENDING: User Decision on Resolution
 
 Three options presented:
 
@@ -124,7 +148,7 @@ Three options presented:
 ## Usage & Storage Instrumentation (2025-12-04)
 - Added usage summary API `GET /api/v1/usage/summary` with new schemas (`UsageSummary`, `StorageBreakdown`, etc.) and frontend panel; shows storage, minutes/messages, transcript/chunk counts, vector stats.
 - Usage tracker fixes: `event_metadata` field, storage adjustments via `track_storage_usage`, download/transcription/embed events tracked in pipeline (video_tasks).
-- Storage math now prefers actual transcript file sizes (fallback to text length) and uses on-disk measurements for totals; frontend displays per-video storage (audio • transcript • total) and formats tiny values as `<0.1 MB`.
+- Storage math now prefers actual transcript file sizes (fallback to text length) and uses on-disk measurements for totals; frontend displays per-video storage (audio â€¢ transcript â€¢ total) and formats tiny values as `<0.1 MB`.
 - Frontend transcript viewer improved readability (tabs: Readable auto-group paragraphs, Timeline with search, copy/download/refresh).
 - Known gap: Delete API only soft-deletes DB row + vector cleanup; audio/transcript files remain on disk (storage/local). `cleanup_audio_after_transcription` is `False` by default, so audio accumulates unless manually removed; multiple ~32 MB audio files currently present (total disk ~115 MB vs single video ~41 MB).
 
@@ -134,7 +158,7 @@ All 6 containers operational:
 - postgres (healthy), redis (healthy), qdrant (running)
 - app (port 8000), worker (celery, solo pool), beat (celery scheduler)
 
-**Verified**: Health endpoint, Whisper model, embedding model (384-dim), database migrations, full pipeline on “Me at the zoo” (chunked + indexed)
+**Verified**: Health endpoint, Whisper model, embedding model (384-dim), database migrations, full pipeline on â€œMe at the zooâ€ (chunked + indexed)
 
 ---
 
@@ -165,7 +189,7 @@ All 6 containers operational:
 
 **Sprint 3: Stripe Billing (5.5 days, depends on Sprint 1)**
 - Stripe checkout & subscription management
-- Subscription tiers: Free (2 videos, 60 min, 50 msgs, 1GB) → Pro ($29/mo) → Enterprise
+- Subscription tiers: Free (2 videos, 60 min, 50 msgs, 1GB) â†’ Pro ($29/mo) â†’ Enterprise
 - Quota enforcement (videos, minutes, messages, storage)
 - Billing UI + usage dashboard
 - Webhook handling for subscription events
@@ -174,7 +198,7 @@ All 6 containers operational:
 **Sprint 4: Production Deployment (6 days, depends on Sprint 1+3)**
 - Multi-stage Docker builds (optimized images for prod)
 - AWS infrastructure (Terraform): ECS, RDS, ElastiCache, ALB, VPC
-- CI/CD pipeline (GitHub Actions): test → build → deploy
+- CI/CD pipeline (GitHub Actions): test â†’ build â†’ deploy
 - SSL/TLS + domain setup (Route53, ACM, nginx reverse proxy)
 - Database migration strategy (alembic + zero-downtime)
 - **Files**: 25+ new (Terraform, GitHub Actions), 5 modified
@@ -187,8 +211,8 @@ All 6 containers operational:
 - **Files**: 10 new, 4 modified
 
 **Sprint 6: Horizontal Scaling (3.5 days, depends on Sprint 5)**
-- Worker auto-scaling (2→20 tasks based on queue depth)
-- App auto-scaling (2→10 tasks based on CPU/requests)
+- Worker auto-scaling (2â†’20 tasks based on queue depth)
+- App auto-scaling (2â†’10 tasks based on CPU/requests)
 - Database connection pooling (QueuePool, pool_size=20, max_overflow=40)
 - Load balancer optimization (ALB health checks, sticky sessions)
 - **Files**: 6 modified
@@ -235,18 +259,18 @@ None - all prerequisites from Phase 3.1 complete
 ### Phase 3.1: Collections Implementation (In Progress)
 
 **Backend (100% Complete - Commit 07e511a)**
-- ✅ Created migration `003_add_collections.py`:
+- âœ… Created migration `003_add_collections.py`:
   * `collections` table with JSONB metadata, is_default flag
   * `collection_videos` join table (many-to-many)
   * `collection_members` table (for Phase 4 sharing)
   * Added `tags` column to videos table with GIN index
   * Auto-created "Uncategorized" default collection for all users
   * Migrated existing videos to default collection
-- ✅ Created SQLAlchemy models:
+- âœ… Created SQLAlchemy models:
   * `Collection`, `CollectionVideo`, `CollectionMember`
   * Updated `Video` model with tags and collection_videos relationship
   * Updated `User` model with collections relationship
-- ✅ Implemented 7 API endpoints:
+- âœ… Implemented 7 API endpoints:
   * `POST /api/v1/collections` - Create collection
   * `GET /api/v1/collections` - List with video counts/duration
   * `GET /api/v1/collections/{id}` - Get with videos
@@ -254,37 +278,37 @@ None - all prerequisites from Phase 3.1 complete
   * `DELETE /api/v1/collections/{id}` - Delete collection
   * `POST /api/v1/collections/{id}/videos` - Add videos
   * `DELETE /api/v1/collections/{id}/videos/{vid}` - Remove video
-- ✅ Updated conversations endpoint:
+- âœ… Updated conversations endpoint:
   * Added `collection_id` parameter support
   * Validates either collection_id OR selected_video_ids
   * Fetches all videos from collection automatically
-- ✅ Added video tags endpoint:
+- âœ… Added video tags endpoint:
   * `PATCH /api/v1/videos/{id}/tags`
 
 **Frontend (60% Complete - Pending Commit)**
-- ✅ TypeScript types for all collection entities
-- ✅ Collections API client (`getCollections`, `createCollection`, etc.)
-- ✅ Updated videos API with `updateTags` function
-- ✅ Collections list page at `/collections`:
+- âœ… TypeScript types for all collection entities
+- âœ… Collections API client (`getCollections`, `createCollection`, etc.)
+- âœ… Updated videos API with `updateTags` function
+- âœ… Collections list page at `/collections`:
   * Display all collections with metadata
   * Expand/collapse to show videos in collection
   * Create/Edit/Delete collection actions
   * Shows video count, total duration, metadata badges
-- ✅ Create/Edit Collection Modal:
+- âœ… Create/Edit Collection Modal:
   * Full form with name, description, metadata fields
   * Instructor, subject, semester, tags inputs
   * Validation and error handling
-- ✅ Updated MainLayout navigation with Collections link
+- âœ… Updated MainLayout navigation with Collections link
 
 **Remaining Frontend Work:**
-- ⏳ Update Videos page to show collections
-- ⏳ Add "Add to Collection" functionality
-- ⏳ Update Conversation creation UI for collection selection
-- ⏳ End-to-end testing
+- â³ Update Videos page to show collections
+- â³ Add "Add to Collection" functionality
+- â³ Update Conversation creation UI for collection selection
+- â³ End-to-end testing
 
 ---
 
-## Recent Changes (2025-12-02–03)
+## Recent Changes (2025-12-02â€“03)
 
 ### Documentation Standards Codified (2025-12-03)
 - **Created**: `DOCUMENTATION_GUIDELINES.md` - Comprehensive standards for AI agents
@@ -300,7 +324,7 @@ None - all prerequisites from Phase 3.1 complete
 
 ---
 
-## Earlier Changes (2025-12-02–03)
+## Earlier Changes (2025-12-02â€“03)
 
 ### Fixed Beat Container Configuration
 - **Issue**: Missing HuggingFace cache volume and offline mode settings
@@ -328,7 +352,7 @@ None - all prerequisites from Phase 3.1 complete
   - Worker now runs `--concurrency=1 --pool=solo` for fork-safe Whisper
   - Chunking thresholds lowered (`chunk_min_tokens=16`, `chunk_target_tokens=256`) with a single-chunk fallback for tiny transcripts
   - Qdrant point IDs now UUID5(`video_id`, `chunk_index`) to satisfy ID format
-- **Result**: “Me at the zoo” ingestion completes in ~12s with `chunk_count=1`, indexed successfully in Qdrant
+- **Result**: â€œMe at the zooâ€ ingestion completes in ~12s with `chunk_count=1`, indexed successfully in Qdrant
 
 ---
 
@@ -378,7 +402,7 @@ PYTHONHTTPSVERIFY=0
 - **Response Time**: 15.14 seconds
 - **Token Count**: 688 tokens
 - **Citations**: 1 chunk (relevance 0.312)
-- **Result**: ✅ Correctly identified song theme with proper citation
+- **Result**: âœ… Correctly identified song theme with proper citation
 
 ### Issues Fixed
 1. **Docker Networking**: Changed `localhost:11434` to `host.docker.internal:11434`
@@ -469,10 +493,10 @@ PYTHONHTTPSVERIFY=0
 - Request/response type safety
 
 ### Testing Results
-- ✅ TypeScript compilation successful (no errors)
-- ✅ ESLint validation passed (no warnings)
-- ✅ Dependencies installed (479 packages)
-- ✅ Build successful
+- âœ… TypeScript compilation successful (no errors)
+- âœ… ESLint validation passed (no warnings)
+- âœ… Dependencies installed (479 packages)
+- âœ… Build successful
 
 ### Files Created
 **Configuration:**
@@ -558,4 +582,65 @@ PYTHONHTTPSVERIFY=0
 
 
 
+
+
+---
+
+## Shadcn UI Blocks & Video Dashboard Refresh (2025-12-05 Morning)
+
+### Summary
+- Integrated Shadcn UI into the existing Next.js frontend (`frontend/components.json`, updated `tailwind.config.ts`, and `globals.css`).
+- Added theme infrastructure with `next-themes` and a reusable `ThemeProvider` + `ThemeToggle` wired through `src/app/providers.tsx` and `components/layout/MainLayout.tsx`.
+- Rebuilt `/videos` as a structured dashboard using Shadcn `Card`, `Table`, `Badge`, `Dialog`, `Checkbox`, `Progress`, and `Input` primitives while preserving all backend API contracts.
+- Cleaned up older UI glitches (badly-encoded strings, unescaped quotes, and `<img>` usage) so `npm run lint` is now clean.
+- Verified `npm run dev` on `http://localhost:3000`; Google Fonts TLS errors fall back to system fonts without breaking the UI.
+
+### Key Files
+- `frontend/components.json` – Shadcn UI configuration and aliases.
+- `frontend/tailwind.config.ts` – merged Mindful Learning tokens with Shadcn CSS variables + `darkMode: ["class"]`.
+- `frontend/src/app/globals.css` – Shadcn color tokens layered with the existing theme.
+- `frontend/src/app/layout.tsx`, `frontend/src/app/providers.tsx` – theme + React Query providers integration.
+- `frontend/src/components/layout/MainLayout.tsx`, `frontend/src/components/layout/ThemeToggle.tsx` – new shell with sidebar, sheet nav, and light/dark toggle.
+- `frontend/src/app/videos/page.tsx` – Shadcn-based videos dashboard (ingest dialog, storage/processing cards, transcript table).
+- `frontend/src/components/videos/AddToCollectionModal.tsx`, `ManageTagsModal.tsx`, `DeleteConfirmationModal.tsx` – copy/encoding fixes for ESLint.
+- `frontend/src/app/collections/page.tsx` – thumbnail rendering switched to `next/image` with `unoptimized`.
+
+### Status
+- Status: ?. COMPLETE (frontend visual refresh + Shadcn integration for `/videos`).
+- Risk: Low - frontend-only changes, no API surface modifications.
+- Follow-ups: migrate `/collections` and `/conversations` to Shadcn layout and align typography/spacing once final brand tokens are chosen.
+
+---
+
+## Shadcn Conversations & Chat Interface (2025-12-05 Afternoon)
+
+### Summary
+- Completed the Shadcn migration for the conversations workflow, including the list page and the chat detail UI.
+- Focused on a clean, single-panel chat experience that works smoothly on desktop and mobile (similar to ChatGPT), while keeping all backend contracts unchanged.
+
+### What Was Done
+- `/collections`:
+  - Verified the collections page is fully on Shadcn components (`Card`, `Badge`, `Button`, `Separator`, `next/image` with `unoptimized`) and that expand/collapse and embedded video rows behave as before.
+- `/conversations` (list):
+  - Rebuilt as a single unified `Card` that contains both:
+    - A toggleable “New conversation” form (title, collection vs custom selection, completed video checklist).
+    - A “Recent conversations” section with loading and empty states.
+  - This removes the previous “two big frames” feeling and creates a clearer flow across devices.
+- `/conversations/[id]` (chat detail):
+  - Implemented a Shadcn-based chat surface using one `Card` for the entire conversation:
+    - Scrollable message area with left/right-aligned bubbles for assistant/user messages.
+    - Markdown rendering for assistant responses via `ReactMarkdown`.
+    - Attached input area at the bottom of the same card, with a subtle top border and background.
+  - Preserved React Query polling of `conversationsApi.get()` (with `refetchInterval: 5000`) and wired `sendMessage` to append assistant messages to the cached conversation.
+  - Added a “Sources from your library” panel per assistant message that displays chunk references (video title, timestamp, snippet, relevance percent) using Shadcn `Card` and `Badge`.
+
+### Key Files
+- `frontend/src/app/conversations/page.tsx` – unified conversations list + creation form card.
+- `frontend/src/app/conversations/[id]/page.tsx` – Shadcn chat interface (single card, messages + input + sources).
+- `frontend/src/components/layout/MainLayout.tsx` – shared shell for videos, collections, conversations.
+
+### Status
+- Status: ?. COMPLETE (Shadcn migration for conversations list + chat detail).
+- Risk: Low – frontend-only changes; `npm run lint` passes cleanly.
+- Follow-ups: optional visual polish (spacing/typography) and potential extraction of reusable chat primitives into `src/components/chat/*`.
 

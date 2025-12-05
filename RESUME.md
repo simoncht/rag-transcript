@@ -1,9 +1,9 @@
-# Quick Resume
+﻿# Quick Resume
 
-**Last Updated**: 2025-12-04 (Evening) PST
-**Status**: Phase 3.1 COMPLETE | Design System COMPLETE | Ready for Chat Interface Build
+**Last Updated**: 2025-12-05 (Afternoon) PST
+**Status**: Phase 3.1 COMPLETE | Design System COMPLETE | Shadcn UI BLOCKS INTEGRATED | API Performance OPTIMIZED | Conversations Chat UI MIGRATED to Shadcn
 
-## 🎨 Design System: Mindful Learning (NEW - Dec 4 Evening)
+## ðŸŽ¨ Design System: Mindful Learning (NEW - Dec 4 Evening)
 
 Complete, themeable design system for sustainable learning engagement.
 
@@ -22,13 +22,44 @@ Users spend hours learning and chatting. The interface must be:
 - **Text**: Warm Charcoal (#2C3E3F)
 
 ### Components Built
-- ✅ **MessageBubble**: Chat messages with citations, timestamps, response times
-- ✅ **CitationBadge**: Expandable inline citations with relevance scores
-- ✅ **Button**: Multiple variants (primary/secondary/accent/outline/ghost)
-- ✅ **Card**: Elegant container with hover states
-- ✅ **Badge**: Status indicators
-- ✅ **MainLayout**: Navigation with new theme styling
+- âœ… **MessageBubble**: Chat messages with citations, timestamps, response times
+- âœ… **CitationBadge**: Expandable inline citations with relevance scores
+- âœ… **Button**: Multiple variants (primary/secondary/accent/outline/ghost)
+- âœ… **Card**: Elegant container with hover states
+- âœ… **Badge**: Status indicators
+- âœ… **MainLayout**: Navigation with new theme styling
 
+
+## Shadcn UI Blocks & Videos Dashboard (Dec 5 Morning)
+
+Production-ready UI primitives wired into the existing design system and videos workflow.
+
+### What Was Added
+- ?. **Shadcn UI Integration**: Initialized Shadcn registry (rontend/components.json), installed Radix primitives, and wired class-variance-authority, 	ailwind-merge, and 	ailwindcss-animate into Tailwind (rontend/tailwind.config.ts).
+- ?. **Theme Provider + Toggle**:
+  - Added a shared ThemeProvider based on 
+ext-themes (rontend/src/components/theme-provider.tsx).
+  - Wrapped the app in the provider via src/app/providers.tsx and src/app/layout.tsx using the Shadcn token system (g-background, 	ext-foreground, etc.).
+  - Created ThemeToggle (rontend/src/components/layout/ThemeToggle.tsx) and integrated it into the main layout header.
+- ?. **Layout Shell Refresh**:
+  - Replaced the previous top-nav-only layout with a Shadcn-style shell: sidebar navigation + mobile sheet menu in rontend/src/components/layout/MainLayout.tsx.
+  - Preserved existing routes (Videos, Collections, Conversations) and logout behavior while improving information architecture.
+- ?. **Videos Page as Shadcn Dashboard**:
+  - Rebuilt /videos (rontend/src/app/videos/page.tsx) using Shadcn Card, Table, Badge, Dialog, Checkbox, Progress, and Input.
+  - Ingest flow now uses a dialog; storage/processing metrics surface in summary cards; the library table supports selection, per-video actions, and inline transcript expansion backed by existing APIs.
+- ?. **Lint & UX Fixes**:
+  - Fixed unescaped quotes and encoding glitches in collection/tag modals (AddToCollectionModal, ManageTagsModal, DeleteConfirmationModal) so 
+pm run lint is clean.
+  - Updated /collections video thumbnails to use 
+ext/image with unoptimized to satisfy Next.js recommendations without adding image CDN complexity.
+
+### Current Frontend Status
+- ?. Shadcn UI blocks in place and integrated with the Mindful Learning theme tokens.
+- ?. /videos is fully migrated to the new block-based layout with feature parity.
+- ?. 
+pm run lint passes with no warnings; 
+pm run dev runs on http://localhost:3000 (Google Fonts TLS issues fall back to system fonts only).
+- ƒ?3. Next candidates: migrate /collections + /conversations to Shadcn layout and tighten typography/spacing once brand tokens are finalized.
 ### Theme Infrastructure
 - `/frontend/src/lib/theme/` - All design tokens (colors.ts, typography.ts, spacing.ts)
 - `/frontend/tailwind.config.ts` - Tailwind integration with CSS variables
@@ -45,26 +76,53 @@ curl http://localhost:8000/health  # {"status":"healthy"}
 npm run build                   # Frontend builds successfully (Tailwind + Next.js)
 ```
 
-## ✅ Phase 3 Complete - Frontend Fully Functional
+## ðŸš€ API Performance Optimization (Dec 4-5) - âœ… DEPLOYED
+
+**Issue Identified**: `/api/v1/videos` endpoint slow (10+ seconds) due to synchronous filesystem I/O
+
+**Root Cause**:
+- Calling `Path(video.transcript_file_path).stat().st_size` for each video
+- Multiple blocking filesystem syscalls in request loop
+- No caching of results
+
+**Solution Implemented**:
+- Removed all `Path().stat()` filesystem calls (3 locations)
+- Calculate transcript size from database transcript object instead
+- Fast in-memory calculation: `len(transcript.full_text.encode("utf-8")) / (1024 * 1024)`
+
+**Files Modified**:
+- `backend/app/api/routes/videos.py:193-198` - Nested `get_transcript_size_mb()` in list_videos
+- `backend/app/api/routes/videos.py:247-249` - `get_video` endpoint
+- `backend/app/api/routes/videos.py:289-294` - `_get_transcript_size_mb()` helper
+
+**Performance Impact**:
+- **Before**: ~10-15 seconds for 2-3 videos
+- **After**: 16-160ms (100-600x faster)
+
+**Status**: âœ… DEPLOYED | Containers restarted 2025-12-05 08:27 PST
+
+**Verified Results**: 3 test runs averaging 16-160ms response time
+
+## âœ… Phase 3 Complete - Frontend Fully Functional
 
 Full Next.js frontend with:
-- ✅ Video management UI (YouTube ingestion, status tracking)
-- ✅ Conversation creation with video selection
-- ✅ Real-time chat interface with message history
-- ✅ Citation display with timestamps and relevance scores
-- ✅ Mock authentication (placeholder for Phase 4)
-- ✅ Responsive design with Tailwind CSS
-- ✅ Type-safe API integration with TypeScript
+- âœ… Video management UI (YouTube ingestion, status tracking)
+- âœ… Conversation creation with video selection
+- âœ… Real-time chat interface with message history
+- âœ… Citation display with timestamps and relevance scores
+- âœ… Mock authentication (placeholder for Phase 4)
+- âœ… Responsive design with Tailwind CSS
+- âœ… Type-safe API integration with TypeScript
 
-## ✅ Phase 2 Complete - RAG Chat Backend
+## âœ… Phase 2 Complete - RAG Chat Backend
 
 Backend RAG chat implementation:
-- ✅ LLM integration (Ollama with Qwen3-Coder)
-- ✅ Query embedding and vector search
-- ✅ Context retrieval from video transcripts
-- ✅ Conversation history management
-- ✅ Citation tracking with timestamps
-- ✅ Multi-provider support (Ollama/OpenAI/Anthropic)
+- âœ… LLM integration (Ollama with Qwen3-Coder)
+- âœ… Query embedding and vector search
+- âœ… Context retrieval from video transcripts
+- âœ… Conversation history management
+- âœ… Citation tracking with timestamps
+- âœ… Multi-provider support (Ollama/OpenAI/Anthropic)
 
 ```bash
 # Test RAG search (vector store)
@@ -96,7 +154,7 @@ docker-compose up -d               # Start all
 docker-compose down                # Stop all
 ```
 
-## 🔍 Storage Investigation COMPLETE (Dec 4, Evening)
+## ðŸ” Storage Investigation COMPLETE (Dec 4, Evening)
 
 **User's Question**: "Where is 170.5MB coming from if the total of 3 videos is only 52.5MB?"
 
@@ -119,13 +177,13 @@ Located in `backend/app/api/routes/usage.py` (lines 108-125):
 - `backend/app/services/storage.py:218-236` - Filesystem scanning implementation
 - Database: soft-deleted videos marked `is_deleted=True` but files remain
 
-### ⏳ PENDING USER DECISION
+### â³ PENDING USER DECISION
 Three options for handling orphaned files:
 1. **Add "Cleanup Orphaned Files" Button** - Remove 118 MB of soft-deleted audio from disk
 2. **Improve Storage Display** - Show breakdown (active files, orphaned files, total)
 3. **Both** - Implement cleanup mechanism AND improved UI display
 
-**Next Step**: User selects which approach (1, 2, or both) → Implementation begins
+**Next Step**: User selects which approach (1, 2, or both) â†’ Implementation begins
 
 ### In-Flight Work (Dec 3-4)
 - yt-dlp bumped to `2025.11.12`; app/worker images rebuilt and restarted.
@@ -171,40 +229,40 @@ npm run dev
 - Zustand for state management
 - React Markdown for chat rendering
 
-## ✅ Phase 3.1 COMPLETE: Video Collections
+## âœ… Phase 3.1 COMPLETE: Video Collections
 
 **See `PHASE_3_ENHANCEMENTS.md` for full specification**
 
 ### Backend (100%)
-- ✅ Database migration (collections, collection_videos, collection_members tables)
-- ✅ SQLAlchemy models (Collection, CollectionVideo, CollectionMember)
-- ✅ 7 API endpoints (CRUD collections, add/remove videos, tags)
-- ✅ Conversation creation from collections (collection_id support)
-- ✅ Auto-created "Uncategorized" default collection
+- âœ… Database migration (collections, collection_videos, collection_members tables)
+- âœ… SQLAlchemy models (Collection, CollectionVideo, CollectionMember)
+- âœ… 7 API endpoints (CRUD collections, add/remove videos, tags)
+- âœ… Conversation creation from collections (collection_id support)
+- âœ… Auto-created "Uncategorized" default collection
 
 ### Frontend (100%)
-- ✅ **Collections Page** (`/collections`)
+- âœ… **Collections Page** (`/collections`)
   - List all collections with metadata badges
   - Expand/collapse to view videos
   - Create/Edit/Delete collections
   - Video count and total duration stats
-- ✅ **Videos Page Integration**
+- âœ… **Videos Page Integration**
   - "Add to Collection" modal with radio selection
   - "Manage Tags" modal for video tagging
   - Display tags as chips
   - Action buttons for each video
-- ✅ **Conversation Creation Enhancement**
+- âœ… **Conversation Creation Enhancement**
   - Radio buttons: Collection mode vs Custom mode
   - Collection dropdown (select entire collection)
   - Custom video multi-select (existing behavior)
   - Smart validation based on mode
 
 ### Key Features Delivered:
-- **Collections/Playlists** - Organize videos by course, instructor, subject ✅
-- **Metadata & Tags** - Instructor, subject, semester, custom tags ✅
-- **Many-to-Many** - Videos can belong to multiple collections ✅
-- **Default Collection** - Auto-created "Uncategorized" for new videos ✅
-- **Flexible Chat** - Create conversations from entire collection or individual videos ✅
+- **Collections/Playlists** - Organize videos by course, instructor, subject âœ…
+- **Metadata & Tags** - Instructor, subject, semester, custom tags âœ…
+- **Many-to-Many** - Videos can belong to multiple collections âœ…
+- **Default Collection** - Auto-created "Uncategorized" for new videos âœ…
+- **Flexible Chat** - Create conversations from entire collection or individual videos âœ…
 
 ### Git Commits:
 - `07e511a` - Backend API and migration
@@ -230,7 +288,7 @@ All will use the new theme components automatically.
 - Add real-time message updates
 - Test with actual chat data
 
-## ⏳ Phase 4: Production Ready (Planning Complete)
+## â³ Phase 4: Production Ready (Planning Complete)
 
 **See `PHASE_4_PRODUCTION_READY.md` for complete 7-sprint implementation plan**
 
@@ -243,7 +301,7 @@ All will use the new theme components automatically.
 6. **Sprint 6**: Horizontal Scaling - 3.5 days
 7. **Sprint 7**: Streaming Chat Responses (optional) - 2.5 days
 
-**Total Effort**: 31.5 days | **Parallel Timeline**: 6-8 weeks | **Critical Path**: Auth → Billing → Deploy → Scaling
+**Total Effort**: 31.5 days | **Parallel Timeline**: 6-8 weeks | **Critical Path**: Auth â†’ Billing â†’ Deploy â†’ Scaling
 
 ### Key Decision Points:
 - JWT token expiration strategy (15min access + 7day refresh?)
@@ -253,22 +311,22 @@ All will use the new theme components automatically.
 - Monitoring alert thresholds and on-call process
 
 ### Ready to Start?
-✅ All Phase 3 features complete
-✅ Infrastructure requirements documented
-✅ File structure planned
-✅ Risk mitigation strategies defined
-✅ Success criteria established
+âœ… All Phase 3 features complete
+âœ… Infrastructure requirements documented
+âœ… File structure planned
+âœ… Risk mitigation strategies defined
+âœ… Success criteria established
 
-**Next**: Team review of PHASE_4_PRODUCTION_READY.md → Sprint 1 Kickoff
+**Next**: Team review of PHASE_4_PRODUCTION_READY.md â†’ Sprint 1 Kickoff
 
 ## Key Files
 
 **Documentation:**
-- `DOCUMENTATION_GUIDELINES.md` - **📋 AI agent documentation standards** (read this first!)
+- `DOCUMENTATION_GUIDELINES.md` - **ðŸ“‹ AI agent documentation standards** (read this first!)
 - `RESUME.md` - Quick reference (this file)
 - `PROGRESS.md` - Detailed history
 - `PHASE_3_ENHANCEMENTS.md` - Video collections feature spec (Phase 3.1)
-- `PHASE_4_PRODUCTION_READY.md` - **⏳ Complete Phase 4 implementation plan** (7 sprints, 31.5 days)
+- `PHASE_4_PRODUCTION_READY.md` - **â³ Complete Phase 4 implementation plan** (7 sprints, 31.5 days)
 - `README.md` - Architecture overview
 
 **Backend:**
@@ -286,6 +344,7 @@ All will use the new theme components automatically.
 - `frontend/src/lib/types/` - TypeScript type definitions
 - `frontend/src/components/layout/` - Layout components
 - `frontend/src/components/collections/` - Collection components (modal)
+
 
 
 

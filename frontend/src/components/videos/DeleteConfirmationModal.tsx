@@ -182,7 +182,7 @@ export function DeleteConfirmationModal({
                   <p className="text-xs text-gray-500 mt-1">
                     Remove chunks from vector store.{" "}
                     <span className="font-semibold text-red-600">
-                      ⚠️ Chat won't be able to search these videos anymore.
+                      Removing the index means chat won&apos;t be able to search these videos anymore.
                     </span>
                   </p>
                 </div>
@@ -279,3 +279,4 @@ export function DeleteConfirmationModal({
     </div>
   );
 }
+

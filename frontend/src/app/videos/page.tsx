@@ -2,12 +2,14 @@
 
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { formatDistanceToNow } from "date-fns";
 import { MainLayout } from "@/components/layout/MainLayout";
 import { videosApi } from "@/lib/api/videos";
 import { usageApi } from "@/lib/api/usage";
-import { getCollections } from "@/lib/api/collections";
 import { Video, VideoDeleteRequest } from "@/lib/types";
 import { DeleteConfirmationModal } from "@/components/videos/DeleteConfirmationModal";
+import { AddToCollectionModal } from "@/components/videos/AddToCollectionModal";
+import { ManageTagsModal } from "@/components/videos/ManageTagsModal";
 import {
   Plus,
   Trash2,
@@ -16,25 +18,53 @@ import {
   FolderPlus,
   Tag as TagIcon,
   FileText,
-  ChevronDown,
-  ChevronUp,
   Copy,
   Download,
   Search,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
-import { formatDistanceToNow } from "date-fns";
-import { AddToCollectionModal } from "@/components/videos/AddToCollectionModal";
-import { ManageTagsModal } from "@/components/videos/ManageTagsModal";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { Progress } from "@/components/ui/progress";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { cn } from "@/lib/utils";
 
 export default function VideosPage() {
   const [youtubeUrl, setYoutubeUrl] = useState("");
-  const [showAddForm, setShowAddForm] = useState(false);
   const [addToCollectionVideo, setAddToCollectionVideo] = useState<Video | null>(null);
   const [manageTagsVideo, setManageTagsVideo] = useState<Video | null>(null);
   const [selectedVideoIds, setSelectedVideoIds] = useState<Set<string>>(new Set());
   const [openTranscriptVideoId, setOpenTranscriptVideoId] = useState<string | null>(null);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [videosToDelete, setVideosToDelete] = useState<Video[]>([]);
+  const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const queryClient = useQueryClient();
 
   const { data: usageSummary } = useQuery({
@@ -46,7 +76,6 @@ export default function VideosPage() {
   const { data, isLoading } = useQuery({
     queryKey: ["videos"],
     queryFn: () => videosApi.list(),
-    // Poll while any video is still processing
     refetchInterval: (query) => {
       const videos = query.state.data?.videos ?? [];
       const hasInFlight = videos.some(
@@ -56,26 +85,12 @@ export default function VideosPage() {
     },
   });
 
-  // Fetch collections to show which collections each video belongs to
-  const { data: collectionsData } = useQuery({
-    queryKey: ["collections"],
-    queryFn: getCollections,
-  });
-
-  // Helper function to get collections for a video
-  const getVideoCollections = (videoId: string) => {
-    if (!collectionsData) return [];
-    return collectionsData.collections.filter((collection) =>
-      collection.video_count > 0 // We'll need to fetch full collection details to check membership
-    );
-  };
-
   const ingestMutation = useMutation({
     mutationFn: videosApi.ingest,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["videos"] });
       setYoutubeUrl("");
-      setShowAddForm(false);
+      setIsAddDialogOpen(false);
     },
   });
 
@@ -110,11 +125,12 @@ export default function VideosPage() {
     },
   });
 
-  const handleIngest = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (youtubeUrl.trim()) {
-      ingestMutation.mutate(youtubeUrl.trim());
+  const handleIngest = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!youtubeUrl.trim()) {
+      return;
     }
+    ingestMutation.mutate(youtubeUrl.trim());
   };
 
   const isDeletable = (video: Video) => ["completed", "failed"].includes(video.status);
@@ -140,8 +156,8 @@ export default function VideosPage() {
   const handleBulkDelete = () => {
     const ids = Array.from(selectedVideoIds);
     if (ids.length === 0) return;
-    const videosToDelete = data?.videos.filter((v) => ids.includes(v.id)) || [];
-    setVideosToDelete(videosToDelete);
+    const toDelete = data?.videos.filter((v) => ids.includes(v.id)) ?? [];
+    setVideosToDelete(toDelete);
     setShowDeleteModal(true);
   };
 
@@ -162,10 +178,12 @@ export default function VideosPage() {
     bulkDeleteMutation.mutate(request);
   };
 
-  const getStatusColor = (status: Video["status"]) => {
+  const getStatusBadgeClass = (status: Video["status"]) => {
     switch (status) {
       case "completed":
-        return "bg-green-100 text-green-800";
+        return "border-emerald-200 bg-emerald-50 text-emerald-700";
+      case "failed":
+        return "border-destructive/40 bg-destructive/10 text-destructive";
       case "processing":
       case "pending":
       case "downloading":
@@ -173,11 +191,9 @@ export default function VideosPage() {
       case "chunking":
       case "enriching":
       case "indexing":
-        return "bg-blue-100 text-blue-800";
-      case "failed":
-        return "bg-red-100 text-red-800";
+        return "border-sky-200 bg-sky-50 text-sky-700";
       default:
-        return "bg-gray-100 text-gray-800";
+        return "border-border bg-muted text-foreground";
     }
   };
 
@@ -192,9 +208,7 @@ export default function VideosPage() {
     const mins = Math.floor((seconds % 3600) / 60);
     const secs = Math.floor(seconds % 60);
     if (hrs > 0) {
-      return `${hrs}:${mins.toString().padStart(2, "0")}:${secs
-        .toString()
-        .padStart(2, "0")}`;
+      return `${hrs}:${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
     }
     return `${mins}:${secs.toString().padStart(2, "0")}`;
   };
@@ -209,6 +223,7 @@ export default function VideosPage() {
     setOpenTranscriptVideoId((prev) => (prev === videoId ? null : videoId));
   };
 
+  const videos = data?.videos ?? [];
   const TranscriptPanel = ({ videoId, isOpen }: { videoId: string; isOpen: boolean }) => {
     const [activeTab, setActiveTab] = useState<"readable" | "timeline">("readable");
     const [search, setSearch] = useState("");
@@ -278,103 +293,101 @@ export default function VideosPage() {
     };
 
     return (
-      <div className="mt-3 rounded-md border border-gray-200 bg-gray-50 p-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-2 text-sm font-medium text-gray-800">
-            <FileText className="w-4 h-4" />
-            <span>Transcript</span>
+      <div className="space-y-4 rounded-lg border bg-muted/20 p-4">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+            <FileText className="h-4 w-4" />
+            Transcript
           </div>
-          <div className="flex items-center gap-2">
-            <button
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
               onClick={handleCopy}
               disabled={!data}
-              className="inline-flex items-center rounded border border-gray-300 px-2 py-1 text-xs text-gray-700 hover:bg-white disabled:opacity-50"
+              className="gap-1"
             >
-              <Copy className="mr-1 h-3.5 w-3.5" />
+              <Copy className="h-3.5 w-3.5" />
               Copy
-            </button>
-            <button
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
               onClick={handleDownload}
               disabled={!data}
-              className="inline-flex items-center rounded border border-gray-300 px-2 py-1 text-xs text-gray-700 hover:bg-white disabled:opacity-50"
+              className="gap-1"
             >
-              <Download className="mr-1 h-3.5 w-3.5" />
+              <Download className="h-3.5 w-3.5" />
               Download
-            </button>
-            <button
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
               onClick={() => refetch()}
-              className="text-xs text-blue-600 hover:text-blue-800"
               disabled={isLoading}
             >
               Refresh
-            </button>
+            </Button>
           </div>
         </div>
 
         {isLoading && (
-          <div className="mt-3 flex items-center text-sm text-gray-600">
-            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" />
             Loading transcript...
           </div>
         )}
 
         {isError && (
-          <div className="mt-3 text-sm text-red-600">
+          <div className="text-sm text-destructive">
             Transcript not available yet. Try again after processing finishes.
           </div>
         )}
 
         {data && (
-          <div className="mt-3 space-y-3">
-            <div className="flex flex-wrap items-center gap-2 text-sm text-gray-700">
+          <div className="space-y-3 text-sm text-muted-foreground">
+            <div className="flex flex-wrap items-center gap-2 text-xs font-medium">
               {data.language && (
-                <span className="inline-flex items-center rounded bg-white px-2 py-1 text-xs text-gray-700">
+                <Badge variant="secondary" className="text-xs">
                   Language: {data.language}
-                </span>
+                </Badge>
               )}
-              <span className="inline-flex items-center rounded bg-white px-2 py-1 text-xs text-gray-700">
+              <Badge variant="secondary" className="text-xs">
                 Duration: {formatDuration(data.duration_seconds)}
-              </span>
-              <span className="inline-flex items-center rounded bg-white px-2 py-1 text-xs text-gray-700">
+              </Badge>
+              <Badge variant="secondary" className="text-xs">
                 Words: {data.word_count}
-              </span>
+              </Badge>
             </div>
 
-            <div className="flex items-center gap-2 text-xs font-medium text-gray-700">
-              <button
+            <div className="flex gap-2">
+              <Button
+                variant={activeTab === "readable" ? "default" : "outline"}
+                size="sm"
                 onClick={() => setActiveTab("readable")}
-                className={`rounded px-3 py-1 ${
-                  activeTab === "readable"
-                    ? "bg-white text-gray-900 shadow-sm"
-                    : "bg-gray-200 text-gray-700"
-                }`}
               >
                 Readable
-              </button>
-              <button
+              </Button>
+              <Button
+                variant={activeTab === "timeline" ? "default" : "outline"}
+                size="sm"
                 onClick={() => setActiveTab("timeline")}
-                className={`rounded px-3 py-1 ${
-                  activeTab === "timeline"
-                    ? "bg-white text-gray-900 shadow-sm"
-                    : "bg-gray-200 text-gray-700"
-                }`}
               >
                 Timeline
-              </button>
+              </Button>
             </div>
 
             {activeTab === "readable" && (
-              <div className="rounded bg-white p-3 text-sm text-gray-800 shadow-sm">
-                <div className="mb-3 flex items-center justify-between">
-                  <p className="font-semibold">Full transcript</p>
-                  <span className="text-xs text-gray-500">Auto-grouped for readability</span>
+              <div className="space-y-4 rounded-lg border bg-background p-4 text-foreground">
+                <div className="text-xs uppercase tracking-wide text-muted-foreground">
+                  Auto-grouped for readability
                 </div>
                 <div className="space-y-4 leading-relaxed">
                   {paragraphs.length === 0 ? (
                     <p className="whitespace-pre-line">{data.full_text}</p>
                   ) : (
                     paragraphs.map((para, idx) => (
-                      <div key={idx} className="border-l-2 border-blue-100 pl-3">
+                      <div key={idx} className="border-l-2 border-primary/30 pl-3">
                         <p className="whitespace-pre-line">{para}</p>
                       </div>
                     ))
@@ -384,48 +397,47 @@ export default function VideosPage() {
             )}
 
             {activeTab === "timeline" && (
-              <div className="rounded bg-white p-3 text-sm text-gray-800 shadow-sm">
-                <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                  <p className="font-semibold">
+              <div className="space-y-3 rounded-lg border bg-background p-4 text-foreground">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="text-sm font-medium">
                     Segments ({filteredSegments.length}/{data.segments.length})
                   </p>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                     <div className="relative">
-                      <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
-                      <input
-                        type="text"
+                      <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                      <Input
                         value={search}
                         onChange={(e) => setSearch(e.target.value)}
                         placeholder="Search text or speaker"
-                        className="w-48 rounded border border-gray-300 py-1 pl-8 pr-2 text-xs focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        className="w-52 pl-8"
                       />
                     </div>
-                    <span className="text-[11px] text-gray-500">
-                      Duration: {formatDuration(data.duration_seconds)} | Words: {data.word_count}
+                    <span className="text-xs text-muted-foreground">
+                      Duration {formatDuration(data.duration_seconds)} | Words {data.word_count}
                     </span>
                   </div>
                 </div>
-                <div className="max-h-72 space-y-2 overflow-y-auto">
+                <div className="max-h-72 space-y-2 overflow-y-auto rounded-md border bg-muted/40 p-2">
                   {filteredSegments.map((segment, idx) => (
                     <div
                       key={`${segment.start}-${idx}`}
-                      className="rounded border border-gray-200 bg-white p-2 text-sm shadow-[0_1px_2px_rgba(0,0,0,0.04)]"
+                      className="rounded-md border bg-background p-2 shadow-sm"
                     >
-                      <div className="mb-1 flex items-center justify-between text-xs text-gray-500">
-                        <span className="inline-flex items-center rounded bg-blue-50 px-2 py-0.5 font-medium text-blue-700">
+                      <div className="mb-1 flex items-center justify-between text-[11px] text-muted-foreground">
+                        <span className="inline-flex items-center rounded-full bg-primary/10 px-2 py-0.5 font-medium text-primary">
                           {formatTimestamp(segment.start)} - {formatTimestamp(segment.end)}
                         </span>
                         {segment.speaker && (
-                          <span className="inline-flex items-center rounded bg-gray-100 px-2 py-0.5 text-gray-700">
+                          <span className="inline-flex items-center rounded-full bg-muted px-2 py-0.5">
                             {segment.speaker}
                           </span>
                         )}
                       </div>
-                      <p className="leading-snug text-gray-800">{segment.text}</p>
+                      <p className="text-sm text-foreground">{segment.text}</p>
                     </div>
                   ))}
                   {filteredSegments.length === 0 && (
-                    <p className="text-xs text-gray-500">No segments match your search.</p>
+                    <p className="text-xs text-muted-foreground">No segments match your search.</p>
                   )}
                 </div>
               </div>
@@ -435,338 +447,351 @@ export default function VideosPage() {
       </div>
     );
   };
-
   return (
     <MainLayout>
-      <div className="px-4 sm:px-0">
-        <div className="sm:flex sm:items-center sm:justify-between mb-6">
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900">Videos</h1>
-            <p className="mt-1 text-sm text-gray-500">
-              Manage your YouTube video transcripts
+      <div className="space-y-8">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <div className="space-y-1">
+            <p className="text-sm font-medium text-muted-foreground">Pipeline overview</p>
+            <h1 className="text-3xl font-semibold tracking-tight">Video transcripts</h1>
+            <p className="text-sm text-muted-foreground">
+              Track ingestion, storage, and transcript quality across your workspace.
             </p>
           </div>
-          <button
-            onClick={() => setShowAddForm(!showAddForm)}
-            className="mt-4 sm:mt-0 inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-          >
-            <Plus className="w-4 h-4 mr-2" />
-            Add Video
-          </button>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={selectedVideoIds.size === 0 || bulkDeleteMutation.isPending}
+              onClick={handleBulkDelete}
+              className="gap-2"
+            >
+              <Trash2 className="h-4 w-4" />
+              Delete selected ({selectedVideoIds.size})
+            </Button>
+            <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
+              <DialogTrigger asChild>
+                <Button className="gap-2">
+                  <Plus className="h-4 w-4" />
+                  Ingest video
+                </Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Ingest a YouTube video</DialogTitle>
+                  <DialogDescription>
+                    We&apos;ll fetch the media, transcribe it, and index the transcript for search.
+                  </DialogDescription>
+                </DialogHeader>
+                <form onSubmit={handleIngest} className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="youtube-url">YouTube URL</Label>
+                    <Input
+                      id="youtube-url"
+                      type="url"
+                      placeholder="https://www.youtube.com/watch?v=..."
+                      value={youtubeUrl}
+                      onChange={(e) => setYoutubeUrl(e.target.value)}
+                      required
+                    />
+                  </div>
+                  <DialogFooter>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      onClick={() => setIsAddDialogOpen(false)}
+                    >
+                      Cancel
+                    </Button>
+                    <Button type="submit" disabled={ingestMutation.isPending} className="gap-2">
+                      {ingestMutation.isPending && (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      )}
+                      Ingest video
+                    </Button>
+                  </DialogFooter>
+                </form>
+              </DialogContent>
+            </Dialog>
+          </div>
         </div>
 
         {usageSummary && (
-          <div className="mb-6 grid gap-4 sm:grid-cols-2">
-            <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
-              <div className="flex items-center justify-between text-sm">
-                <p className="font-semibold text-gray-900">Storage</p>
-                <span className="text-xs text-gray-500">
+          <div className="grid gap-4 md:grid-cols-2">
+            <Card>
+              <CardHeader className="flex flex-col gap-1">
+                <CardTitle>Storage</CardTitle>
+                <CardDescription>
                   Period ends {new Date(usageSummary.period_end).toLocaleDateString()}
-                </span>
-              </div>
-              <div className="mt-3">
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
                 <div className="flex items-end justify-between">
                   <div>
-                    <p className="text-xl font-bold text-gray-900">
+                    <p className="text-3xl font-semibold">
                       {formatMb(usageSummary.storage_breakdown.total_mb)}
                     </p>
-                    <p className="text-xs text-gray-500">
+                    <p className="text-sm text-muted-foreground">
                       of {formatMb(usageSummary.storage_breakdown.limit_mb)} used
                     </p>
                   </div>
-                  <div className="text-right text-xs text-gray-600 space-y-0.5">
+                  <div className="text-sm text-muted-foreground">
                     <p>Audio: {formatMb(usageSummary.storage_breakdown.audio_mb)}</p>
-                    <p>Transcript (~): {formatMb(usageSummary.storage_breakdown.transcript_mb)}</p>
+                    <p>Transcript: {formatMb(usageSummary.storage_breakdown.transcript_mb)}</p>
                     <p>On disk: {formatMb(usageSummary.storage_breakdown.disk_usage_mb)}</p>
                   </div>
                 </div>
-                <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-gray-200">
-                  <div
-                    className="h-full bg-blue-600"
-                    style={{
-                      width: `${Math.min(
-                        Math.max(usageSummary.storage_breakdown.percentage, 0),
-                        100
-                      ).toFixed(0)}%`,
-                    }}
-                  />
+                <Progress
+                  value={Math.min(
+                    Math.max(usageSummary.storage_breakdown.percentage ?? 0, 0),
+                    100
+                  )}
+                  className="h-2"
+                />
+                <div className="rounded-lg border bg-muted/30 p-3 text-xs text-muted-foreground">
+                  Delete {videos.length} video(s) to free approximately {formatMb(
+                    (videos.reduce(
+                      (sum, v) =>
+                        sum + (v.audio_file_size_mb || 0) + (v.transcript_size_mb || 0),
+                      0
+                    ) || 0) * 1.15
+                  )}.
                 </div>
-                <div className="mt-3 p-3 bg-blue-50 rounded-md border border-blue-100">
-                  <p className="text-xs text-blue-700">
-                    <span className="font-semibold">Potential savings:</span> Delete{" "}
-                    {data?.videos.length || 0} video(s) to free{" "}
-                    {formatMb(
-                      (data?.videos.reduce(
-                        (sum, v) =>
-                          sum +
-                          (v.audio_file_size_mb || 0) +
-                          (v.transcript_size_mb || 0),
-                        0
-                      ) || 0) * 1.15
-                    )}{" "}
-                    (est.)
-                  </p>
-                </div>
-              </div>
-            </div>
-            <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
-              <div className="flex items-center justify-between text-sm">
-                <p className="font-semibold text-gray-900">Processing</p>
-                <span className="text-xs text-gray-500">
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="flex flex-col gap-1">
+                <CardTitle>Processing</CardTitle>
+                <CardDescription>
                   {usageSummary.counts.videos_completed}/{usageSummary.counts.videos_total} completed
-                </span>
-              </div>
-              <div className="mt-3 grid grid-cols-2 gap-3 text-sm text-gray-800">
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="grid gap-4 text-sm text-muted-foreground sm:grid-cols-2">
                 <div>
-                  <p className="text-xs text-gray-500">Minutes</p>
-                  <p className="font-semibold">
+                  <p className="text-xs uppercase tracking-wide">Minutes</p>
+                  <p className="text-lg font-semibold text-foreground">
                     {usageSummary.minutes.used.toFixed(1)} / {usageSummary.minutes.limit.toFixed(1)}
                   </p>
                 </div>
                 <div>
-                  <p className="text-xs text-gray-500">Messages</p>
-                  <p className="font-semibold">
+                  <p className="text-xs uppercase tracking-wide">Messages</p>
+                  <p className="text-lg font-semibold text-foreground">
                     {usageSummary.messages.used} / {usageSummary.messages.limit}
                   </p>
                 </div>
                 <div>
-                  <p className="text-xs text-gray-500">Transcripts</p>
-                  <p className="font-semibold">{usageSummary.counts.transcripts}</p>
+                  <p className="text-xs uppercase tracking-wide">Transcripts</p>
+                  <p className="text-lg font-semibold text-foreground">
+                    {usageSummary.counts.transcripts}
+                  </p>
                 </div>
                 <div>
-                  <p className="text-xs text-gray-500">Chunks indexed</p>
-                  <p className="font-semibold">{usageSummary.counts.chunks}</p>
+                  <p className="text-xs uppercase tracking-wide">Chunks indexed</p>
+                  <p className="text-lg font-semibold text-foreground">
+                    {usageSummary.counts.chunks}
+                  </p>
                 </div>
-              </div>
-              {usageSummary.vector_store && (
-                <p className="mt-3 text-xs text-gray-500">
-                  Vector points (all users): {usageSummary.vector_store.total_points}
-                </p>
-              )}
-            </div>
+                {usageSummary.vector_store && (
+                  <div className="sm:col-span-2">
+                    <p className="text-xs uppercase tracking-wide">Vector store</p>
+                    <p className="text-lg font-semibold text-foreground">
+                      {usageSummary.vector_store.total_points} points indexed
+                    </p>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
           </div>
         )}
-
-        {showAddForm && (
-          <div className="bg-white shadow sm:rounded-lg mb-6">
-            <form onSubmit={handleIngest} className="p-6">
-              <div className="mb-4">
-                <label
-                  htmlFor="youtube-url"
-                  className="block text-sm font-medium text-gray-700 mb-2"
-                >
-                  YouTube URL
-                </label>
-                <input
-                  type="url"
-                  id="youtube-url"
-                  value={youtubeUrl}
-                  onChange={(e) => setYoutubeUrl(e.target.value)}
-                  placeholder="https://www.youtube.com/watch?v=..."
-                  className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
-                  required
-                />
-              </div>
-              <div className="flex justify-end space-x-3">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowAddForm(false);
-                    setYoutubeUrl("");
-                  }}
-                  className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={ingestMutation.isPending}
-                  className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {ingestMutation.isPending && (
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  )}
-                  Ingest Video
-                </button>
-              </div>
-            </form>
-          </div>
-        )}
-
-        {isLoading ? (
-          <div className="flex justify-center items-center py-12">
-            <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
-          </div>
-        ) : (
-          <div className="bg-white shadow overflow-hidden sm:rounded-md">
-            <div className="flex items-center justify-between px-6 py-3 border-b border-gray-200">
-              <div className="text-sm text-gray-600">
-                Select completed videos. You'll choose what to delete to save space.
-              </div>
-              <div className="flex items-center space-x-2">
-                <button
-                  onClick={handleBulkDelete}
-                  disabled={selectedVideoIds.size === 0 || bulkDeleteMutation.isPending}
-                  className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-md border border-red-200 text-red-700 hover:bg-red-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  <Trash2 className="w-4 h-4 mr-1.5" />
-                  Delete Selected ({selectedVideoIds.size})
-                </button>
-              </div>
+        <Card>
+          <CardHeader className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <CardTitle>Library</CardTitle>
+              <CardDescription>
+                Select completed videos to clean up storage or open transcripts inline.
+              </CardDescription>
             </div>
-            {data?.videos.length === 0 ? (
-              <div className="text-center py-12">
-                <p className="text-gray-500">No videos yet. Add your first video to get started.</p>
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              {selectedVideoIds.size > 0
+                ? `${selectedVideoIds.size} video(s) selected`
+                : "Select completed videos to enable cleanup."}
+            </div>
+          </CardHeader>
+          <CardContent className="p-0">
+            {isLoading ? (
+              <div className="flex items-center justify-center gap-2 py-12 text-muted-foreground">
+                <Loader2 className="h-5 w-5 animate-spin" />
+                Loading videos...
+              </div>
+            ) : videos.length === 0 ? (
+              <div className="py-12 text-center text-sm text-muted-foreground">
+                No videos yet. Ingest your first YouTube URL to get started.
               </div>
             ) : (
-              <ul className="divide-y divide-gray-200">
-                {data?.videos.map((video) => (
-                  <li key={video.id} className="px-6 py-4 hover:bg-gray-50">
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center mb-2">
-                          <input
-                            type="checkbox"
-                            className="h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                            disabled={!isDeletable(video) || deleteMutation.isPending || bulkDeleteMutation.isPending}
-                            checked={selectedVideoIds.has(video.id)}
-                            onChange={(e) => toggleSelection(video.id, e.target.checked)}
-                            aria-label={`Select ${video.title} for deletion`}
-                          />
-                          <span className="ml-2 text-xs text-gray-500">
-                            {isDeletable(video) ? "Select for cleanup" : "Wait until completed"}
-                          </span>
-                        </div>
-                        <div className="flex items-center space-x-3">
-                          <h3 className="text-sm font-medium text-gray-900 truncate">
-                            {video.title}
-                          </h3>
-                          <span
-                            className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusColor(
-                              video.status
-                            )}`}
-                          >
-                            {video.status}
-                          </span>
-                        </div>
-
-                        <div className="mt-2 flex items-center space-x-4 text-sm text-gray-500">
-                          <span>{formatDuration(video.duration_seconds)}</span>
-                          <span>|</span>
-                          <span>
-                            Added {formatDistanceToNow(new Date(video.created_at))} ago
-                          </span>
-                          <a
-                            href={video.youtube_url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex items-center text-blue-600 hover:text-blue-800"
-                          >
-                            <ExternalLink className="w-4 h-4 mr-1" />
-                            View on YouTube
-                          </a>
-                        </div>
-
-                        <div className="mt-1 text-xs text-gray-500">
-                          Storage: audio {formatMb(video.audio_file_size_mb)} • transcript{" "}
-                          {formatMb(video.transcript_size_mb)} • total {formatMb(video.storage_total_mb)}
-                        </div>
-
-                        {video.progress_percent !== undefined &&
-                          !["completed", "failed"].includes(video.status) && (
-                            <div className="mt-2">
-                              <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
-                                <div
-                                  className="h-full bg-blue-500 transition-all"
-                                  style={{
-                                    width: `${Math.min(
-                                      Math.max(video.progress_percent, 0),
-                                      100
-                                    )}%`,
-                                  }}
-                                />
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-12">
+                      <span className="sr-only">Select</span>
+                    </TableHead>
+                    <TableHead>Video</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Storage</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {videos.map((video) => {
+                    const isSelected = selectedVideoIds.has(video.id);
+                    return (
+                      <>
+                        <TableRow key={video.id} className="align-top">
+                          <TableCell>
+                            <Checkbox
+                              disabled={
+                                !isDeletable(video) ||
+                                deleteMutation.isPending ||
+                                bulkDeleteMutation.isPending
+                              }
+                              checked={isSelected}
+                              onCheckedChange={(checked) =>
+                                toggleSelection(video.id, checked === true)
+                              }
+                              aria-label={`Select ${video.title} for deletion`}
+                            />
+                          </TableCell>
+                          <TableCell className="space-y-2">
+                            <div className="flex items-center gap-3">
+                              <div>
+                                <p className="font-medium leading-none">{video.title}</p>
+                                <div className="text-xs text-muted-foreground">
+                                  {formatDuration(video.duration_seconds)} - Added {formatDistanceToNow(
+                                    new Date(video.created_at)
+                                  )} ago
+                                </div>
                               </div>
-                              <p className="mt-1 text-xs text-gray-500">
-                                {Math.round(video.progress_percent)}% - {video.status}
-                              </p>
                             </div>
-                          )}
-
-                        {/* Tags */}
-                        {video.tags && video.tags.length > 0 && (
-                          <div className="mt-2 flex flex-wrap gap-2">
-                            {video.tags.map((tag) => (
-                              <span
-                                key={tag}
-                                className="inline-flex items-center px-2 py-1 bg-gray-100 text-gray-700 text-xs rounded"
+                            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                              <a
+                                href={video.youtube_url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 text-primary"
                               >
-                                <TagIcon className="w-3 h-3 mr-1" />
-                                {tag}
-                              </span>
-                            ))}
-                          </div>
-                        )}
-
-                        {/* Action Buttons */}
-                        <div className="mt-3 flex items-center gap-2">
-                          <button
-                            onClick={() => setAddToCollectionVideo(video)}
-                            className="inline-flex items-center px-3 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50 transition-colors"
-                          >
-                            <FolderPlus className="w-3.5 h-3.5 mr-1.5" />
-                            Add to Collection
-                          </button>
-                          <button
-                            onClick={() => setManageTagsVideo(video)}
-                            className="inline-flex items-center px-3 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50 transition-colors"
-                          >
-                            <TagIcon className="w-3.5 h-3.5 mr-1.5" />
-                            Manage Tags
-                          </button>
-                          <button
-                            onClick={() => toggleTranscript(video.id)}
-                            disabled={video.status !== "completed"}
-                            className="inline-flex items-center px-3 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                          >
-                            {openTranscriptVideoId === video.id ? (
-                              <ChevronUp className="w-3.5 h-3.5 mr-1.5" />
-                            ) : (
-                              <ChevronDown className="w-3.5 h-3.5 mr-1.5" />
+                                <ExternalLink className="h-3.5 w-3.5" />
+                                View on YouTube
+                              </a>
+                              {video.tags?.map((tag) => (
+                                <Badge
+                                  key={tag}
+                                  variant="secondary"
+                                  className="flex items-center gap-1 text-[11px]"
+                                >
+                                  <TagIcon className="h-3 w-3" />
+                                  {tag}
+                                </Badge>
+                              ))}
+                            </div>
+                            {video.error_message && (
+                              <p className="text-sm text-destructive">{video.error_message}</p>
                             )}
-                            View Transcript
-                          </button>
-                        </div>
-
-                        {video.error_message && (
-                          <p className="mt-2 text-sm text-red-600">
-                            {video.error_message}
-                          </p>
+                          </TableCell>
+                          <TableCell className="space-y-2">
+                            <Badge
+                              variant="outline"
+                              className={cn("capitalize", getStatusBadgeClass(video.status))}
+                            >
+                              {video.status}
+                            </Badge>
+                            {video.progress_percent !== undefined &&
+                              !["completed", "failed"].includes(video.status) && (
+                                <div className="space-y-1">
+                                  <Progress value={video.progress_percent} className="h-1.5" />
+                                  <p className="text-xs text-muted-foreground">
+                                    {Math.round(video.progress_percent)}% - {video.status}
+                                  </p>
+                                </div>
+                              )}
+                          </TableCell>
+                          <TableCell className="text-sm text-muted-foreground">
+                            <div>Audio: {formatMb(video.audio_file_size_mb)}</div>
+                            <div>Transcript: {formatMb(video.transcript_size_mb)}</div>
+                            <div className="font-medium text-foreground">
+                              Total: {formatMb(video.storage_total_mb)}
+                            </div>
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <div className="flex flex-col items-end gap-2">
+                              <div className="flex flex-wrap justify-end gap-2">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="gap-1"
+                                  onClick={() => setAddToCollectionVideo(video)}
+                                >
+                                  <FolderPlus className="h-3.5 w-3.5" />
+                                  Collection
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="gap-1"
+                                  onClick={() => setManageTagsVideo(video)}
+                                >
+                                  <TagIcon className="h-3.5 w-3.5" />
+                                  Tags
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="gap-1"
+                                  onClick={() => toggleTranscript(video.id)}
+                                  disabled={video.status !== "completed"}
+                                >
+                                  {openTranscriptVideoId === video.id ? (
+                                    <ChevronUp className="h-4 w-4" />
+                                  ) : (
+                                    <ChevronDown className="h-4 w-4" />
+                                  )}
+                                  Transcript
+                                </Button>
+                              </div>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="text-muted-foreground hover:text-destructive"
+                                onClick={() => handleDelete(video)}
+                                disabled={
+                                  !isDeletable(video) ||
+                                  deleteMutation.isPending ||
+                                  bulkDeleteMutation.isPending
+                                }
+                              >
+                                <Trash2 className="h-4 w-4" />
+                                <span className="sr-only">Delete</span>
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                        {openTranscriptVideoId === video.id && (
+                          <TableRow key={`${video.id}-transcript`}>
+                            <TableCell colSpan={5}>
+                              <TranscriptPanel
+                                videoId={video.id}
+                                isOpen={openTranscriptVideoId === video.id}
+                              />
+                            </TableCell>
+                          </TableRow>
                         )}
-
-                        <TranscriptPanel
-                          videoId={video.id}
-                          isOpen={openTranscriptVideoId === video.id}
-                        />
-                      </div>
-                      <div className="ml-4 flex-shrink-0">
-                        <button
-                          onClick={() => handleDelete(video)}
-                          disabled={!isDeletable(video) || deleteMutation.isPending || bulkDeleteMutation.isPending}
-                          className="p-2 text-gray-400 hover:text-red-600 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
-                          title="Delete video"
-                        >
-                          <Trash2 className="w-5 h-5" />
-                        </button>
-                      </div>
-                    </div>
-                  </li>
-                ))}
-              </ul>
+                      </>
+                    );
+                  })}
+                </TableBody>
+              </Table>
             )}
-          </div>
-        )}
+          </CardContent>
+        </Card>
 
-        {/* Add to Collection Modal */}
         {addToCollectionVideo && (
           <AddToCollectionModal
             videoId={addToCollectionVideo.id}
@@ -775,7 +800,6 @@ export default function VideosPage() {
           />
         )}
 
-        {/* Manage Tags Modal */}
         {manageTagsVideo && (
           <ManageTagsModal
             videoId={manageTagsVideo.id}
@@ -785,7 +809,6 @@ export default function VideosPage() {
           />
         )}
 
-        {/* Delete Confirmation Modal */}
         {showDeleteModal && videosToDelete.length > 0 && (
           <DeleteConfirmationModal
             videos={videosToDelete}
@@ -798,4 +821,3 @@ export default function VideosPage() {
     </MainLayout>
   );
 }
-
