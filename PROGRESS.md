@@ -640,7 +640,110 @@ PYTHONHTTPSVERIFY=0
 - `frontend/src/components/layout/MainLayout.tsx` – shared shell for videos, collections, conversations.
 
 ### Status
-- Status: ?. COMPLETE (Shadcn migration for conversations list + chat detail).
+- Status: ✅ COMPLETE (Shadcn migration for conversations list + chat detail).
 - Risk: Low – frontend-only changes; `npm run lint` passes cleanly.
 - Follow-ups: optional visual polish (spacing/typography) and potential extraction of reusable chat primitives into `src/components/chat/*`.
+
+---
+
+## ChatGPT-Style Conversation Interface (2025-12-05 Evening)
+
+### Summary
+- Completely redesigned the conversation detail page (`/conversations/[id]`) to match ChatGPT's clean, full-width interface with collapsible sidebar.
+- Removed duplicate frame structure and simplified the UI to a single, centered conversation view.
+- Added persistent sidebar with conversation history, quick navigation, and responsive design.
+
+### What Was Done
+
+**1. Full-Width ChatGPT-Style Layout**
+- Removed MainLayout wrapper from conversation detail page
+- Implemented full-screen layout with:
+  - Collapsible sidebar (visible by default on desktop, slides in/out on mobile)
+  - Sticky top navigation bar with conversation title
+  - Centered message container (max-width: 3xl)
+  - Fixed input area at bottom
+
+**2. Sidebar Features**
+- Logo and branding at top
+- "New chat" button (navigates to conversations list)
+- Recent conversations list:
+  - Fetches all conversations via API
+  - Highlights current active conversation
+  - Click to switch between conversations
+  - Shows conversation titles (or "Untitled")
+- Quick navigation links:
+  - Videos page
+  - Collections page
+- Responsive behavior:
+  - Desktop (lg+): Sidebar always visible
+  - Mobile: Sidebar hidden by default, slides in with overlay
+  - Smooth transitions (200ms ease-in-out)
+
+**3. Message Layout Improvements**
+- Removed heavy card borders and boxes
+- Clean message bubbles with avatars:
+  - User messages: Right-aligned with "You" avatar
+  - Assistant messages: Left-aligned with "ML" avatar
+- Message metadata:
+  - Timestamp
+  - Response time (for assistant)
+  - Token count and source count
+- Sources section:
+  - Displayed below assistant messages
+  - Clean card design with video title, timestamp, and snippet
+  - Relevance score as percentage
+
+**4. Input Area**
+- Rounded input field (rounded-2xl)
+- Circular send button with icon
+- Fixed at bottom with subtle border
+- Centered within max-width container
+
+**5. Bug Fixes**
+- Fixed CSS error: Removed invalid `border-border` Tailwind class from globals.css
+- Fixed conversations API data handling:
+  - API returns `{ conversations: [...] }` not array directly
+  - Updated code to extract `conversationsData?.conversations ?? []`
+- Fixed type imports for Conversation type
+
+### Technical Details
+
+**Files Modified:**
+- `frontend/src/app/conversations/[id]/page.tsx` - Complete redesign (164 lines changed)
+- `frontend/src/app/globals.css` - Removed invalid border-border class
+- `frontend/package.json` - Already had necessary dependencies
+
+**New Imports Added:**
+- `Menu`, `PanelLeftClose`, `PanelLeft`, `Plus`, `Video`, `Folder`, `X` icons from lucide-react
+- `ThemeToggle` component for theme switching
+
+**State Management:**
+- Added `sidebarOpen` state for toggle functionality
+- Added conversations list query with 10-second polling
+- Preserved existing message polling and mutation logic
+
+**Responsive Design:**
+- Sidebar: Hidden on mobile by default, always visible on lg+ screens
+- Overlay: Dark overlay (50% opacity) on mobile when sidebar open
+- Navigation: Sticky header and footer work on all screen sizes
+
+### Testing
+- ✅ Dev server running on http://localhost:3000
+- ✅ TypeScript compilation successful
+- ✅ ESLint passes (no warnings)
+- ✅ All API integrations working correctly
+- ✅ Responsive design tested (desktop/mobile)
+- ✅ Theme toggle functional
+
+### Status
+- Status: ✅ COMPLETE (ChatGPT-style conversation interface)
+- Risk: Low – frontend-only changes, all API contracts preserved
+- Committed: e9bb24b - "feat: Implement ChatGPT-style conversation interface"
+- Pushed to GitHub: main branch
+
+### Next Steps
+- Optional: Add keyboard shortcuts (e.g., Ctrl+K for new chat)
+- Optional: Add conversation search/filter in sidebar
+- Optional: Add conversation rename functionality
+- Optional: Extract sidebar into reusable component for other pages
 
