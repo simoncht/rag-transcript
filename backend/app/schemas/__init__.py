@@ -31,6 +31,9 @@ from app.schemas.conversation import (
     ConversationWithMessages,
     ConversationList,
     MessageResponse,
+    ConversationSource,
+    ConversationSourcesResponse,
+    ConversationSourcesUpdateRequest,
 )
 from app.schemas.collection import (
     CollectionCreateRequest,
@@ -79,6 +82,9 @@ __all__ = [
     "ConversationWithMessages",
     "ConversationList",
     "MessageResponse",
+    "ConversationSource",
+    "ConversationSourcesResponse",
+    "ConversationSourcesUpdateRequest",
     # Collection
     "CollectionCreateRequest",
     "CollectionUpdateRequest",

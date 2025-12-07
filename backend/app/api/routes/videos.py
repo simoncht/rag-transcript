@@ -64,8 +64,6 @@ async def ingest_video(
     Returns:
         VideoIngestResponse with video_id and job_id
     """
-    usage_tracker = UsageTracker(db)
-
     try:
         # Extract and validate video info
         video_info = youtube_service.get_video_info(request.youtube_url)
@@ -75,16 +73,9 @@ async def ingest_video(
         if not is_valid:
             raise HTTPException(status_code=400, detail=error_message)
 
-        # Check quotas
-        duration_minutes = video_info["duration_seconds"] / 60.0 if video_info["duration_seconds"] else 0
-        try:
-            usage_tracker.check_quota(current_user.id, "videos", 1)
-            usage_tracker.check_quota(current_user.id, "minutes", duration_minutes)
-        except QuotaExceededError as e:
-            raise HTTPException(
-                status_code=429,
-                detail=f"Quota exceeded: {str(e)}"
-            )
+        # NOTE: Quota checks are temporarily disabled during local development.
+        # The UsageTracker and quota types ("videos", "minutes") can be re-enabled
+        # when introducing paid tiers or usage-based billing.
 
         # Create video record
         video = Video(

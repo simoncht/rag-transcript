@@ -4,6 +4,7 @@ import {
   ConversationListResponse,
   ConversationWithMessages,
   MessageResponse,
+  ConversationSourcesResponse,
 } from "../types";
 
 export const conversationsApi = {
@@ -50,14 +51,34 @@ export const conversationsApi = {
   async sendMessage(
     conversationId: string,
     message: string,
-    stream = false
+    stream = false,
+    model?: string,
+    mode?: string
   ): Promise<MessageResponse> {
     const response = await apiClient.post(
       `/conversations/${conversationId}/messages`,
       {
         message,
         stream,
+        model,
+        mode,
       }
+    );
+    return response.data;
+  },
+
+  async getSources(conversationId: string): Promise<ConversationSourcesResponse> {
+    const response = await apiClient.get(`/conversations/${conversationId}/sources`);
+    return response.data;
+  },
+
+  async updateSources(
+    conversationId: string,
+    payload: { selected_video_ids?: string[]; add_video_ids?: string[] }
+  ): Promise<ConversationSourcesResponse> {
+    const response = await apiClient.patch(
+      `/conversations/${conversationId}/sources`,
+      payload
     );
     return response.data;
   },

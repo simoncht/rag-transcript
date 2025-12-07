@@ -71,6 +71,7 @@ export interface VideoDeleteResponse {
 export interface Conversation {
   id: string;
   title: string;
+  collection_id?: string | null;
   selected_video_ids: string[];
   message_count: number;
   total_tokens_used: number;
@@ -88,6 +89,7 @@ export interface Message {
   chunks_retrieved_count?: number;
   response_time_seconds?: number;
   created_at: string;
+  chunk_references?: ChunkReference[];
 }
 
 export interface ChunkReference {
@@ -99,6 +101,7 @@ export interface ChunkReference {
   text_snippet: string;
   relevance_score: number;
   timestamp_display: string;
+  rank: number;
 }
 
 export interface MessageResponse {
@@ -109,10 +112,30 @@ export interface MessageResponse {
   chunk_references: ChunkReference[];
   token_count: number;
   response_time_seconds: number;
+  model?: string;
 }
 
 export interface ConversationWithMessages extends Conversation {
   messages: Message[];
+}
+
+export interface ConversationSource {
+  conversation_id: string;
+  video_id: string;
+  is_selected: boolean;
+  added_at: string;
+  added_via?: string;
+  title?: string;
+  status?: string;
+  duration_seconds?: number;
+  thumbnail_url?: string;
+  youtube_id?: string;
+}
+
+export interface ConversationSourcesResponse {
+  total: number;
+  selected: number;
+  sources: ConversationSource[];
 }
 
 export interface VideoListResponse {

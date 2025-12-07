@@ -125,6 +125,9 @@ class OllamaProvider(LLMProvider):
         """Generate completion using Ollama."""
         start_time = time.time()
 
+        # Allow per-request model override (e.g., from API request)
+        override_model = kwargs.pop("model", None)
+
         # Convert messages to Ollama format
         ollama_messages = [
             {"role": msg.role, "content": msg.content}
@@ -132,7 +135,7 @@ class OllamaProvider(LLMProvider):
         ]
 
         payload = {
-            "model": self.model,
+            "model": override_model or self.model,
             "messages": ollama_messages,
             "stream": False,
             "options": {}
@@ -153,7 +156,7 @@ class OllamaProvider(LLMProvider):
 
             return LLMResponse(
                 content=data["message"]["content"],
-                model=self.model,
+                model=override_model or self.model,
                 provider="ollama",
                 usage={
                     "input_tokens": data.get("prompt_eval_count", 0),
@@ -175,13 +178,14 @@ class OllamaProvider(LLMProvider):
         **kwargs
     ) -> Iterator[str]:
         """Generate streaming completion using Ollama."""
+        override_model = kwargs.pop("model", None)
         ollama_messages = [
             {"role": msg.role, "content": msg.content}
             for msg in messages
         ]
 
         payload = {
-            "model": self.model,
+            "model": override_model or self.model,
             "messages": ollama_messages,
             "stream": True,
             "options": {}
@@ -249,6 +253,9 @@ class OpenAIProvider(LLMProvider):
         """Generate completion using OpenAI."""
         start_time = time.time()
 
+        # Allow per-request model override
+        override_model = kwargs.pop("model", None)
+
         # Convert messages to OpenAI format
         openai_messages = [
             {"role": msg.role, "content": msg.content}
@@ -256,7 +263,7 @@ class OpenAIProvider(LLMProvider):
         ]
 
         params = {
-            "model": self.model,
+            "model": override_model or self.model,
             "messages": openai_messages,
         }
 
@@ -364,6 +371,9 @@ class AnthropicProvider(LLMProvider):
         """Generate completion using Anthropic."""
         start_time = time.time()
 
+        # Allow per-request model override
+        override_model = kwargs.pop("model", None)
+
         # Extract system message if present
         system_message = None
         conversation_messages = []
@@ -378,7 +388,7 @@ class AnthropicProvider(LLMProvider):
                 })
 
         params = {
-            "model": self.model,
+            "model": override_model or self.model,
             "messages": conversation_messages,
             "max_tokens": max_tokens or settings.llm_max_tokens,
         }
@@ -500,6 +510,7 @@ class LLMService:
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
         retry: bool = True,
+        model: Optional[str] = None,
         **kwargs
     ) -> LLMResponse:
         """
@@ -510,6 +521,7 @@ class LLMService:
             temperature: Sampling temperature
             max_tokens: Maximum tokens to generate
             retry: Whether to retry on failure
+            model: Optional explicit model name to use
             **kwargs: Additional parameters
 
         Returns:
@@ -519,13 +531,25 @@ class LLMService:
         max_tokens = max_tokens if max_tokens is not None else settings.llm_max_tokens
 
         if not retry:
-            return self.provider.complete(messages, temperature, max_tokens, **kwargs)
+            return self.provider.complete(
+                messages,
+                temperature,
+                max_tokens,
+                model=model,
+                **kwargs,
+            )
 
         # Retry logic
         last_exception = None
         for attempt in range(self.max_retries):
             try:
-                return self.provider.complete(messages, temperature, max_tokens, **kwargs)
+                return self.provider.complete(
+                    messages,
+                    temperature,
+                    max_tokens,
+                    model=model,
+                    **kwargs,
+                )
             except Exception as e:
                 last_exception = e
                 if attempt < self.max_retries - 1:

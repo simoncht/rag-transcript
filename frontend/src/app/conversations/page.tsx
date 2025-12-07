@@ -296,7 +296,7 @@ export default function ConversationsPage() {
                 </div>
               ) : (
                 <div className="divide-y rounded-md border bg-muted/20">
-                  {conversationsData.conversations.map((conversation) => (
+                  {conversationsData?.conversations.map((conversation) => (
                     <button
                       key={conversation.id}
                       type="button"

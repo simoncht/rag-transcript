@@ -19,6 +19,7 @@ Production-grade RAG system for YouTube videos with semantic chunking, contextua
 ## Overview
 
 **Features:**
+- Per-conversation source control (include/exclude videos) with clickable citations that jump to the exact transcript segment.
 - Ingest YouTube videos → extract audio transcripts (Whisper)
 - Semantic chunking with contextual enrichment
 - Chat with AI about video content with citations
@@ -51,16 +52,17 @@ Production-grade RAG system for YouTube videos with semantic chunking, contextua
 ### Database Schema (`backend/app/models/`)
 
 **Core Tables:**
-- `users` - Accounts, subscription tiers, Stripe IDs
-- `videos` - Metadata, processing status, storage paths
-- `transcripts` - Full text, Whisper segments, timestamps
-- `chunks` - Semantic units, enrichment, embeddings
-- `conversations` - Chat sessions, selected videos
-- `messages` - User/assistant messages, LLM metadata, citations
-- `message_chunk_references` - Citation tracking
-- `usage_events` - Billable actions, quota tracking
-- `user_quotas` - Monthly limits
-- `jobs` - Background task tracking
+  - `users` - Accounts, subscription tiers, Stripe IDs
+  - `videos` - Metadata, processing status, storage paths
+  - `transcripts` - Full text, Whisper segments, timestamps
+  - `chunks` - Semantic units, enrichment, embeddings
+  - `conversations` - Chat sessions, selected videos, optional backing collection
+  - `messages` - User/assistant messages, LLM metadata, citations
+  - `message_chunk_references` - Citation tracking
+  - `conversation_sources` - Per-conversation video list with `is_selected` flag used to filter retrieval
+  - `usage_events` - Billable actions, quota tracking
+  - `user_quotas` - Monthly limits
+  - `jobs` - Background task tracking
 
 ---
 

@@ -747,3 +747,27 @@ PYTHONHTTPSVERIFY=0
 - Optional: Add conversation rename functionality
 - Optional: Extract sidebar into reusable component for other pages
 
+## Source Selection, Citation UX, and Local Infra (2025-12-07)
+
+### Summary
+- Added collection-synced source selection with per-source toggles and new sources endpoints.
+- Frontend chat now has left-nav source tree, right-hand sources panel (mobile drawer), composer guard when no sources are selected, and clickable citations that scroll/highlight source cards with timestamps.
+- Ran Alembic migration in Docker (`004_add_conversation_sources`) and fixed schema export to boot the app container.
+
+### Backend
+- New `conversation_sources` table/model and `collection_id` on conversations; migration `backend/alembic/versions/004_add_conversation_sources.py` seeds existing conversations.
+- Updated `backend/app/api/routes/conversations.py` to honor selected sources in retrieval, sync collection videos, expose `GET/PATCH /conversations/{id}/sources`, and include `rank`ed chunk references.
+- Exposed new schemas in `backend/app/schemas/conversation.py` and `__init__.py`.
+
+### Frontend
+- `frontend/src/app/conversations/[id]/page.tsx`: left-nav source checkboxes, right panel/drawer with select-all/none, source counts, send disabled when zero selected; citations linkify and highlight source cards with timestamps.
+- Types and API client updated for sources responses and chunk `rank`.
+
+### Local Docker
+- Built `app` image and ran `docker compose run --rm app alembic upgrade head` against local Postgres.
+- Fixed startup ImportError by exporting new schemas; app now responds on `http://localhost:8000`.
+
+### Notes for next agent
+- Local Python 3.14 breaks Alembic/SQLAlchemy; use Python 3.11 (Docker image is 3.11-slim).
+- If psycopg2-binary 2.9.9 fails on 3.11, use 2.9.11.
+- Containers running: app/worker/beat/postgres/redis/qdrant via `docker compose up`.

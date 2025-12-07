@@ -21,6 +21,7 @@ class Conversation(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    collection_id = Column(UUID(as_uuid=True), ForeignKey("collections.id", ondelete="SET NULL"), nullable=True, index=True)
 
     # Conversation metadata
     title = Column(String(255), nullable=True)  # Auto-generated or user-provided
@@ -38,6 +39,12 @@ class Conversation(Base):
     # Relationships
     user = relationship("User", back_populates="conversations")
     messages = relationship("Message", back_populates="conversation", cascade="all, delete-orphan", order_by="Message.created_at")
+    sources = relationship(
+        "ConversationSource",
+        back_populates="conversation",
+        cascade="all, delete-orphan",
+        order_by="ConversationSource.added_at",
+    )
 
     def __repr__(self):
         return f"<Conversation(id={self.id}, title={self.title}, messages={self.message_count})>"

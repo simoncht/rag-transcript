@@ -92,6 +92,14 @@ export default function VideosPage() {
       setYoutubeUrl("");
       setIsAddDialogOpen(false);
     },
+    onError: (error: unknown) => {
+      console.error("Video ingest failed:", error);
+      const message =
+        (error as any)?.response?.data?.detail ??
+        (error as any)?.message ??
+        "Failed to ingest video. Please try again.";
+      alert(message);
+    },
   });
 
   const deleteMutation = useMutation({
@@ -634,10 +642,10 @@ export default function VideosPage() {
                     <TableHead className="w-12">
                       <span className="sr-only">Select</span>
                     </TableHead>
-                    <TableHead>Video</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Storage</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
+                    <TableHead className="w-[40%]">Video</TableHead>
+                    <TableHead className="w-[15%]">Status</TableHead>
+                    <TableHead className="w-[15%]">Storage</TableHead>
+                    <TableHead className="w-[30%] text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>

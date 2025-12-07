@@ -109,6 +109,44 @@ Full redesign of conversation detail page with modern, clean ChatGPT-inspired in
 - Conversation rename functionality
 - Extract sidebar as reusable component
 
+## ⚠️ CRITICAL: Dev Server Management (READ THIS FIRST!)
+
+**DO NOT start `npm run dev` unless explicitly asked by the user or confirmed it's not running!**
+
+### Before Starting Dev Server:
+```bash
+# 1. ALWAYS check if dev server is already running
+netstat -ano | findstr :3000
+
+# 2. If port 3000 is in use, ASK the user before starting a new instance
+# 3. NEVER start multiple instances - it creates port conflicts (3001, 3002, 3003...)
+```
+
+### Current Status:
+- **Default Port**: http://localhost:3000
+- **Auto-Reload**: Next.js has hot module reloading - code changes apply automatically
+- **NO RESTART NEEDED** for most code changes (only for config changes like `next.config.js`)
+
+### If Multiple Instances Are Running:
+```bash
+# Find all Node processes on ports 3000-3003
+netstat -ano | findstr :300
+
+# Kill orphaned processes (replace PID with actual process IDs)
+powershell -Command "Stop-Process -Id <PID> -Force"
+```
+
+### Rules for AI Agents:
+1. ✅ **ASSUME** the dev server is already running unless told otherwise
+2. ❌ **NEVER** start `npm run dev` automatically or "to test changes"
+3. ✅ **ASK** the user "Is the dev server running?" if unsure
+4. ✅ **VERIFY** with `netstat` before starting if user says it's down
+5. ✅ **HOT RELOAD** handles code changes - no restart needed
+
+**User manages dev server. AI assists only when explicitly requested.**
+
+---
+
 ## System Check
 
 ```bash
@@ -389,3 +427,9 @@ All will use the new theme components automatically.
 
 
 
+## Source Selection & Citation UX (Dec 7)
+
+- Added per-conversation source panel + left-nav tree with include/exclude toggles that feed the RAG retrieval filter.
+- Backend now syncs collection-backed conversations with newly added videos via `conversation_sources` and uses only selected sources in Qdrant search.
+- Assistant responses return ranked chunk references; frontend linkifies `Source N` mentions and scrolls/highlights the corresponding source card with its timestamp.
+- Alembic migration `004_add_conversation_sources` applied locally via Docker; app container now boots cleanly on http://localhost:8000.
