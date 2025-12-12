@@ -114,6 +114,81 @@ class SentenceTransformerEmbedding(EmbeddingProvider):
         return embedding / norm
 
 
+class BertEmbedding(EmbeddingProvider):
+    """
+    BERT embedding provider using transformers library directly.
+
+    Uses bert-base-uncased from local cache without sentence-transformers wrapper.
+    """
+
+    def __init__(self, model_name: str = None):
+        """Initialize BERT model."""
+        from transformers import AutoModel, AutoTokenizer
+        import torch
+
+        self.model_name = model_name or settings.embedding_model
+        self.tokenizer = AutoTokenizer.from_pretrained(self.model_name, local_files_only=True)
+        self.model = AutoModel.from_pretrained(self.model_name, local_files_only=True)
+        self.model.eval()  # Set to evaluation mode
+        self.dimensions = self.model.config.hidden_size
+        self.max_length = 512
+
+    def embed_text(self, text: str) -> np.ndarray:
+        """Generate embedding for a single text."""
+        import torch
+
+        inputs = self.tokenizer(
+            text,
+            return_tensors='pt',
+            padding=True,
+            truncation=True,
+            max_length=self.max_length
+        )
+
+        with torch.no_grad():
+            outputs = self.model(**inputs)
+            # Use [CLS] token embedding
+            embedding = outputs.last_hidden_state[:, 0, :].squeeze().numpy()
+
+        return self._normalize(embedding)
+
+    def embed_batch(self, texts: List[str]) -> List[np.ndarray]:
+        """Generate embeddings for a batch of texts."""
+        import torch
+
+        inputs = self.tokenizer(
+            texts,
+            return_tensors='pt',
+            padding=True,
+            truncation=True,
+            max_length=self.max_length
+        )
+
+        with torch.no_grad():
+            outputs = self.model(**inputs)
+            # Use [CLS] token embeddings for all texts
+            embeddings = outputs.last_hidden_state[:, 0, :].numpy()
+
+        return [self._normalize(emb) for emb in embeddings]
+
+    def get_model_info(self) -> Dict:
+        """Get model information."""
+        return {
+            "provider": "bert",
+            "model": self.model_name,
+            "dimensions": self.dimensions,
+            "max_sequence_length": self.max_length,
+        }
+
+    @staticmethod
+    def _normalize(embedding: np.ndarray) -> np.ndarray:
+        """Normalize embedding to unit length."""
+        norm = np.linalg.norm(embedding)
+        if norm == 0:
+            return embedding
+        return embedding / norm
+
+
 class OpenAIEmbedding(EmbeddingProvider):
     """
     OpenAI embeddings API provider.
@@ -295,7 +370,11 @@ class EmbeddingService:
         provider_type = settings.embedding_provider
 
         if provider_type == "local":
-            return SentenceTransformerEmbedding()
+            # Check if model is BERT-based (use custom BERT class)
+            if "bert" in settings.embedding_model.lower():
+                return BertEmbedding()
+            else:
+                return SentenceTransformerEmbedding()
         elif provider_type == "openai":
             return OpenAIEmbedding()
         elif provider_type == "azure":
@@ -381,3 +460,20 @@ class EmbeddingService:
 
 # Global embedding service instance
 embedding_service = EmbeddingService()
+
+
+def set_active_embedding_model(model_name: str):
+    """
+    Change the active embedding model.
+
+    Args:
+        model_name: New model name to use
+    """
+    global embedding_service
+    from app.core import config
+
+    # Update settings
+    config.settings.embedding_model = model_name
+
+    # Reinitialize embedding service with new model
+    embedding_service = EmbeddingService()

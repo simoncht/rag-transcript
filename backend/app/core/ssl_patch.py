@@ -74,9 +74,9 @@ try:
         constants.HF_HUB_DISABLE_SSL_VERIFY = True
 
     except Exception as hf_error:
-        print(f"⚠ Warning: Could not patch huggingface_hub: {hf_error}")
+        print(f"WARNING: Could not patch huggingface_hub: {hf_error}")
 
-    print("✓ SSL verification disabled for corporate environment")
+    print("SSL verification disabled for corporate environment")
 
 except Exception as e:
-    print(f"⚠ Warning: Could not patch requests SSL verification: {e}")
+    print(f"WARNING: Could not patch requests SSL verification: {e}")

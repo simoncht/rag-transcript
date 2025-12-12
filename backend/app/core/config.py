@@ -80,8 +80,8 @@ class Settings(BaseSettings):
     enrichment_max_retries: int = 3
 
     # Embedding Configuration
-    embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
-    embedding_dimensions: int = 384
+    embedding_model: str = "bert-base-uncased"
+    embedding_dimensions: int = 768
     embedding_batch_size: int = 32
     embedding_provider: Literal["local", "openai", "azure"] = "local"
 
