@@ -83,7 +83,7 @@ export interface Conversation {
 export interface Message {
   id: string;
   conversation_id: string;
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "system";
   content: string;
   token_count: number;
   chunks_retrieved_count?: number;
@@ -127,6 +127,9 @@ export interface ConversationSource {
   added_via?: string;
   title?: string;
   status?: string;
+  is_deleted?: boolean;
+  selectable?: boolean;
+  selectable_reason?: string;
   duration_seconds?: number;
   thumbnail_url?: string;
   youtube_id?: string;
@@ -136,6 +139,22 @@ export interface ConversationSourcesResponse {
   total: number;
   selected: number;
   sources: ConversationSource[];
+}
+
+export interface EmbeddingPreset {
+  key: string;
+  model: string;
+  dimensions: number;
+}
+
+export interface EmbeddingSettingsResponse {
+  active_key: string;
+  active_model: string;
+  dimensions: number;
+  collection_name: string;
+  presets: EmbeddingPreset[];
+  reembed_task_id?: string;
+  message?: string;
 }
 
 export interface VideoListResponse {
@@ -264,4 +283,191 @@ export interface UsageSummary {
   storage_breakdown: StorageBreakdown;
   counts: UsageCounts;
   vector_store?: VectorStoreStat;
+}
+
+export interface ReactFlowPosition {
+  x: number;
+  y: number;
+}
+
+export interface InsightNode<TData = Record<string, any>> {
+  id: string;
+  type: string;
+  position: ReactFlowPosition;
+  data: TData;
+}
+
+export interface InsightEdge {
+  id: string;
+  source: string;
+  target: string;
+  type?: string;
+}
+
+export interface InsightGraph {
+  nodes: InsightNode[];
+  edges: InsightEdge[];
+}
+
+export interface ConversationInsightsMetadata {
+  topics_count: number;
+  total_chunks_analyzed: number;
+  generation_time_seconds?: number | null;
+  cached: boolean;
+  created_at: string;
+  llm_provider?: string | null;
+  llm_model?: string | null;
+  extraction_prompt_version: number;
+}
+
+export interface ConversationInsightsResponse {
+  conversation_id: string;
+  graph: InsightGraph;
+  metadata: ConversationInsightsMetadata;
+}
+
+export interface TopicInsightChunk {
+  chunk_id: string;
+  video_id: string;
+  video_title: string;
+  start_timestamp: number;
+  end_timestamp: number;
+  timestamp_display: string;
+  text: string;
+  chunk_title?: string | null;
+  chapter_title?: string | null;
+  chunk_summary?: string | null;
+}
+
+export interface TopicChunksResponse {
+  topic_id: string;
+  topic_label: string;
+  chunks: TopicInsightChunk[];
+}
+
+// Admin types
+export interface SystemStats {
+  total_users: number;
+  users_by_tier: Record<string, number>;
+  active_users: number;
+  inactive_users: number;
+  new_users_this_month: number;
+  total_videos: number;
+  videos_completed: number;
+  videos_processing: number;
+  videos_failed: number;
+  total_conversations: number;
+  total_messages: number;
+  total_transcription_minutes: number;
+  total_tokens_used: number;
+  total_storage_gb: number;
+}
+
+export interface UserEngagementStats {
+  active_users: number;
+  at_risk_users: number;
+  churning_users: number;
+  dormant_users: number;
+}
+
+export interface DashboardResponse {
+  system_stats: SystemStats;
+  engagement_stats: UserEngagementStats;
+}
+
+export interface UserSummary {
+  id: string;
+  email: string;
+  full_name?: string;
+  clerk_user_id?: string;
+  subscription_tier: string;
+  subscription_status: string;
+  is_active: boolean;
+  is_superuser: boolean;
+  created_at: string;
+  last_active_at?: string;
+  video_count: number;
+  collection_count: number;
+  conversation_count: number;
+  total_messages: number;
+  total_tokens_used: number;
+  storage_mb_used: number;
+  days_since_signup: number;
+  days_since_last_active?: number;
+}
+
+export interface UserListResponse {
+  total: number;
+  page: number;
+  page_size: number;
+  users: UserSummary[];
+}
+
+export interface UserDetailMetrics {
+  videos_total: number;
+  videos_completed: number;
+  videos_processing: number;
+  videos_failed: number;
+  total_transcription_minutes: number;
+  collections_total: number;
+  collections_with_videos: number;
+  conversations_total: number;
+  conversations_active: number;
+  messages_sent: number;
+  messages_received: number;
+  total_tokens: number;
+  input_tokens: number;
+  output_tokens: number;
+  storage_mb: number;
+  audio_mb: number;
+  transcript_mb: number;
+  quota_videos_used: number;
+  quota_videos_limit: number;
+  quota_minutes_used: number;
+  quota_minutes_limit: number;
+  quota_messages_used: number;
+  quota_messages_limit: number;
+  quota_storage_used: number;
+  quota_storage_limit: number;
+}
+
+export interface UserCostBreakdown {
+  transcription_cost: number;
+  embedding_cost: number;
+  llm_cost: number;
+  storage_cost: number;
+  total_cost: number;
+  subscription_revenue: number;
+  net_profit: number;
+  profit_margin: number;
+}
+
+export interface UserDetail {
+  id: string;
+  email: string;
+  full_name?: string;
+  clerk_user_id?: string;
+  subscription_tier: string;
+  subscription_status: string;
+  is_active: boolean;
+  is_superuser: boolean;
+  created_at: string;
+  updated_at: string;
+  last_login_at?: string;
+  metrics: UserDetailMetrics;
+  costs: UserCostBreakdown;
+}
+
+export interface UserUpdateRequest {
+  subscription_tier?: string;
+  subscription_status?: string;
+  is_active?: boolean;
+  is_superuser?: boolean;
+}
+
+export interface QuotaOverrideRequest {
+  videos_limit?: number;
+  minutes_limit?: number;
+  messages_limit?: number;
+  storage_mb_limit?: number;
 }
