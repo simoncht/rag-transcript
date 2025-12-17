@@ -1,23 +1,39 @@
 ﻿"use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useMemo, useCallback, memo } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { useAuth, useClerk } from "@clerk/nextjs";
 import { conversationsApi } from "@/lib/api/conversations";
-import type { ConversationWithMessages, Message, ChunkReference } from "@/lib/types";
+import { insightsApi } from "@/lib/api/insights";
+import { videosApi } from "@/lib/api/videos";
+import type {
+  ConversationWithMessages,
+  Message,
+  ChunkReference,
+  ConversationInsightsResponse,
+} from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import {
   Sheet,
   SheetContent,
   SheetTrigger,
 } from "@/components/ui/sheet";
-import { cn } from "@/lib/utils";
+import { cn, formatMessageTime } from "@/lib/utils";
+import { ConversationInsightMap } from "@/components/insights/ConversationInsightMap";
 import {
   ArrowLeft,
   Loader2,
@@ -26,11 +42,18 @@ import {
   Plus,
   Video,
   Folder,
+  Network,
+  RotateCcw,
+  Maximize2,
+  Minimize2,
   X,
+  LogOut,
 } from "lucide-react";
 import Link from "next/link";
 import { ThemeToggle } from "@/components/layout/ThemeToggle";
 import type { Conversation } from "@/lib/types";
+
+const EMPTY_MESSAGES: Message[] = [];
 
 const MODEL_OPTIONS = [
   {
@@ -79,27 +102,252 @@ const MODE_OPTIONS = [
 ];
 type ModeId = (typeof MODE_OPTIONS)[number]["id"];
 
+// Helper function: linkify source mentions in markdown content
+// Memoized per message to avoid regex processing on every render
+const linkifySourceMentions = (
+  content: string,
+  messageId: string,
+  chunkRefs?: ChunkReference[],
+) => {
+  return content.replace(/Source (\d+)/g, (_match, srcNumber) => {
+    const rank = Number(srcNumber?.trim());
+    if (!chunkRefs || chunkRefs.length === 0 || Number.isNaN(rank)) {
+      return `Source ${srcNumber} (citation unavailable)`;
+    }
+    const match = chunkRefs?.find((chunk) => (chunk.rank ?? 0) === rank);
+    const label = match?.video_title ? `Source ${rank}: ${match.video_title}` : `Source ${rank}`;
+    return `[${label}](#source-${messageId}-${rank})`;
+  });
+};
+
+// Memoized Message Item Component
+// Prevents re-rendering when parent state changes (e.g., typing in input box)
+interface MessageItemProps {
+  message: Message & { chunk_references?: ChunkReference[] };
+  highlightedSourceId: string | null;
+  onCitationClick: (messageId: string, rank?: number) => void;
+}
+
+const MessageItem = memo<MessageItemProps>(({ message, highlightedSourceId, onCitationClick }) => {
+  const isSystem = message.role === "system";
+  const isUser = message.role === "user";
+  const isAssistant = message.role === "assistant";
+  const chunkReferences = message.chunk_references;
+
+  // Memoize markdown content processing to avoid regex on every render
+  const markdownContent = useMemo(
+    () =>
+      isAssistant
+        ? linkifySourceMentions(message.content, message.id, chunkReferences)
+        : message.content,
+    [isAssistant, message.content, message.id, chunkReferences]
+  );
+
+  if (isSystem) {
+    return (
+      <div key={message.id} className="flex w-full justify-center">
+        <div className="flex max-w-[90%] flex-col items-center gap-1">
+          <span className="text-[10px] text-muted-foreground">
+            {formatMessageTime(message.created_at)}
+          </span>
+          <div className="rounded-full border border-border bg-muted/40 px-4 py-1.5 text-xs text-muted-foreground">
+            {message.content}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      key={message.id}
+      className={cn("flex w-full", isUser ? "justify-end" : "justify-start")}
+    >
+      <div
+        className={cn(
+          "flex w-full max-w-[90%] flex-col gap-3",
+          isUser ? "items-end text-right" : "items-start text-left",
+        )}
+      >
+        {/* Message header */}
+        <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+          <span>{formatMessageTime(message.created_at)}</span>
+        </div>
+
+        {isUser ? (
+          <div className="flex w-full justify-end">
+            <p className="inline-flex max-w-[75%] rounded-2xl bg-primary/10 px-5 py-3 text-base leading-relaxed text-foreground shadow-lg break-words text-right">
+              {message.content}
+            </p>
+          </div>
+        ) : (
+          <div className="w-full rounded-2xl border border-border bg-muted/40 p-4 shadow-sm">
+            <ReactMarkdown
+              className="prose prose-base leading-relaxed max-w-full break-words dark:prose-invert"
+              remarkPlugins={[remarkGfm]}
+              components={{
+                h1: ({ node, ...props }) => (
+                  <h1 className="mt-6 mb-3 text-base font-semibold leading-tight" {...props} />
+                ),
+                h2: ({ node, ...props }) => (
+                  <h2 className="mt-6 mb-3 text-base font-semibold leading-tight" {...props} />
+                ),
+                h3: ({ node, ...props }) => (
+                  <h3 className="mt-6 mb-3 text-base font-semibold leading-tight" {...props} />
+                ),
+                p: ({ node, ...props }) => (
+                  <p className="my-4 text-base leading-relaxed" {...props} />
+                ),
+                ul: ({ node, ...props }) => (
+                  <ul className="my-4 list-disc space-y-2 pl-5 leading-relaxed text-base" {...props} />
+                ),
+                ol: ({ node, ...props }) => (
+                  <ol className="my-4 list-decimal space-y-2 pl-5 leading-relaxed text-base" {...props} />
+                ),
+                li: ({ node, ...props }) => (
+                  <li className="leading-relaxed text-base" {...props} />
+                ),
+                table: ({ node, ...props }) => (
+                  <div className="my-5 overflow-hidden rounded-lg border border-border">
+                    <table className="w-full table-auto border-collapse text-sm" {...props} />
+                  </div>
+                ),
+                thead: ({ node, ...props }) => (
+                  <thead className="bg-muted/70" {...props} />
+                ),
+                tbody: ({ node, ...props }) => (
+                  <tbody className="divide-y divide-border" {...props} />
+                ),
+                tr: ({ node, ...props }) => (
+                  <tr className="divide-x divide-border" {...props} />
+                ),
+                th: ({ node, ...props }) => (
+                  <th className="px-3 py-2 text-left font-semibold text-foreground align-top whitespace-pre-wrap" {...props} />
+                ),
+                td: ({ node, ...props }) => (
+                  <td className="px-3 py-2 align-top text-foreground whitespace-pre-wrap" {...props} />
+                ),
+                a: ({ href, children, ...props }) => {
+                  const rankMatch = href?.match(/#source-[^-]+-(\d+)/);
+                  const rankNumber = rankMatch?.[1] ? parseInt(rankMatch[1], 10) : undefined;
+                  return (
+                    <a
+                      {...props}
+                      href={href}
+                      className="text-primary underline-offset-2 hover:underline"
+                      onClick={(event) => {
+                        if (href?.startsWith("#source-")) {
+                          event.preventDefault();
+                          onCitationClick(message.id, rankNumber);
+                        }
+                      }}
+                    >
+                      {children}
+                    </a>
+                  );
+                },
+                hr: () => null,
+              }}
+            >
+              {markdownContent}
+            </ReactMarkdown>
+          </div>
+        )}
+
+        {/* Metadata for assistant messages */}
+        {isAssistant && (
+          <div className="flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground">
+            {message.response_time_seconds != null && (
+              <span>{message.response_time_seconds.toFixed(1)}s</span>
+            )}
+            {message.chunks_retrieved_count != null && (
+              <span>
+                {message.chunks_retrieved_count} source
+                {message.chunks_retrieved_count !== 1 ? "s" : ""}
+              </span>
+            )}
+            {message.token_count != null && (
+              <span>{message.token_count} tokens</span>
+            )}
+          </div>
+        )}
+
+        {/* Sources section */}
+        {isAssistant && chunkReferences && chunkReferences.length > 0 && (
+          <div className="space-y-2 rounded-lg border border-border bg-muted/30 p-3">
+            <p className="text-xs font-medium">Sources</p>
+            <div className="space-y-2">
+              {chunkReferences.map((chunk, idx) => {
+                const chunkRank = chunk.rank ?? idx + 1;
+                const sourceAnchorId = `source-${message.id}-${chunkRank}`;
+                return (
+                  <div
+                    key={chunk.chunk_id}
+                    id={sourceAnchorId}
+                    className={cn(
+                      "rounded-md border bg-background/60 px-3 py-2 text-xs transition-shadow",
+                      highlightedSourceId === sourceAnchorId && "ring-2 ring-primary/60 bg-primary/5"
+                    )}
+                  >
+                    <div className="mb-1 flex flex-wrap items-center gap-2">
+                      <span className="font-medium">{chunk.video_title}</span>
+                      <span className="text-muted-foreground">{chunk.timestamp_display}</span>
+                      <Badge variant="outline" className="text-[10px] uppercase">
+                        Source {chunkRank}
+                      </Badge>
+                      <span className="ml-auto text-[10px] text-muted-foreground">
+                        {(chunk.relevance_score * 100).toFixed(0)}% match
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground leading-relaxed">
+                      {chunk.text_snippet}
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+});
+
+MessageItem.displayName = "MessageItem";
+
 export default function ConversationDetailPage() {
   const params = useParams();
   const router = useRouter();
   const conversationId = Array.isArray(params?.id) ? params.id[0] : (params?.id as string | undefined);
+  const { isLoaded, isSignedIn } = useAuth();
+  const { signOut } = useClerk();
+  const canFetch = isLoaded && isSignedIn;
 
   const queryClient = useQueryClient();
   const [messageText, setMessageText] = useState("");
   const [isAutoScrollEnabled, setIsAutoScrollEnabled] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sourcesSheetOpen, setSourcesSheetOpen] = useState(false);
+  const [insightsDialogOpen, setInsightsDialogOpen] = useState(false);
+  const [insightsDialogMaximized, setInsightsDialogMaximized] = useState(false);
   const [highlightedSourceId, setHighlightedSourceId] = useState<string | null>(null);
   const [sendError, setSendError] = useState<string | null>(null);
+  const [sourcesUpdateError, setSourcesUpdateError] = useState<string | null>(null);
   const [selectedModelId, setSelectedModelId] = useState<string>(MODEL_OPTIONS[0]?.id);
   const [selectedMode, setSelectedMode] = useState<ModeId>(MODE_OPTIONS[0].id);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const prevMessageCountRef = useRef<number>(0);
+  const handleLogout = () => {
+    signOut({ redirectUrl: "/sign-in" });
+  };
 
   // Fetch recent conversations for sidebar
   const { data: conversationsData } = useQuery({
     queryKey: ["conversations"],
     queryFn: () => conversationsApi.list(),
-    refetchInterval: 10000,
+    enabled: canFetch,
+    refetchInterval: 30000, // Reduced from 10s to 30s
+    staleTime: 20000, // Consider data fresh for 20s
   });
 
   const conversations = conversationsData?.conversations ?? [];
@@ -111,24 +359,84 @@ export default function ConversationDetailPage() {
   } = useQuery<ConversationWithMessages>({
     queryKey: ["conversation", conversationId],
     queryFn: () => conversationsApi.get(conversationId as string),
-    enabled: !!conversationId,
-    refetchInterval: 5000,
+    enabled: canFetch && !!conversationId,
+    refetchInterval: false, // Disabled - only refetch on mutation success
+    staleTime: 10000, // Consider data fresh for 10s
   });
+
+  const messages = useMemo(() => conversation?.messages ?? EMPTY_MESSAGES, [conversation?.messages]);
+  useEffect(() => {
+    const nextNonSystemLength = messages.filter((m) => m.role !== "system").length;
+    if (isAutoScrollEnabled && nextNonSystemLength > prevMessageCountRef.current) {
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    }
+    prevMessageCountRef.current = nextNonSystemLength;
+  }, [messages, isAutoScrollEnabled]);
 
   const { data: sourcesData, isLoading: sourcesLoading } = useQuery({
     queryKey: ["conversation", conversationId, "sources"],
     queryFn: () => conversationsApi.getSources(conversationId as string),
-    enabled: !!conversationId,
-    refetchInterval: 5000,
+    enabled: canFetch && !!conversationId,
+    refetchInterval: false, // Disabled - sources don't change during chat
+    staleTime: 60000, // Consider fresh for 1 minute
   });
+
+  const {
+    data: insightsData,
+    isLoading: insightsLoading,
+    isError: insightsError,
+  } = useQuery<ConversationInsightsResponse>({
+    queryKey: ["conversation-insights", conversationId],
+    queryFn: () => insightsApi.getInsights(conversationId as string),
+    enabled: canFetch && insightsDialogOpen && !!conversationId,
+    staleTime: 300000, // 5 minutes
+  });
+
+  const regenerateInsightsMutation = useMutation({
+    mutationFn: async () => {
+      if (!conversationId) {
+        throw new Error("Missing conversationId");
+      }
+      return insightsApi.getInsights(conversationId as string, true);
+    },
+    onSuccess: (data) => {
+      queryClient.setQueryData(["conversation-insights", conversationId], data);
+    },
+  });
+
 
   const updateSourcesMutation = useMutation({
     mutationFn: (payload: { selected_video_ids?: string[]; add_video_ids?: string[] }) =>
       conversationsApi.updateSources(conversationId as string, payload),
+    onMutate: () => {
+      setSourcesUpdateError(null);
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["conversation", conversationId, "sources"] });
       queryClient.invalidateQueries({ queryKey: ["conversation", conversationId] });
       queryClient.invalidateQueries({ queryKey: ["conversations"] });
+    },
+    onError: (error: any) => {
+      const detail =
+        error?.response?.data?.detail ||
+        (error?.message === "Network Error" ? "Network error" : null);
+      setSourcesUpdateError(detail || "Unable to update sources. Please try again.");
+    },
+  });
+
+  const reprocessVideoMutation = useMutation({
+    mutationFn: (videoId: string) => videosApi.reprocess(videoId),
+    onSuccess: (data) => {
+      setSourcesUpdateError(data.message);
+      queryClient.invalidateQueries({ queryKey: ["conversation", conversationId, "sources"] });
+      queryClient.invalidateQueries({ queryKey: ["conversation", conversationId] });
+      queryClient.invalidateQueries({ queryKey: ["conversations"] });
+    },
+    onError: (error: any) => {
+      const detail =
+        error?.response?.data?.detail ||
+        (error?.message === "Network Error" ? "Network error" : null);
+      setSourcesUpdateError(detail || "Unable to reprocess video. Please try again.");
     },
   });
 
@@ -188,24 +496,17 @@ export default function ConversationDetailPage() {
     },
   });
 
-  useEffect(() => {
-    if (isAutoScrollEnabled && messagesEndRef.current) {
-      messagesEndRef.current.scrollIntoView({ behavior: "smooth", block: "end" });
+  // Memoized citation click handler (no dependencies, safe to cache)
+  const handleCitationClick = useCallback((messageId: string, rank?: number) => {
+    if (!rank) return;
+    const targetId = `source-${messageId}-${rank}`;
+    const el = document.getElementById(targetId);
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      setHighlightedSourceId(targetId);
+      window.setTimeout(() => setHighlightedSourceId(null), 1500);
     }
-  }, [conversation?.messages?.length, isAutoScrollEnabled]);
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!messageText.trim() || sendMessageMutation.isPending || !conversationId) {
-      return;
-    }
-    if (selectedSourcesCount === 0) {
-      setSendError("Select at least one source to ask a question.");
-      return;
-    }
-    setSendError(null);
-    sendMessageMutation.mutate(messageText.trim());
-  };
+  }, []);
 
   const handleBack = () => {
     router.push("/conversations");
@@ -253,7 +554,6 @@ export default function ConversationDetailPage() {
     );
   }
 
-  const messages = conversation.messages ?? [];
   const selectedModel =
     MODEL_OPTIONS.find((option) => option.id === selectedModelId) ?? MODEL_OPTIONS[0];
   const selectedModeDetails =
@@ -280,11 +580,32 @@ export default function ConversationDetailPage() {
     return `${minutes.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
   };
 
+  // Event handlers (regular functions - no useCallback needed after early returns)
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!messageText.trim() || sendMessageMutation.isPending || !conversationId) {
+      return;
+    }
+    if (selectedSourcesCount === 0) {
+      setSendError("Select at least one source to ask a question.");
+      return;
+    }
+    setSendError(null);
+    sendMessageMutation.mutate(messageText.trim());
+  };
+
   const handleSelectAllSources = () => {
     if (!conversationId || sources.length === 0) return;
+    const selectableSources = sources.filter((source) => source.selectable !== false);
     updateSourcesMutation.mutate({
-      selected_video_ids: sources.map((source) => source.video_id),
+      selected_video_ids: selectableSources.map((source) => source.video_id),
     });
+    const excludedCount = sources.length - selectableSources.length;
+    if (excludedCount > 0) {
+      setSourcesUpdateError(
+        `${excludedCount} source(s) can’t be selected yet (deleted or not finished processing).`,
+      );
+    }
   };
 
   const handleDeselectAllSources = () => {
@@ -296,32 +617,20 @@ export default function ConversationDetailPage() {
 
   const toggleSourceSelection = (videoId: string) => {
     if (!conversationId || sources.length === 0) return;
+    const targetSource = sources.find((s) => s.video_id === videoId);
+    if (targetSource?.selectable === false) {
+      setSourcesUpdateError(targetSource.selectable_reason || "This source can’t be selected yet.");
+      return;
+    }
     const currentlySelected = sources.filter((s) => s.is_selected).map((s) => s.video_id);
     const isCurrentlySelected = currentlySelected.includes(videoId);
     const nextSelected = isCurrentlySelected
       ? currentlySelected.filter((id) => id !== videoId)
-      : [...new Set([...currentlySelected, videoId])];
+      : Array.from(new Set([...currentlySelected, videoId]));
 
     updateSourcesMutation.mutate({
       selected_video_ids: nextSelected,
     });
-  };
-
-  const linkifySourceMentions = (content: string, messageId: string) =>
-    content.replace(/Source (\d+)/g, (_match, srcNumber) => {
-      const rank = srcNumber.trim();
-      return `[Source ${rank}](#source-${messageId}-${rank})`;
-    });
-
-  const handleCitationClick = (messageId: string, rank?: number) => {
-    if (!rank) return;
-    const targetId = `source-${messageId}-${rank}`;
-    const el = document.getElementById(targetId);
-    if (el) {
-      el.scrollIntoView({ behavior: "smooth", block: "center" });
-      setHighlightedSourceId(targetId);
-      window.setTimeout(() => setHighlightedSourceId(null), 1500);
-    }
   };
 
   const renderSourcesContent = () => (
@@ -332,6 +641,9 @@ export default function ConversationDetailPage() {
           <p className="text-xs text-muted-foreground">
             Using {selectedSourcesCount} of {totalSourcesCount}
           </p>
+          {sourcesUpdateError && (
+            <p className="mt-1 text-xs text-destructive">{sourcesUpdateError}</p>
+          )}
         </div>
         <div className="flex gap-2">
           <Button
@@ -368,7 +680,11 @@ export default function ConversationDetailPage() {
               <Checkbox
                 checked={source.is_selected}
                 onCheckedChange={() => toggleSourceSelection(source.video_id)}
-                disabled={updateSourcesMutation.isPending}
+                disabled={
+                  updateSourcesMutation.isPending ||
+                  reprocessVideoMutation.isPending ||
+                  source.selectable === false
+                }
               />
               <div className="flex flex-1 flex-col gap-1">
                 <div className="flex items-center gap-2">
@@ -387,6 +703,27 @@ export default function ConversationDetailPage() {
                   ) : null}
                   {source.added_via && <span>via {source.added_via}</span>}
                 </div>
+                {source.selectable === false && (
+                  <div className="flex items-center justify-between gap-2 text-[11px] text-destructive">
+                    <span className="line-clamp-1">{source.selectable_reason}</span>
+                    {!source.is_deleted && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="h-6 px-2 text-[11px]"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          reprocessVideoMutation.mutate(source.video_id);
+                        }}
+                        disabled={reprocessVideoMutation.isPending}
+                      >
+                        Reprocess
+                      </Button>
+                    )}
+                  </div>
+                )}
               </div>
             </label>
           ))
@@ -394,6 +731,7 @@ export default function ConversationDetailPage() {
       </div>
     </div>
   );
+
 
   return (
     <div className="flex min-h-screen bg-background">
@@ -466,12 +804,17 @@ export default function ConversationDetailPage() {
                             key={source.video_id}
                             className="flex cursor-pointer items-center gap-2 text-[11px] text-foreground"
                             onClick={(e) => e.stopPropagation()}
+                            title={source.selectable === false ? source.selectable_reason ?? undefined : undefined}
                           >
                             <Checkbox
                               checked={source.is_selected}
                               onCheckedChange={() => toggleSourceSelection(source.video_id)}
                               className="h-3.5 w-3.5"
-                              disabled={updateSourcesMutation.isPending}
+                              disabled={
+                                updateSourcesMutation.isPending ||
+                                reprocessVideoMutation.isPending ||
+                                source.selectable === false
+                              }
                             />
                             <span className="line-clamp-1 flex-1">
                               {source.title || "Untitled video"}
@@ -531,8 +874,123 @@ export default function ConversationDetailPage() {
                 {conversation.title || "New conversation"}
               </h1>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-3">
+              <Dialog
+                open={insightsDialogOpen}
+                onOpenChange={(open) => {
+                  setInsightsDialogOpen(open);
+                  if (!open) setInsightsDialogMaximized(false);
+                }}
+              >
+                <DialogTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-2"
+                    disabled={selectedSourcesCount === 0}
+                    title={
+                      selectedSourcesCount === 0
+                        ? "Select at least one source to generate insights"
+                        : "Generate a topic map from selected video sources"
+                    }
+                  >
+                    <Network className="h-4 w-4" />
+                    Insights
+                  </Button>
+                </DialogTrigger>
+                <DialogContent
+                  className={cn(
+                    "p-0 flex flex-col gap-0",
+                    insightsDialogMaximized
+                      ? "max-w-[calc(100vw-1.5rem)] h-[calc(100vh-1.5rem)]"
+                      : "max-w-6xl h-[85vh]"
+                  )}
+                >
+                  <DialogHeader className="p-6 pb-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <DialogTitle>Conversation Insights: Topic Map</DialogTitle>
+                        {insightsData?.metadata ? (
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {insightsData.metadata.cached ? "Cached" : "Generated"} •{" "}
+                            {insightsData.metadata.topics_count} topics
+                          </p>
+                        ) : null}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="gap-2"
+                          onClick={() => setInsightsDialogMaximized((prev) => !prev)}
+                          title={insightsDialogMaximized ? "Restore window" : "Enlarge window"}
+                        >
+                          {insightsDialogMaximized ? (
+                            <Minimize2 className="h-4 w-4" />
+                          ) : (
+                            <Maximize2 className="h-4 w-4" />
+                          )}
+                          {insightsDialogMaximized ? "Restore" : "Enlarge"}
+                        </Button>
+
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="gap-2"
+                          onClick={() => regenerateInsightsMutation.mutate()}
+                          disabled={
+                            regenerateInsightsMutation.isPending ||
+                            insightsLoading ||
+                            !conversationId
+                          }
+                        >
+                          {regenerateInsightsMutation.isPending ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <RotateCcw className="h-4 w-4" />
+                          )}
+                          Regenerate
+                        </Button>
+                      </div>
+                    </div>
+                  </DialogHeader>
+
+                  <div className="flex-1 min-h-0 px-6 pb-6">
+                    {insightsLoading || regenerateInsightsMutation.isPending ? (
+                      <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Generating insights...
+                      </div>
+                    ) : insightsError ? (
+                      <div className="flex h-full items-center justify-center text-sm text-destructive">
+                        Failed to load insights.
+                      </div>
+                    ) : insightsData ? (
+                      <ConversationInsightMap
+                        conversationId={conversationId as string}
+                        graphData={insightsData.graph}
+                      />
+                    ) : (
+                      <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                        No insights available.
+                      </div>
+                    )}
+                  </div>
+                </DialogContent>
+              </Dialog>
+
               <ThemeToggle />
+              {isLoaded && isSignedIn && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-2"
+                  onClick={handleLogout}
+                >
+                  <LogOut className="h-4 w-4" />
+                  Sign out
+                </Button>
+              )}
             </div>
           </div>
         </header>
@@ -584,186 +1042,14 @@ export default function ConversationDetailPage() {
                   </div>
                 ) : (
                   <div className="space-y-8">
-                    {messages.map((message) => {
-                      const isUser = message.role === "user";
-                      const withChunks = message as Message & {
-                        chunk_references?: ChunkReference[];
-                      };
-                      const chunkReferences = withChunks.chunk_references;
-                      const markdownContent = isUser
-                        ? message.content
-                        : linkifySourceMentions(message.content, message.id);
-
-                      return (
-                        <div
-                          key={message.id}
-                          className={cn("flex w-full", isUser ? "justify-end" : "justify-start")}
-                        >
-                          <div
-                            className={cn(
-                              "flex w-full max-w-[90%] flex-col gap-3",
-                              isUser ? "items-end text-right" : "items-start text-left",
-                            )}
-                          >
-                            {/* Message header with avatar */}
-                            <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
-                              <span>
-                                {new Date(message.created_at).toLocaleTimeString([], {
-                                  hour: "2-digit",
-                                  minute: "2-digit",
-                                })}
-                              </span>
-                            </div>
-
-                            {isUser ? (
-                              <div className="w-full">
-                                <p className="w-full rounded-2xl bg-primary/10 px-5 py-3 text-base leading-relaxed text-foreground shadow-lg">
-                                  {message.content}
-                                </p>
-                              </div>
-                            ) : (
-                              <div className="w-full rounded-2xl border border-border bg-muted/40 p-4 shadow-sm">
-                                <ReactMarkdown
-                                  className="prose prose-base leading-relaxed max-w-full break-words dark:prose-invert"
-                                  remarkPlugins={[remarkGfm]}
-                                  components={{
-                                    h1: ({ node, ...props }) => (
-                                      <h1 className="mt-6 mb-3 text-base font-semibold leading-tight" {...props} />
-                                    ),
-                                    h2: ({ node, ...props }) => (
-                                      <h2 className="mt-6 mb-3 text-base font-semibold leading-tight" {...props} />
-                                    ),
-                                    h3: ({ node, ...props }) => (
-                                      <h3 className="mt-6 mb-3 text-base font-semibold leading-tight" {...props} />
-                                    ),
-                                    p: ({ node, ...props }) => (
-                                      <p className="my-4 text-base leading-relaxed" {...props} />
-                                    ),
-                                    ul: ({ node, ...props }) => (
-                                      <ul className="my-4 list-disc space-y-2 pl-5 leading-relaxed text-base" {...props} />
-                                    ),
-                                    ol: ({ node, ...props }) => (
-                                      <ol className="my-4 list-decimal space-y-2 pl-5 leading-relaxed text-base" {...props} />
-                                    ),
-                                    li: ({ node, ordered, ...props }) => (
-                                      <li className="leading-relaxed text-base" {...props} />
-                                    ),
-                                    table: ({ node, ...props }) => (
-                                      <div className="my-5 overflow-hidden rounded-lg border border-border">
-                                        <table className="w-full table-auto border-collapse text-sm" {...props} />
-                                      </div>
-                                    ),
-                                    thead: ({ node, ...props }) => (
-                                      <thead className="bg-muted/70" {...props} />
-                                    ),
-                                    tbody: ({ node, ...props }) => (
-                                      <tbody className="divide-y divide-border" {...props} />
-                                    ),
-                                    tr: ({ node, ...props }) => (
-                                      <tr className="divide-x divide-border" {...props} />
-                                    ),
-                                    th: ({ node, ...props }) => (
-                                      <th
-                                        className="px-3 py-2 text-left font-semibold text-foreground align-top whitespace-pre-wrap"
-                                        {...props}
-                                      />
-                                    ),
-                                    td: ({ node, ...props }) => (
-                                      <td
-                                        className="px-3 py-2 align-top text-foreground whitespace-pre-wrap"
-                                        {...props}
-                                      />
-                                    ),
-                                    a: ({ href, children, ...props }) => {
-                                      const rankMatch = href?.match(/#source-[^-]+-(\d+)/);
-                                      const rankNumber = rankMatch?.[1]
-                                        ? parseInt(rankMatch[1], 10)
-                                        : undefined;
-                                      return (
-                                        <a
-                                          {...props}
-                                          href={href}
-                                          className="text-primary underline-offset-2 hover:underline"
-                                          onClick={(event) => {
-                                            if (href?.startsWith("#source-")) {
-                                              event.preventDefault();
-                                              handleCitationClick(message.id, rankNumber);
-                                            }
-                                          }}
-                                        >
-                                          {children}
-                                        </a>
-                                      );
-                                    },
-                                    hr: () => null,
-                                  }}
-                                >
-                                  {markdownContent}
-                                </ReactMarkdown>
-                              </div>
-                            )}
-
-                            {/* Metadata for assistant messages */}
-                            {!isUser && (
-                              <div className="flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground">
-                                {message.response_time_seconds != null && (
-                                  <span>{message.response_time_seconds.toFixed(1)}s</span>
-                                )}
-                                {message.chunks_retrieved_count != null && (
-                                  <span>
-                                    {message.chunks_retrieved_count} source
-                                    {message.chunks_retrieved_count !== 1 ? "s" : ""}
-                                  </span>
-                                )}
-                                {message.token_count != null && (
-                                  <span>{message.token_count} tokens</span>
-                                )}
-                              </div>
-                            )}
-
-                            {/* Sources section */}
-                            {!isUser && chunkReferences && chunkReferences.length > 0 && (
-                              <div className="space-y-2 rounded-lg border border-border bg-muted/30 p-3">
-                                <p className="text-xs font-medium">Sources</p>
-                                <div className="space-y-2">
-                                  {chunkReferences.map((chunk, idx) => {
-                                    const chunkRank = chunk.rank ?? idx + 1;
-                                    const sourceAnchorId = `source-${message.id}-${chunkRank}`;
-                                    return (
-                                      <div
-                                        key={chunk.chunk_id}
-                                        id={sourceAnchorId}
-                                        className={cn(
-                                          "rounded-md border bg-background/60 px-3 py-2 text-xs transition-shadow",
-                                          highlightedSourceId === sourceAnchorId &&
-                                            "ring-2 ring-primary/60 bg-primary/5"
-                                        )}
-                                      >
-                                        <div className="mb-1 flex flex-wrap items-center gap-2">
-                                          <span className="font-medium">{chunk.video_title}</span>
-                                          <span className="text-muted-foreground">
-                                            {chunk.timestamp_display}
-                                          </span>
-                                          <Badge variant="outline" className="text-[10px] uppercase">
-                                            Source {chunkRank}
-                                          </Badge>
-                                          <span className="ml-auto text-[10px] text-muted-foreground">
-                                            {(chunk.relevance_score * 100).toFixed(0)}% match
-                                          </span>
-                                        </div>
-                                        <p className="text-[11px] text-muted-foreground leading-relaxed">
-                                          {chunk.text_snippet}
-                                        </p>
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
+                    {messages.map((message) => (
+                      <MessageItem
+                        key={message.id}
+                        message={message as Message & { chunk_references?: ChunkReference[] }}
+                        highlightedSourceId={highlightedSourceId}
+                        onCitationClick={handleCitationClick}
+                      />
+                    ))}
                     <div ref={messagesEndRef} />
                   </div>
                 )}
@@ -897,9 +1183,3 @@ export default function ConversationDetailPage() {
     </div>
   );
 }
-
-
-
-
-
-

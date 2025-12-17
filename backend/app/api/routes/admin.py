@@ -35,6 +35,7 @@ from app.schemas import (
     SystemStats,
     UserEngagementStats,
 )
+from app.services.usage_tracker import UsageTracker
 
 router = APIRouter()
 
@@ -619,7 +620,7 @@ async def override_user_quota(
     # Get or create quota
     quota = db.query(UserQuota).filter(UserQuota.user_id == user_id).first()
     if not quota:
-        quota = UserQuota(user_id=user_id)
+        quota = UsageTracker(db)._create_initial_quota(user_id, user.subscription_tier)
         db.add(quota)
 
     # Apply overrides

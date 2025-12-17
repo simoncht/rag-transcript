@@ -1,7 +1,9 @@
 "use client";
 
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState } from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+
+import { AuthInitializer } from "@/components/auth-initializer";
 import { ThemeProvider } from "@/components/theme-provider";
 
 export function Providers({ children }: { children: React.ReactNode }) {
@@ -25,6 +27,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
       disableTransitionOnChange
     >
       <QueryClientProvider client={queryClient}>
+        <AuthInitializer />
         {children}
       </QueryClientProvider>
     </ThemeProvider>

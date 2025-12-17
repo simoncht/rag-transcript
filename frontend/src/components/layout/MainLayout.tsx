@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useAuthStore } from "@/lib/store/auth";
+import { useClerk, useUser } from "@clerk/nextjs";
 import { Button } from "@/components/ui/button";
 import {
   Sheet,
@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/sheet";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
-import { Folder, LogOut, Menu, MessageSquare, Video } from "lucide-react";
+import { Folder, LogOut, Menu, MessageSquare, Video, Shield } from "lucide-react";
 import { ThemeToggle } from "./ThemeToggle";
 
 const navigation = [
@@ -20,17 +20,32 @@ const navigation = [
   { name: "Conversations", href: "/conversations", icon: MessageSquare },
 ];
 
+const adminNavigation = [
+  { name: "Admin", href: "/admin", icon: Shield },
+];
+
 export const MainLayout = ({ children }: { children: React.ReactNode }) => {
   const pathname = usePathname();
-  const { user, clearAuth } = useAuthStore();
+  const { user: clerkUser, isLoaded, isSignedIn } = useUser();
+  const { signOut } = useClerk();
+
+  const displayName =
+    clerkUser?.fullName || clerkUser?.primaryEmailAddress?.emailAddress;
+  const email = clerkUser?.primaryEmailAddress?.emailAddress;
+
+  // Check if user is admin (stored in Clerk public metadata)
+  const isAdmin = clerkUser?.publicMetadata?.is_superuser === true;
 
   const handleLogout = () => {
-    clearAuth();
-    window.location.href = "/login";
+    signOut({ redirectUrl: "/sign-in" });
   };
 
-  const renderNav = () =>
-    navigation.map((item) => {
+  const renderNav = (includeAdmin = false) => {
+    const allNavigation = includeAdmin && isAdmin
+      ? [...navigation, ...adminNavigation]
+      : navigation;
+
+    return allNavigation.map((item) => {
       const Icon = item.icon;
       const isActive = pathname.startsWith(item.href);
       return (
@@ -41,7 +56,8 @@ export const MainLayout = ({ children }: { children: React.ReactNode }) => {
             "group flex items-center justify-between rounded-lg px-3 py-2 text-sm font-medium transition-colors",
             isActive
               ? "bg-primary/10 text-foreground"
-              : "text-muted-foreground hover:text-foreground"
+              : "text-muted-foreground hover:text-foreground",
+            item.icon === Shield && "border-t mt-2 pt-4"
           )}
         >
           <span className="flex items-center gap-2">
@@ -51,6 +67,26 @@ export const MainLayout = ({ children }: { children: React.ReactNode }) => {
         </Link>
       );
     });
+  };
+
+  if (!isLoaded) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background text-sm text-muted-foreground">
+        Loading...
+      </div>
+    );
+  }
+
+  if (!isSignedIn) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <div className="flex flex-col items-center gap-3">
+          <p className="text-sm text-muted-foreground">Please sign in to continue.</p>
+          <Button onClick={() => (window.location.href = "/sign-in")}>Sign in</Button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex min-h-screen w-full bg-muted/40">
@@ -63,11 +99,11 @@ export const MainLayout = ({ children }: { children: React.ReactNode }) => {
             <span className="text-base font-semibold">RAG Transcript</span>
           </Link>
         </div>
-        <nav className="flex-1 space-y-1 px-4 py-6">{renderNav()}</nav>
-        {user && (
+        <nav className="flex-1 space-y-1 px-4 py-6">{renderNav(true)}</nav>
+        {clerkUser && (
           <div className="border-t px-4 py-4 text-sm text-muted-foreground">
-            <p className="font-medium text-foreground">{user.full_name || user.email}</p>
-            <p>{user.email}</p>
+            <p className="font-medium text-foreground">{displayName}</p>
+            {email && <p>{email}</p>}
             <Button
               variant="ghost"
               size="sm"
@@ -94,11 +130,11 @@ export const MainLayout = ({ children }: { children: React.ReactNode }) => {
               <div className="flex h-16 items-center border-b text-lg font-semibold">
                 <span>RAG Transcript</span>
               </div>
-              <nav className="flex-1 space-y-1 py-6">{renderNav()}</nav>
-              {user && (
+              <nav className="flex-1 space-y-1 py-6">{renderNav(true)}</nav>
+              {clerkUser && (
                 <div className="border-t pt-4 text-sm text-muted-foreground">
-                  <p className="font-medium text-foreground">{user.full_name || user.email}</p>
-                  <p>{user.email}</p>
+                  <p className="font-medium text-foreground">{displayName}</p>
+                  {email && <p>{email}</p>}
                   <Button
                     variant="ghost"
                     size="sm"
@@ -119,7 +155,7 @@ export const MainLayout = ({ children }: { children: React.ReactNode }) => {
             </div>
             <div className="flex items-center gap-2">
               <ThemeToggle />
-              {user && (
+              {clerkUser && (
                 <Button
                   variant="outline"
                   size="sm"

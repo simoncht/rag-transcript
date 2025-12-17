@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { formatDistanceToNow } from "date-fns";
+import { useAuth } from "@clerk/nextjs";
 import { MainLayout } from "@/components/layout/MainLayout";
 import { conversationsApi } from "@/lib/api/conversations";
 import { videosApi } from "@/lib/api/videos";
@@ -25,6 +26,8 @@ import { Label } from "@/components/ui/label";
 type SelectionMode = "collection" | "custom";
 
 export default function ConversationsPage() {
+  const { isLoaded, isSignedIn } = useAuth();
+  const canFetch = isLoaded && isSignedIn;
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [title, setTitle] = useState("");
   const [selectionMode, setSelectionMode] = useState<SelectionMode>("collection");
@@ -37,18 +40,19 @@ export default function ConversationsPage() {
   const { data: conversationsData, isLoading: conversationsLoading } = useQuery({
     queryKey: ["conversations"],
     queryFn: () => conversationsApi.list(),
+    enabled: canFetch,
   });
 
   const { data: videosData } = useQuery({
     queryKey: ["videos"],
     queryFn: () => videosApi.list(),
-    enabled: showCreateForm && selectionMode === "custom",
+    enabled: canFetch && showCreateForm && selectionMode === "custom",
   });
 
   const { data: collectionsData } = useQuery({
     queryKey: ["collections"],
     queryFn: getCollections,
-    enabled: showCreateForm && selectionMode === "collection",
+    enabled: canFetch && showCreateForm && selectionMode === "collection",
   });
 
   const createMutation = useMutation({
@@ -68,6 +72,12 @@ export default function ConversationsPage() {
       router.push(`/conversations/${data.id}`);
     },
   });
+
+  const createErrorMessage = createMutation.isError
+    ? createMutation.error instanceof Error
+      ? createMutation.error.message
+      : "Unable to create conversation. Please check your session and try again."
+    : null;
 
   const deleteMutation = useMutation({
     mutationFn: conversationsApi.delete,
@@ -250,6 +260,10 @@ export default function ConversationsPage() {
                     </div>
                   </div>
 
+                  {createErrorMessage && (
+                    <p className="text-sm text-destructive">{createErrorMessage}</p>
+                  )}
+
                   <div className="flex justify-end gap-2">
                     <Button type="button" variant="outline" onClick={resetForm}>
                       Cancel
@@ -352,4 +366,3 @@ export default function ConversationsPage() {
     </MainLayout>
   );
 }
-

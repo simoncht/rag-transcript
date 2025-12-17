@@ -53,6 +53,9 @@ Thumbs.db
 *.swp
 *.swo
 *~
+*.bak
+nul
+*_backup
 
 # Storage (local development)
 storage/audio/*
@@ -72,6 +75,8 @@ backend/.cache/
 # Testing
 .pytest_cache/
 .coverage
+coverage.xml
+backend/coverage.xml
 htmlcov/
 .tox/
 .hypothesis/
@@ -100,6 +105,7 @@ node_modules/
 out/
 .turbo
 .vercel
+/package-lock.json
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*

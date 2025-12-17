@@ -147,6 +147,11 @@ class OllamaProvider(LLMProvider):
         if max_tokens is not None:
             payload["options"]["num_predict"] = max_tokens
 
+        # Debug logging
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"Ollama request: model={payload['model']}, num_predict={payload['options'].get('num_predict', 'NOT SET')}, max_tokens_param={max_tokens}")
+
         try:
             response = self.client.post("/api/chat", json=payload)
             response.raise_for_status()

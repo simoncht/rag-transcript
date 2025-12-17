@@ -151,6 +151,13 @@ docker-compose exec app pytest
 
 # Code formatting
 docker-compose exec app black . && ruff .
+
+# Run tests locally (venv)
+python -m venv venv
+venv\Scripts\activate
+pip install -r backend/requirements.txt
+set PYTHONPATH=backend  # Powershell: $env:PYTHONPATH="backend"
+pytest backend/tests/unit
 ```
 
 See [AGENTS.md](./AGENTS.md) for coding guidelines.

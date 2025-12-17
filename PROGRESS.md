@@ -558,7 +558,7 @@ PYTHONHTTPSVERIFY=0
 - `frontend/src/lib/api/videos.ts` - Videos API functions
 - `frontend/src/lib/api/conversations.ts` - Conversations API functions
 - `frontend/src/lib/types/index.ts` - TypeScript type definitions (60 lines)
-- `frontend/src/lib/store/auth.ts` - Zustand auth store with persistence
+- `frontend/src/lib/store/auth.ts` - (removed) legacy Zustand auth store; replaced by Clerk `useAuth` + `AuthInitializer`
 
 **Components:**
 - `frontend/src/components/layout/MainLayout.tsx` - Main navigation layout
@@ -804,3 +804,11 @@ PYTHONHTTPSVERIFY=0
 - Local Python 3.14 breaks Alembic/SQLAlchemy; use Python 3.11 (Docker image is 3.11-slim).
 - If psycopg2-binary 2.9.9 fails on 3.11, use 2.9.11.
 - Containers running: app/worker/beat/postgres/redis/qdrant via `docker compose up`.
+## Reranking Support (2025-12-07)
+- Implemented optional cross-encoder reranking in `backend/app/api/routes/conversations.py` using `app/services/reranker.py` (CrossEncoder) with config flags `enable_reranking`, `reranking_top_k`, and `reranking_model` (default `cross-encoder/ms-marco-MiniLM-L-6-v2`).
+- No behavior change unless `ENABLE_RERANKING=true` is set; on enable, retrieved chunks are re-scored and re-ordered before context/citations.
+## Embedding Model Selection (2025-12-07)
+- Added embedding presets (MiniLM, all-mpnet-base-v2, e5-large-v2, bge-large-en-v1.5) with per-model Qdrant collections; active model derived from `embedding_model_key`.
+- New settings API: `GET/POST /api/v1/settings/embedding-model` to read/switch active embedding model; triggers background re-embed job.
+- Backend re-embed task (`reembed_all_videos`) and vector store initialization now use model-specific collections; retrieval uses the active collection.
+- Frontend: chat header dropdown to view/switch the embedding model (calls settings API); active model exposed via dropdown.

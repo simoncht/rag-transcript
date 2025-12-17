@@ -83,10 +83,15 @@ class YouTubeService:
         """
         import re
 
+        # Support common YouTube URL shapes including watch, short links,
+        # embeds, legacy /v, shorts, and live URLs.
         patterns = [
-            r'(?:youtube\.com\/watch\?v=|youtu.be\/)([^&\n?#]+)',
-            r'youtube\.com\/embed\/([^&\n?#]+)',
-            r'youtube\.com\/v\/([^&\n?#]+)',
+            # Standard watch + short youtu.be links
+            r"(?:youtube\.com/(?:watch\?v=|shorts/|live/)|youtu\.be/)([^&\n?#/]+)",
+            # Embed URLs
+            r"youtube\.com/embed/([^&\n?#/]+)",
+            # Legacy /v URLs
+            r"youtube\.com/v/([^&\n?#/]+)",
         ]
 
         for pattern in patterns:

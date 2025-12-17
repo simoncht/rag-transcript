@@ -41,4 +41,9 @@ export const videosApi = {
     const response = await apiClient.get(`/videos/${videoId}/transcript`);
     return response.data;
   },
+
+  async reprocess(videoId: string): Promise<{ video_id: string; job_id: string; status: string; message: string }> {
+    const response = await apiClient.post(`/videos/${videoId}/reprocess`);
+    return response.data;
+  },
 };

@@ -13,36 +13,17 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
+from app.core.auth import get_current_user
 from app.db.base import get_db
 from app.models import Video, Job, Transcript, User
 from app.schemas import VideoIngestRequest, VideoIngestResponse, VideoDetail, VideoList, VideoUpdateTagsRequest, TranscriptDetail, VideoDeleteRequest, VideoDeleteResponse, VideoDeleteBreakdown
 from app.services.youtube import youtube_service, YouTubeDownloadError
 from app.services.usage_tracker import UsageTracker, QuotaExceededError
+from app.services.video_processing import reset_video_processing
 from app.services.vector_store import vector_store_service
 from app.tasks.video_tasks import process_video_pipeline
 
 router = APIRouter()
-
-
-def get_current_user(db: Session = Depends(get_db)) -> User:
-    """
-    Get current user (placeholder for auth).
-
-    For MVP, returns the first user or creates one.
-    In production, this would use JWT token validation.
-    """
-    user = db.query(User).first()
-    if not user:
-        # Create default user for MVP
-        user = User(
-            email="demo@example.com",
-            full_name="Demo User",
-            subscription_tier="free"
-        )
-        db.add(user)
-        db.commit()
-        db.refresh(user)
-    return user
 
 
 @router.post("/ingest", response_model=VideoIngestResponse)
@@ -275,6 +256,56 @@ async def get_video_transcript(
         raise HTTPException(status_code=404, detail="Transcript not available yet")
 
     return TranscriptDetail.model_validate(transcript)
+
+
+@router.post("/{video_id}/reprocess", response_model=VideoIngestResponse)
+async def reprocess_video(
+    video_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Re-run the full processing pipeline for an existing video.
+
+    This is used to recover videos stuck mid-pipeline or to rebuild missing artifacts
+    (transcript/chunks/index) without requiring a fresh ingest.
+    """
+    video = (
+        db.query(Video)
+        .filter(Video.id == video_id, Video.user_id == current_user.id, Video.is_deleted == False)  # noqa: E712
+        .first()
+    )
+    if not video:
+        raise HTTPException(status_code=404, detail="Video not found")
+
+    reset_video_processing(db, video=video, delete_files=False, delete_vectors=True)
+
+    job = Job(
+        user_id=current_user.id,
+        video_id=video.id,
+        job_type="full_pipeline",
+        status="pending",
+        progress_percent=0.0,
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+
+    task = process_video_pipeline.delay(
+        video_id=str(video.id),
+        youtube_url=video.youtube_url,
+        user_id=str(current_user.id),
+        job_id=str(job.id),
+    )
+    job.celery_task_id = task.id
+    db.commit()
+
+    return VideoIngestResponse(
+        video_id=video.id,
+        job_id=job.id,
+        status="pending",
+        message="Video reprocessing started. Use the job_id to track progress.",
+    )
 
 
 def _get_transcript_size_mb(video: Video) -> float:

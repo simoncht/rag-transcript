@@ -6,19 +6,21 @@ import { X, Check, Folder } from "lucide-react";
 import { getCollections, addVideosToCollection } from "@/lib/api/collections";
 
 interface AddToCollectionModalProps {
-  videoId: string;
-  videoTitle: string;
+  videoIds: string[];
+  videoTitle?: string;
   onClose: () => void;
 }
 
 export function AddToCollectionModal({
-  videoId,
+  videoIds,
   videoTitle,
   onClose,
 }: AddToCollectionModalProps) {
   const queryClient = useQueryClient();
   const [selectedCollectionId, setSelectedCollectionId] = useState<string>("");
   const [error, setError] = useState<string>("");
+  const [success, setSuccess] = useState<string>("");
+  const videoCount = videoIds.length;
 
   // Fetch collections
   const { data: collectionsData, isLoading } = useQuery({
@@ -30,12 +32,22 @@ export function AddToCollectionModal({
   const addMutation = useMutation({
     mutationFn: ({ collectionId, videoIds }: { collectionId: string; videoIds: string[] }) =>
       addVideosToCollection(collectionId, { video_ids: videoIds }),
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ["collections"] });
       queryClient.invalidateQueries({ queryKey: ["videos"] });
-      onClose();
+      setError("");
+
+      const collectionName =
+        collectionsData?.collections.find((collection) => collection.id === variables.collectionId)
+          ?.name ?? "collection";
+      const videoLabel =
+        videoCount === 1 && videoTitle
+          ? `"${videoTitle}"`
+          : `${videoCount} video${videoCount === 1 ? "" : "s"}`;
+      setSuccess(`Added ${videoLabel} to ${collectionName}`);
     },
     onError: (error: any) => {
+      setSuccess("");
       setError(error.response?.data?.detail || "Failed to add video to collection");
     },
   });
@@ -43,6 +55,7 @@ export function AddToCollectionModal({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
+    setSuccess("");
 
     if (!selectedCollectionId) {
       setError("Please select a collection");
@@ -51,7 +64,7 @@ export function AddToCollectionModal({
 
     await addMutation.mutateAsync({
       collectionId: selectedCollectionId,
-      videoIds: [videoId],
+      videoIds,
     });
   };
 
@@ -73,11 +86,23 @@ export function AddToCollectionModal({
         <form onSubmit={handleSubmit} className="p-6">
           <div className="mb-4">
             <p className="text-sm text-gray-600 mb-4">
-              Add{" "}
-              <span className="font-medium text-gray-900">
-                &ldquo;{videoTitle}&rdquo;
-              </span>{" "}
-              to:
+              {videoCount === 1 && videoTitle ? (
+                <>
+                  Add{" "}
+                  <span className="font-medium text-gray-900">
+                    &ldquo;{videoTitle}&rdquo;
+                  </span>{" "}
+                  to:
+                </>
+              ) : (
+                <>
+                  Add{" "}
+                  <span className="font-medium text-gray-900">
+                    {videoCount} video{videoCount !== 1 ? "s" : ""}
+                  </span>{" "}
+                  to:
+                </>
+              )}
             </p>
 
             {isLoading ? (
@@ -100,7 +125,11 @@ export function AddToCollectionModal({
                       name="collection"
                       value={collection.id}
                       checked={selectedCollectionId === collection.id}
-                      onChange={(e) => setSelectedCollectionId(e.target.value)}
+                      onChange={(e) => {
+                        setSelectedCollectionId(e.target.value);
+                        setSuccess("");
+                        setError("");
+                      }}
                       className="sr-only"
                     />
                     <Folder
@@ -133,6 +162,13 @@ export function AddToCollectionModal({
           {error && (
             <div className="mb-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
               {error}
+            </div>
+          )}
+
+          {success && (
+            <div className="mb-4 flex items-center gap-2 rounded border border-emerald-200 bg-emerald-50 px-4 py-3 text-emerald-800">
+              <Check className="h-4 w-4 text-emerald-700" />
+              <p className="text-sm font-medium">{success}</p>
             </div>
           )}
 

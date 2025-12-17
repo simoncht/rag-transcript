@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { formatDistanceToNow } from "date-fns";
+import { useAuth } from "@clerk/nextjs";
 import { MainLayout } from "@/components/layout/MainLayout";
 import { videosApi } from "@/lib/api/videos";
 import { usageApi } from "@/lib/api/usage";
@@ -57,8 +58,10 @@ import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 
 export default function VideosPage() {
+  const { isLoaded, isSignedIn } = useAuth();
+  const canFetch = isLoaded && isSignedIn;
   const [youtubeUrl, setYoutubeUrl] = useState("");
-  const [addToCollectionVideo, setAddToCollectionVideo] = useState<Video | null>(null);
+  const [addToCollectionVideos, setAddToCollectionVideos] = useState<Video[]>([]);
   const [manageTagsVideo, setManageTagsVideo] = useState<Video | null>(null);
   const [selectedVideoIds, setSelectedVideoIds] = useState<Set<string>>(new Set());
   const [openTranscriptVideoId, setOpenTranscriptVideoId] = useState<string | null>(null);
@@ -71,11 +74,13 @@ export default function VideosPage() {
     queryKey: ["usage-summary"],
     queryFn: () => usageApi.getSummary(),
     staleTime: 30_000,
+    enabled: canFetch,
   });
 
   const { data, isLoading } = useQuery({
     queryKey: ["videos"],
     queryFn: () => videosApi.list(),
+    enabled: canFetch,
     refetchInterval: (query) => {
       const videos = query.state.data?.videos ?? [];
       const hasInFlight = videos.some(
@@ -169,6 +174,11 @@ export default function VideosPage() {
     setShowDeleteModal(true);
   };
 
+  const openAddToCollectionModal = (videosToAdd: Video[]) => {
+    if (videosToAdd.length === 0) return;
+    setAddToCollectionVideos(videosToAdd);
+  };
+
   const handleConfirmDelete = async (options: {
     removeFromLibrary: boolean;
     deleteSearchIndex: boolean;
@@ -232,40 +242,102 @@ export default function VideosPage() {
   };
 
   const videos = data?.videos ?? [];
+  const selectedVideos = videos.filter((video) => selectedVideoIds.has(video.id));
   const TranscriptPanel = ({ videoId, isOpen }: { videoId: string; isOpen: boolean }) => {
     const [activeTab, setActiveTab] = useState<"readable" | "timeline">("readable");
     const [search, setSearch] = useState("");
     const { data, isLoading, isError, refetch } = useQuery({
       queryKey: ["video-transcript", videoId],
       queryFn: () => videosApi.getTranscript(videoId),
-      enabled: isOpen,
+      enabled: canFetch && isOpen,
     });
 
     if (!isOpen) return null;
 
+    const countWords = (text: string) =>
+      text
+        .trim()
+        .split(/\s+/)
+        .filter(Boolean).length;
+
+    const splitIntoSentences = (text: string) => {
+      if (!text) return [];
+
+      // Prefer Intl.Segmenter for more reliable sentence boundaries when available.
+      if (typeof Intl !== "undefined" && (Intl as any).Segmenter) {
+        try {
+          const segmenter = new (Intl as any).Segmenter(data?.language || "en", {
+            granularity: "sentence",
+          });
+          return Array.from(segmenter.segment(text)).map((s: any) => s.segment.trim());
+        } catch {
+          // Fall through to regex split
+        }
+      }
+
+      return text
+        .split(/(?<=[.!?])\s+/)
+        .map((sentence) => sentence.trim())
+        .filter(Boolean);
+    };
+
     const buildParagraphs = () => {
       if (!data) return [];
+
+      // If the transcript already has line breaks, preserve them.
+      const paragraphBlocks = data.full_text
+        ?.split(/\n\s*\n+/)
+        .map((block) => block.trim())
+        .filter(Boolean);
+      if (paragraphBlocks && paragraphBlocks.length > 1) {
+        return paragraphBlocks;
+      }
+
+      const lineBreakBlocks = data.full_text
+        ?.split(/\r?\n/)
+        .map((block) => block.trim())
+        .filter(Boolean);
+      if (lineBreakBlocks && lineBreakBlocks.length > 1) {
+        return lineBreakBlocks;
+      }
+
       const PARAGRAPH_BREAK_SECONDS = 8;
+      const MAX_PARAGRAPH_WORDS = 60;
       const paragraphs: string[] = [];
-      let current: string[] = [];
+      let currentSentences: string[] = [];
+      let currentWordCount = 0;
 
       data.segments.forEach((segment, idx) => {
-        const text = segment.text.trim();
-        if (!text) return;
         const prev = data.segments[idx - 1];
         const gap = prev ? segment.start - prev.end : 0;
         const speakerChanged =
           prev && prev.speaker && segment.speaker && prev.speaker !== segment.speaker;
+        const needHardBreak = gap > PARAGRAPH_BREAK_SECONDS || speakerChanged;
 
-        if (current.length > 0 && (gap > PARAGRAPH_BREAK_SECONDS || speakerChanged)) {
-          paragraphs.push(current.join(" "));
-          current = [];
+        if (needHardBreak && currentSentences.length > 0) {
+          paragraphs.push(currentSentences.join(" "));
+          currentSentences = [];
+          currentWordCount = 0;
         }
-        current.push(text);
+
+        const sentences = splitIntoSentences(segment.text);
+        sentences.forEach((sentence) => {
+          const sentenceWords = countWords(sentence);
+          const wouldExceed = currentWordCount + sentenceWords > MAX_PARAGRAPH_WORDS;
+
+          if (wouldExceed && currentSentences.length > 0) {
+            paragraphs.push(currentSentences.join(" "));
+            currentSentences = [];
+            currentWordCount = 0;
+          }
+
+          currentSentences.push(sentence);
+          currentWordCount += sentenceWords;
+        });
       });
 
-      if (current.length > 0) {
-        paragraphs.push(current.join(" "));
+      if (currentSentences.length > 0) {
+        paragraphs.push(currentSentences.join(" "));
       }
 
       return paragraphs;
@@ -467,16 +539,6 @@ export default function VideosPage() {
             </p>
           </div>
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={selectedVideoIds.size === 0 || bulkDeleteMutation.isPending}
-              onClick={handleBulkDelete}
-              className="gap-2"
-            >
-              <Trash2 className="h-4 w-4" />
-              Delete selected ({selectedVideoIds.size})
-            </Button>
             <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
               <DialogTrigger asChild>
                 <Button className="gap-2">
@@ -619,10 +681,35 @@ export default function VideosPage() {
                 Select completed videos to clean up storage or open transcripts inline.
               </CardDescription>
             </div>
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              {selectedVideoIds.size > 0
-                ? `${selectedVideoIds.size} video(s) selected`
-                : "Select completed videos to enable cleanup."}
+            <div className="flex flex-col items-end gap-2 text-sm text-muted-foreground sm:flex-row sm:items-center sm:gap-4">
+              <div className="text-sm text-muted-foreground">
+                {selectedVideoIds.size > 0
+                  ? `${selectedVideoIds.size} video(s) selected`
+                  : "Select completed videos to enable cleanup."}
+              </div>
+              {selectedVideos.length > 0 && (
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-1"
+                    onClick={() => openAddToCollectionModal(selectedVideos)}
+                  >
+                    <FolderPlus className="h-3.5 w-3.5" />
+                    Add to collection
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-2"
+                    onClick={handleBulkDelete}
+                    disabled={bulkDeleteMutation.isPending}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                    Delete selected ({selectedVideoIds.size})
+                  </Button>
+                </div>
+              )}
             </div>
           </CardHeader>
           <CardContent className="p-0">
@@ -729,41 +816,39 @@ export default function VideosPage() {
                             </div>
                           </TableCell>
                           <TableCell className="text-right">
-                            <div className="flex flex-col items-end gap-2">
-                              <div className="flex flex-wrap justify-end gap-2">
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  className="gap-1"
-                                  onClick={() => setAddToCollectionVideo(video)}
-                                >
-                                  <FolderPlus className="h-3.5 w-3.5" />
-                                  Collection
-                                </Button>
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  className="gap-1"
-                                  onClick={() => setManageTagsVideo(video)}
-                                >
-                                  <TagIcon className="h-3.5 w-3.5" />
-                                  Tags
-                                </Button>
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  className="gap-1"
-                                  onClick={() => toggleTranscript(video.id)}
-                                  disabled={video.status !== "completed"}
-                                >
-                                  {openTranscriptVideoId === video.id ? (
-                                    <ChevronUp className="h-4 w-4" />
-                                  ) : (
-                                    <ChevronDown className="h-4 w-4" />
-                                  )}
-                                  Transcript
-                                </Button>
-                              </div>
+                            <div className="flex flex-wrap items-center justify-end gap-2 sm:flex-nowrap">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="gap-1"
+                                onClick={() => openAddToCollectionModal([video])}
+                              >
+                                <FolderPlus className="h-3.5 w-3.5" />
+                                Add to collection
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="gap-1"
+                                onClick={() => setManageTagsVideo(video)}
+                              >
+                                <TagIcon className="h-3.5 w-3.5" />
+                                Tags
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="gap-1"
+                                onClick={() => toggleTranscript(video.id)}
+                                disabled={video.status !== "completed"}
+                              >
+                                {openTranscriptVideoId === video.id ? (
+                                  <ChevronUp className="h-4 w-4" />
+                                ) : (
+                                  <ChevronDown className="h-4 w-4" />
+                                )}
+                                Transcript
+                              </Button>
                               <Button
                                 variant="ghost"
                                 size="icon"
@@ -800,11 +885,13 @@ export default function VideosPage() {
           </CardContent>
         </Card>
 
-        {addToCollectionVideo && (
+        {addToCollectionVideos.length > 0 && (
           <AddToCollectionModal
-            videoId={addToCollectionVideo.id}
-            videoTitle={addToCollectionVideo.title}
-            onClose={() => setAddToCollectionVideo(null)}
+            videoIds={addToCollectionVideos.map((video) => video.id)}
+            videoTitle={
+              addToCollectionVideos.length === 1 ? addToCollectionVideos[0].title : undefined
+            }
+            onClose={() => setAddToCollectionVideos([])}
           />
         )}
 

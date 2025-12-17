@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.core.auth import get_current_user
 from app.db.base import get_db
 from app.models import Video, Transcript, Chunk, User
 from app.schemas import UsageSummary, StorageBreakdown, UsageCounts, VectorStoreStat, QuotaStat
@@ -19,27 +20,6 @@ from app.services.usage_tracker import UsageTracker
 from app.services.vector_store import vector_store_service
 
 router = APIRouter()
-
-
-def get_current_user(db: Session = Depends(get_db)) -> User:
-    """
-    Get current user (placeholder for auth).
-
-    For MVP, returns the first user or creates one.
-    In production, this would use JWT token validation.
-    """
-    user = db.query(User).first()
-    if not user:
-        # Create default user for MVP
-        user = User(
-            email="demo@example.com",
-            full_name="Demo User",
-            subscription_tier="free"
-        )
-        db.add(user)
-        db.commit()
-        db.refresh(user)
-    return user
 
 
 @router.get("/summary", response_model=UsageSummary)

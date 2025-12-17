@@ -17,6 +17,24 @@ import hashlib
 from app.core.config import settings
 
 
+EMBEDDING_PRESETS: Dict[str, Dict[str, object]] = {
+    "bert-base-uncased": {"model": "bert-base-uncased", "provider": "local"},
+    "all-MiniLM-L6-v2": {"model": "all-MiniLM-L6-v2", "provider": "local"},
+}
+
+
+def resolve_collection_name(service: object) -> str:
+    """
+    Resolve the vector store collection name for a given embedding service.
+
+    This is defensive: older workers/code may not implement `get_collection_name`.
+    """
+    get_collection_name = getattr(service, "get_collection_name", None)
+    if callable(get_collection_name):
+        return str(get_collection_name())
+    return settings.qdrant_collection_name
+
+
 class EmbeddingProvider(ABC):
     """Abstract base class for embedding providers."""
 
@@ -449,6 +467,23 @@ class EmbeddingService:
         """Get embedding dimensions."""
         return self.model_info["dimensions"]
 
+    def get_collection_name(self) -> str:
+        """
+        Return the vector store collection name used for indexing/search.
+
+        Today we keep a single shared collection and rely on metadata filtering
+        rather than per-model collections.
+        """
+        return settings.qdrant_collection_name
+
+    def get_model_key(self) -> str:
+        """
+        Return a stable key for the active embedding model.
+
+        The frontend expects a short string key; we use the embedding model name.
+        """
+        return self.get_model_name() or "unknown"
+
     def get_provider_name(self) -> str:
         """Get provider name."""
         return self.model_info["provider"]
@@ -462,18 +497,24 @@ class EmbeddingService:
 embedding_service = EmbeddingService()
 
 
-def set_active_embedding_model(model_name: str):
+def set_active_embedding_model(model_key: str) -> EmbeddingService:
     """
     Change the active embedding model.
 
     Args:
-        model_name: New model name to use
+        model_key: Embedding preset key (defaults to model name)
     """
     global embedding_service
     from app.core import config
 
-    # Update settings
-    config.settings.embedding_model = model_name
+    preset = EMBEDDING_PRESETS.get(model_key)
+    if preset:
+        config.settings.embedding_model = str(preset["model"])
+        config.settings.embedding_provider = str(preset["provider"])
+    else:
+        # Back-compat: treat unknown keys as a direct model name.
+        config.settings.embedding_model = model_key
 
     # Reinitialize embedding service with new model
     embedding_service = EmbeddingService()
+    return embedding_service

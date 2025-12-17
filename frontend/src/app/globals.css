@@ -1,4 +1,5 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+@import "reactflow/dist/style.css";
 
 @tailwind base;
 @tailwind components;
@@ -245,4 +246,15 @@ select:focus {
   body {
     @apply bg-background text-foreground;
   }
+}
+
+/* React Flow: make the insight mind map cleaner/softer */
+.insight-flow .react-flow__handle {
+  opacity: 0;
+  border: 0;
+}
+
+.insight-flow .react-flow__edge-path {
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }

@@ -1,13 +1,20 @@
 ﻿"use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Image from "next/image";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Folder, Trash2, Edit, MessageSquare, Video as VideoIcon } from "lucide-react";
-import { getCollections, deleteCollection, getCollection } from "@/lib/api/collections";
-import type { Collection } from "@/lib/types";
+import { Plus, Folder, Trash2, Edit, MessageSquare, Video as VideoIcon, MinusCircle } from "lucide-react";
+import { useAuth } from "@clerk/nextjs";
+import {
+  getCollections,
+  deleteCollection,
+  getCollection,
+  removeVideoFromCollection,
+} from "@/lib/api/collections";
+import type { Collection, CollectionVideoInfo } from "@/lib/types";
 import { MainLayout } from "@/components/layout/MainLayout";
 import { CollectionModal } from "@/components/collections/CollectionModal";
+import { CollectionAddVideosModal } from "@/components/collections/CollectionAddVideosModal";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -15,14 +22,18 @@ import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 
 export default function CollectionsPage() {
+  const { isLoaded, isSignedIn } = useAuth();
+  const canFetch = isLoaded && isSignedIn;
   const queryClient = useQueryClient();
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [editingCollection, setEditingCollection] = useState<Collection | null>(null);
   const [expandedCollectionId, setExpandedCollectionId] = useState<string | null>(null);
+  const [collectionForVideoModal, setCollectionForVideoModal] = useState<Collection | null>(null);
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["collections"],
     queryFn: getCollections,
+    enabled: canFetch,
   });
 
   const deleteMutation = useMutation({
@@ -32,10 +43,24 @@ export default function CollectionsPage() {
     },
   });
 
+  const removeVideoMutation = useMutation({
+    mutationFn: ({ collectionId, videoId }: { collectionId: string; videoId: string }) =>
+      removeVideoFromCollection(collectionId, videoId),
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["collection", variables.collectionId] });
+      queryClient.invalidateQueries({ queryKey: ["collections"] });
+      queryClient.invalidateQueries({ queryKey: ["videos"] });
+    },
+    onError: (error) => {
+      console.error("Failed to remove video from collection:", error);
+      alert("Failed to remove video from collection. Please try again.");
+    },
+  });
+
   const { data: expandedCollection } = useQuery({
     queryKey: ["collection", expandedCollectionId],
     queryFn: () => getCollection(expandedCollectionId!),
-    enabled: !!expandedCollectionId,
+    enabled: canFetch && !!expandedCollectionId,
   });
 
   const handleDelete = async (id: string, name: string, isDefault: boolean) => {
@@ -54,9 +79,31 @@ export default function CollectionsPage() {
     }
   };
 
+  const handleRemoveVideo = async (collection: Collection, video: CollectionVideoInfo) => {
+    if (!confirm(`Remove "${video.title}" from "${collection.name}"?`)) {
+      return;
+    }
+
+    try {
+      await removeVideoMutation.mutateAsync({
+        collectionId: collection.id,
+        videoId: video.id,
+      });
+    } catch (err) {
+      console.error("Failed to remove video from collection:", err);
+      alert("Failed to remove video from collection. Please try again.");
+    }
+  };
+
   const handleToggleExpand = (collectionId: string) => {
     setExpandedCollectionId(expandedCollectionId === collectionId ? null : collectionId);
   };
+
+  useEffect(() => {
+    if (collectionForVideoModal && expandedCollectionId !== collectionForVideoModal.id) {
+      setCollectionForVideoModal(null);
+    }
+  }, [collectionForVideoModal, expandedCollectionId]);
 
   const formatDuration = (seconds: number) => {
     const hours = Math.floor(seconds / 3600);
@@ -239,15 +286,26 @@ export default function CollectionsPage() {
                     <>
                       <Separator />
                       <CardContent className="bg-muted/40">
-                        {collectionDetails.videos.length === 0 ? (
-                          <p className="py-4 text-center text-sm text-muted-foreground">
-                            No videos in this collection yet.
-                          </p>
-                        ) : (
-                          <div className="space-y-2 pt-3">
+                        <div className="space-y-3 pt-3">
+                          <div className="flex items-center justify-between gap-4">
                             <p className="text-sm font-medium text-foreground">
                               Videos in this collection
                             </p>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="gap-1"
+                              onClick={() => setCollectionForVideoModal(collection)}
+                            >
+                              <Plus className="h-3 w-3" />
+                              Add videos
+                            </Button>
+                          </div>
+                          {collectionDetails.videos.length === 0 ? (
+                            <p className="text-center text-sm text-muted-foreground">
+                              No videos in this collection yet.
+                            </p>
+                          ) : (
                             <div className="space-y-2">
                               {collectionDetails.videos.map((video) => (
                                 <div
@@ -294,11 +352,22 @@ export default function CollectionsPage() {
                                       </div>
                                     </div>
                                   </div>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="text-muted-foreground hover:text-destructive"
+                                    onClick={() => handleRemoveVideo(collection, video)}
+                                    disabled={removeVideoMutation.isPending}
+                                    title="Remove video from collection"
+                                  >
+                                    <MinusCircle className="h-4 w-4" />
+                                    <span className="sr-only">Remove video</span>
+                                  </Button>
                                 </div>
                               ))}
                             </div>
-                          </div>
-                        )}
+                          )}
+                        </div>
                       </CardContent>
                     </>
                   )}
@@ -308,6 +377,18 @@ export default function CollectionsPage() {
           </div>
         )}
       </div>
+
+      {collectionForVideoModal &&
+        expandedCollectionId === collectionForVideoModal.id &&
+        expandedCollection && (
+          <CollectionAddVideosModal
+            open
+            collectionId={collectionForVideoModal.id}
+            collectionName={collectionForVideoModal.name}
+            existingVideoIds={expandedCollection.videos.map((video) => video.id)}
+            onClose={() => setCollectionForVideoModal(null)}
+          />
+        )}
 
       {(showCreateModal || editingCollection) && (
         <CollectionModal

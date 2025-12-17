@@ -20,7 +20,7 @@ from app.services.youtube import youtube_service, YouTubeDownloadError
 from app.services.transcription import TranscriptionService, transcription_service
 from app.services.chunking import TranscriptChunker, TranscriptSegment
 from app.services.enrichment import ContextualEnricher
-from app.services.embeddings import embedding_service
+from app.services.embeddings import embedding_service, resolve_collection_name, set_active_embedding_model
 from app.services.vector_store import vector_store_service
 from app.services.storage import storage_service
 from app.services.usage_tracker import UsageTracker, QuotaExceededError
@@ -329,7 +329,7 @@ def _chunk_and_enrich(video_id: str, transcript_id: str):
         db.close()
 
 
-def _embed_and_index(video_id: str, user_id: str):
+def _embed_and_index(video_id: str, user_id: str, force_reindex: bool = False):
     """Internal helper to embed and index chunks."""
     db = SessionLocal()
     video_uuid = UUID(video_id)
@@ -340,10 +340,10 @@ def _embed_and_index(video_id: str, user_id: str):
         print(f"[pipeline] Embed/index start for video={video_id}")
         update_video_status(db, video_uuid, "indexing", 10.0)
 
-        chunks = db.query(Chunk).filter(
-            Chunk.video_id == video_uuid,
-            Chunk.is_indexed == False
-        ).order_by(Chunk.chunk_index).all()
+        query = db.query(Chunk).filter(Chunk.video_id == video_uuid)
+        if not force_reindex:
+            query = query.filter(Chunk.is_indexed == False)
+        chunks = query.order_by(Chunk.chunk_index).all()
 
         if not chunks:
             update_video_status(db, video_uuid, "completed", 100.0)
@@ -378,7 +378,12 @@ def _embed_and_index(video_id: str, user_id: str):
             )
             enriched_chunks.append(enriched)
 
-        vector_store_service.initialize(embedding_service.get_dimensions())
+        collection_name = resolve_collection_name(embedding_service)
+
+        vector_store_service.initialize(
+            embedding_service.get_dimensions(),
+            collection_name=collection_name,
+        )
 
         vector_store_service.index_video_chunks(
             enriched_chunks=enriched_chunks,
@@ -500,6 +505,23 @@ def embed_and_index(self, video_id: str, user_id: str):
     except Exception as e:
         raise self.retry(exc=e, countdown=60)
 
+
+@celery_app.task(bind=True, max_retries=1)
+def reembed_all_videos(self, model_key: str):
+    """
+    Re-embed and re-index all videos using the specified embedding model key.
+    """
+    db = SessionLocal()
+    try:
+        set_active_embedding_model(model_key)
+        videos = db.query(Video).filter(Video.is_deleted == False).all()
+        for video in videos:
+            _embed_and_index(str(video.id), str(video.user_id), force_reindex=True)
+        return {"status": "completed", "video_count": len(videos), "model_key": model_key}
+    except Exception as e:
+        raise self.retry(exc=e, countdown=60)
+    finally:
+        db.close()
 
 @celery_app.task
 def process_video_pipeline(video_id: str, youtube_url: str, user_id: str, job_id: str):

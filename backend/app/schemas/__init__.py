@@ -53,6 +53,30 @@ from app.schemas.usage import (
     VectorStoreStat,
     QuotaStat,
 )
+from app.schemas.insights import (
+    ConversationInsightsResponse,
+    TopicChunksResponse,
+)
+from app.schemas.admin import (
+    UserSummary,
+    UserListResponse,
+    UserDetailMetrics,
+    UserCostBreakdown,
+    UserDetail,
+    UserUpdateRequest,
+    QuotaOverrideRequest,
+    AdminNoteCreateRequest,
+    AdminNote,
+    SystemStats,
+    UserEngagementStats,
+    DashboardResponse,
+    UserActivityLog,
+    UserActivityResponse,
+    UserErrorLog,
+    UserErrorResponse,
+    AbuseAlert,
+    AbuseAlertResponse,
+)
 
 __all__ = [
     # Video
@@ -101,4 +125,26 @@ __all__ = [
     "UsageCounts",
     "VectorStoreStat",
     "QuotaStat",
+    # Insights
+    "ConversationInsightsResponse",
+    "TopicChunksResponse",
+    # Admin
+    "UserSummary",
+    "UserListResponse",
+    "UserDetailMetrics",
+    "UserCostBreakdown",
+    "UserDetail",
+    "UserUpdateRequest",
+    "QuotaOverrideRequest",
+    "AdminNoteCreateRequest",
+    "AdminNote",
+    "SystemStats",
+    "UserEngagementStats",
+    "DashboardResponse",
+    "UserActivityLog",
+    "UserActivityResponse",
+    "UserErrorLog",
+    "UserErrorResponse",
+    "AbuseAlert",
+    "AbuseAlertResponse",
 ]

@@ -17,7 +17,7 @@ from fastapi.responses import JSONResponse
 import logging
 
 from app.core.config import settings
-from app.api.routes import videos, jobs, conversations, collections, usage
+from app.api.routes import videos, jobs, conversations, collections, usage, auth, insights, admin
 
 # Configure logging
 logging.basicConfig(
@@ -117,6 +117,12 @@ app.include_router(
 )
 
 app.include_router(
+    insights.router,
+    prefix=f"{settings.api_v1_prefix}/conversations",
+    tags=["insights"]
+)
+
+app.include_router(
     collections.router,
     prefix=f"{settings.api_v1_prefix}/collections",
     tags=["collections"]
@@ -126,6 +132,18 @@ app.include_router(
     usage.router,
     prefix=f"{settings.api_v1_prefix}/usage",
     tags=["usage"]
+)
+
+app.include_router(
+    auth.router,
+    prefix=f"{settings.api_v1_prefix}/auth",
+    tags=["auth"]
+)
+
+app.include_router(
+    admin.router,
+    prefix=f"{settings.api_v1_prefix}/admin",
+    tags=["admin"]
 )
 
 

@@ -5,7 +5,7 @@ Provides abstraction over vector databases (currently Qdrant, could support pgve
 Handles embedding storage, similarity search, and filtering.
 """
 from abc import ABC, abstractmethod
-from typing import List, Dict, Optional
+from typing import Dict, List, Optional, Sequence, Tuple
 from dataclasses import dataclass
 from uuid import UUID
 import uuid
@@ -24,7 +24,7 @@ class ScoredChunk:
     Search result with relevance score.
 
     Attributes:
-        chunk_id: UUID of the chunk
+        chunk_id: UUID of the chunk (DB id when available)
         video_id: UUID of the video
         user_id: UUID of the user
         text: Chunk text
@@ -35,18 +35,21 @@ class ScoredChunk:
         summary: Chunk summary (if available)
         keywords: Chunk keywords (if available)
         chapter_title: Chapter title (if available)
+        speakers: List of speakers in the chunk (if available)
     """
-    chunk_id: UUID
+    chunk_id: Optional[UUID]
     video_id: UUID
     user_id: UUID
     text: str
     start_timestamp: float
     end_timestamp: float
     score: float
+    chunk_index: Optional[int] = None  # Legacy identifier within a video
     title: Optional[str] = None
     summary: Optional[str] = None
     keywords: Optional[List[str]] = None
     chapter_title: Optional[str] = None
+    speakers: Optional[List[str]] = None
 
 
 class VectorStore(ABC):
@@ -161,7 +164,8 @@ class QdrantVectorStore(VectorStore):
 
             # Prepare payload (metadata)
             payload = {
-                "chunk_id": str(chunk.chunk_index),  # Use chunk_index as id within video
+                "chunk_id": str(chunk.chunk_index),  # Use chunk_index as id within video (legacy)
+                "chunk_db_id": str(chunk.id),  # Preferred stable identifier
                 "video_id": str(video_id),
                 "user_id": str(user_id),
                 "text": chunk.text,
@@ -280,23 +284,122 @@ class QdrantVectorStore(VectorStore):
         for result in search_results:
             payload = result.payload
 
+            chunk_db_id_raw = payload.get("chunk_db_id")
+            chunk_index_raw = payload.get("chunk_id")
+            chunk_db_id = UUID(chunk_db_id_raw) if chunk_db_id_raw else None
+            chunk_index = int(chunk_index_raw) if chunk_index_raw is not None else None
+
+            chunk_identifier: Optional[UUID] = chunk_db_id
+            if chunk_identifier is None:
+                try:
+                    # Provide a stable, per-video chunk identifier when DB id is not stored
+                    video_uuid = UUID(payload["video_id"])
+                    if chunk_index is not None:
+                        chunk_identifier = uuid.uuid5(video_uuid, str(chunk_index))
+                    else:
+                        chunk_identifier = video_uuid
+                except Exception:
+                    chunk_identifier = None
+
             scored_chunk = ScoredChunk(
-                chunk_id=UUID(payload["video_id"]),  # Will be properly set from DB
+                chunk_id=chunk_identifier,
                 video_id=UUID(payload["video_id"]),
                 user_id=UUID(payload["user_id"]),
                 text=payload["text"],
                 start_timestamp=payload["start_timestamp"],
                 end_timestamp=payload["end_timestamp"],
                 score=result.score,
+                chunk_index=chunk_index,
                 title=payload.get("title"),
                 summary=payload.get("summary"),
                 keywords=payload.get("keywords"),
-                chapter_title=payload.get("chapter_title")
+                chapter_title=payload.get("chapter_title"),
+                speakers=payload.get("speakers")
             )
 
             scored_chunks.append(scored_chunk)
 
         return scored_chunks
+
+    def fetch_video_chunk_vectors(
+        self,
+        *,
+        user_id: UUID,
+        video_ids: Sequence[UUID],
+        limit: int = 256,
+    ) -> Dict[Tuple[UUID, int], np.ndarray]:
+        """
+        Fetch stored embeddings for a user's videos from Qdrant.
+
+        Returns a mapping keyed by (video_id, chunk_index) so callers can join
+        back to DB chunks without relying on internal Qdrant point IDs.
+        """
+
+        if not video_ids:
+            return {}
+
+        must_conditions = [
+            FieldCondition(key="user_id", match=MatchValue(value=str(user_id)))
+        ]
+        should_conditions = [
+            FieldCondition(key="video_id", match=MatchValue(value=str(video_id)))
+            for video_id in video_ids
+        ]
+
+        scroll_filter = Filter(
+            must=must_conditions,
+            should=should_conditions,
+        )
+
+        out: Dict[Tuple[UUID, int], np.ndarray] = {}
+        offset = None
+
+        while True:
+            records, offset = self.client.scroll(
+                collection_name=self.collection_name,
+                scroll_filter=scroll_filter,
+                with_payload=["video_id", "chunk_id"],
+                with_vectors=True,
+                limit=limit,
+                offset=offset,
+            )
+
+            if not records:
+                break
+
+            for record in records:
+                payload = record.payload or {}
+                video_id_raw = payload.get("video_id")
+                chunk_id_raw = payload.get("chunk_id")
+
+                if not video_id_raw or chunk_id_raw is None:
+                    continue
+
+                try:
+                    video_id = UUID(str(video_id_raw))
+                    chunk_index = int(chunk_id_raw)
+                except Exception:
+                    continue
+
+                vector = getattr(record, "vector", None)
+                if vector is None:
+                    continue
+
+                # qdrant-client can return a named vectors dict.
+                if isinstance(vector, dict):
+                    vector = next(iter(vector.values()), None)
+                if vector is None:
+                    continue
+
+                try:
+                    out[(video_id, chunk_index)] = np.asarray(vector, dtype=np.float32)
+                except Exception:
+                    continue
+
+            if offset is None:
+                break
+
+        return out
 
     def delete_by_video_id(self, video_id: UUID):
         """
@@ -352,13 +455,19 @@ class VectorStoreService:
         """
         self.vector_store = vector_store or QdrantVectorStore()
 
-    def initialize(self, dimensions: int):
+    def initialize(self, dimensions: int, collection_name: Optional[str] = None):
         """
         Initialize vector store (create collection if needed).
 
         Args:
             dimensions: Embedding dimensions
         """
+        if collection_name and isinstance(self.vector_store, QdrantVectorStore):
+            self.vector_store = QdrantVectorStore(
+                host=self.vector_store.host,
+                port=self.vector_store.port,
+                collection_name=collection_name,
+            )
         self.vector_store.create_collection(dimensions)
 
     def index_video_chunks(
@@ -385,7 +494,8 @@ class VectorStoreService:
         user_id: Optional[UUID] = None,
         video_ids: Optional[List[UUID]] = None,
         top_k: int = 10,
-        filters: Optional[Dict] = None
+        filters: Optional[Dict] = None,
+        collection_name: Optional[str] = None,
     ) -> List[ScoredChunk]:
         """
         Search for relevant chunks.
@@ -400,13 +510,46 @@ class VectorStoreService:
         Returns:
             List of scored chunks
         """
+        if collection_name and isinstance(self.vector_store, QdrantVectorStore):
+            self.vector_store = QdrantVectorStore(
+                host=self.vector_store.host,
+                port=self.vector_store.port,
+                collection_name=collection_name,
+            )
+
         return self.vector_store.search(
             query_embedding=query_embedding,
             user_id=user_id,
             video_ids=video_ids,
             top_k=top_k,
-            filters=filters
+            filters=filters,
         )
+
+    def fetch_video_chunk_vectors(
+        self,
+        *,
+        user_id: UUID,
+        video_ids: Sequence[UUID],
+        collection_name: Optional[str] = None,
+    ) -> Dict[Tuple[UUID, int], np.ndarray]:
+        """
+        Fetch stored vectors for a user's videos (Qdrant only).
+
+        This is used to reuse existing chunk embeddings for analytics/insights so
+        we don't re-embed every chunk at generation time.
+        """
+        if collection_name and isinstance(self.vector_store, QdrantVectorStore):
+            self.vector_store = QdrantVectorStore(
+                host=self.vector_store.host,
+                port=self.vector_store.port,
+                collection_name=collection_name,
+            )
+
+        if isinstance(self.vector_store, QdrantVectorStore):
+            return self.vector_store.fetch_video_chunk_vectors(
+                user_id=user_id, video_ids=video_ids
+            )
+        return {}
 
     def delete_video(self, video_id: UUID):
         """

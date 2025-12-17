@@ -1,7 +1,8 @@
 """
 Application configuration and settings.
 """
-from typing import List, Literal
+import sys
+from typing import List, Literal, Optional
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -9,8 +10,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
+    _ENV_FILE = None if "pytest" in sys.modules else ".env"
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=_ENV_FILE,
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore"
@@ -37,6 +39,15 @@ class Settings(BaseSettings):
             return v
         return v
 
+    @field_validator("clerk_issuer", "clerk_audience", mode="before")
+    @classmethod
+    def _blank_optional_to_none(cls, v):  # noqa: ANN001
+        if v is None:
+            return None
+        if isinstance(v, str) and not v.strip():
+            return None
+        return v
+
     # Database
     database_url: str = "postgresql://postgres:postgres@localhost:5432/rag_transcript"
     db_echo_sql: bool = False
@@ -50,6 +61,13 @@ class Settings(BaseSettings):
     qdrant_host: str = "localhost"
     qdrant_port: int = 6333
     qdrant_collection_name: str = "transcript_chunks"
+
+    # Clerk Authentication
+    clerk_secret_key: str = ""
+    clerk_publishable_key: str = ""
+    clerk_jwt_verification: bool = True
+    clerk_issuer: Optional[str] = None
+    clerk_audience: Optional[str] = None
 
     # Storage
     storage_backend: Literal["local", "azure"] = "local"
@@ -111,12 +129,17 @@ class Settings(BaseSettings):
     azure_openai_deployment_name: str = ""
 
     # RAG Configuration
-    retrieval_top_k: int = 10
-    reranking_top_k: int = 5
+    retrieval_top_k: int = 20
+
+    # RAG Relevance Filtering (Phase 1)
+    min_relevance_score: float = 0.50
+    fallback_relevance_score: float = 0.15
+    weak_context_threshold: float = 0.40
+
+    # RAG Re-ranking (Phase 2)
     enable_reranking: bool = False
-    conversation_history_token_limit: int = 2000
-    system_prompt_token_limit: int = 200
-    chunks_token_limit: int = 2500
+    reranking_top_k: int = 7
+    reranking_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 
     # Video Processing Limits
     max_video_duration_seconds: int = 14400  # 4 hours

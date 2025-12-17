@@ -158,6 +158,9 @@ class ConversationSource(BaseModel):
     # Video metadata for UI
     title: Optional[str] = None
     status: Optional[str] = None
+    is_deleted: Optional[bool] = None
+    selectable: Optional[bool] = None
+    selectable_reason: Optional[str] = None
     duration_seconds: Optional[int] = None
     thumbnail_url: Optional[str] = None
     youtube_id: Optional[str] = None

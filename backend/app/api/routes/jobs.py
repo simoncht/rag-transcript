@@ -8,10 +8,10 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from app.core.auth import get_current_user
 from app.db.base import get_db
 from app.models import Job, User
 from app.schemas import JobDetail
-from app.api.routes.videos import get_current_user
 
 router = APIRouter()
 
