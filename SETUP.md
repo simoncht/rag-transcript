@@ -1,6 +1,6 @@
 # Developer Setup Guide
 
-Step-by-step guide for setting up the RAG Transcript System on a new machine (optimized for MacBook with Apple Silicon M-series chips).
+Step-by-step guide for setting up the RAG Transcript System on a new machine (optimized for MacBook with Apple Silicon).
 
 ---
 
@@ -50,7 +50,7 @@ git --version
 
 Download and install Docker Desktop from: https://www.docker.com/products/docker-desktop/
 
-**Important for Apple Silicon (M1/M2/M3/M4/M5):**
+**Important for Apple Silicon (M1/M2/M3/M4 and later):**
 - Download the "Apple Silicon" version (not Intel)
 - After installation, open Docker Desktop and wait for it to start
 - Go to Settings → Resources → Advanced and allocate at least:
@@ -104,7 +104,7 @@ npm --version
 # Navigate to your projects directory
 cd ~/Projects  # or wherever you keep your code
 
-# Clone the repository
+# Clone the repository (replace with your fork URL if applicable)
 git clone https://github.com/simoncht/rag-transcript.git
 
 # Enter the project directory
@@ -274,7 +274,7 @@ docker compose restart app worker
 
 ## Troubleshooting
 
-### Apple Silicon (M1/M2/M3/M4/M5) Specific Issues
+### Apple Silicon (M1/M2/M3/M4 and later) Specific Issues
 
 #### Docker Performance
 If containers are slow or unresponsive:
