@@ -126,7 +126,14 @@ ENABLE_RERANKING=False
 
 ## Development
 
-### Setup
+### First-Time Setup
+
+👉 **New to the project?** See [SETUP.md](./SETUP.md) for a complete step-by-step guide, including:
+- Prerequisites (Docker, Node.js, Git)
+- Installation instructions for Mac (Apple Silicon optimized)
+- Troubleshooting common issues
+
+### Quick Start
 ```bash
 # Start services
 docker-compose up -d
@@ -185,6 +192,7 @@ See [AGENTS.md](./AGENTS.md) for coding guidelines.
 
 ## Documentation
 
+- **[SETUP.md](./SETUP.md)** - 🆕 First-time setup guide (Mac/Apple Silicon)
 - **[RESUME.md](./RESUME.md)** - Quick resume guide, commands, status
 - **[PROGRESS.md](./PROGRESS.md)** - Recent changes, technical details
 - **[AGENTS.md](./AGENTS.md)** - Development guidelines, conventions
