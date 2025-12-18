@@ -4,6 +4,14 @@ Production-grade RAG system for YouTube videos with semantic chunking, contextua
 
 ---
 
+## 🚀 Getting Started
+
+**New to this project?** Follow the step-by-step setup guide:
+
+👉 **[SETUP.md](./SETUP.md)** - Complete beginner-friendly installation guide
+
+---
+
 ## ✅ Current Status (2025-12-02)
 
 **Phase 1 COMPLETE** - All 6 containers operational
@@ -185,6 +193,7 @@ See [AGENTS.md](./AGENTS.md) for coding guidelines.
 
 ## Documentation
 
+- **[SETUP.md](./SETUP.md)** - **Complete setup guide for new machines** (start here!)
 - **[RESUME.md](./RESUME.md)** - Quick resume guide, commands, status
 - **[PROGRESS.md](./PROGRESS.md)** - Recent changes, technical details
 - **[AGENTS.md](./AGENTS.md)** - Development guidelines, conventions
