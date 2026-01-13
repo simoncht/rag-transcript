@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # PostgreSQL database
   postgres:
@@ -71,12 +69,12 @@ services:
       - QDRANT_PORT=6333
       - STORAGE_BACKEND=local
       - LOCAL_STORAGE_PATH=/app/storage
-      - EMBEDDING_MODEL=/root/.cache/huggingface/all-MiniLM-L6-v2
+      - EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
       - HF_HOME=/root/.cache/huggingface
       - TRANSFORMERS_CACHE=/root/.cache/huggingface
       - SENTENCE_TRANSFORMERS_HOME=/root/.cache/huggingface
-      - HF_HUB_OFFLINE=1
-      - TRANSFORMERS_OFFLINE=1
+      - HF_HUB_OFFLINE=0
+      - TRANSFORMERS_OFFLINE=0
       - PYTHONUNBUFFERED=1
       # SSL bypass for corporate environments
       - HF_HUB_DISABLE_SSL_VERIFY=1
@@ -111,12 +109,12 @@ services:
       - QDRANT_PORT=6333
       - STORAGE_BACKEND=local
       - LOCAL_STORAGE_PATH=/app/storage
-      - EMBEDDING_MODEL=/root/.cache/huggingface/all-MiniLM-L6-v2
+      - EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
       - HF_HOME=/root/.cache/huggingface
       - TRANSFORMERS_CACHE=/root/.cache/huggingface
       - SENTENCE_TRANSFORMERS_HOME=/root/.cache/huggingface
-      - HF_HUB_OFFLINE=1
-      - TRANSFORMERS_OFFLINE=1
+      - HF_HUB_OFFLINE=0
+      - TRANSFORMERS_OFFLINE=0
       - PYTHONUNBUFFERED=1
       # SSL bypass for corporate environments
       - HF_HUB_DISABLE_SSL_VERIFY=1
@@ -146,12 +144,12 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
-      - EMBEDDING_MODEL=/root/.cache/huggingface/all-MiniLM-L6-v2
+      - EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
       - HF_HOME=/root/.cache/huggingface
       - TRANSFORMERS_CACHE=/root/.cache/huggingface
       - SENTENCE_TRANSFORMERS_HOME=/root/.cache/huggingface
-      - HF_HUB_OFFLINE=1
-      - TRANSFORMERS_OFFLINE=1
+      - HF_HUB_OFFLINE=0
+      - TRANSFORMERS_OFFLINE=0
       - PYTHONUNBUFFERED=1
       # SSL bypass for corporate environments
       - HF_HUB_DISABLE_SSL_VERIFY=1
@@ -160,6 +158,33 @@ services:
       - PYTHONHTTPSVERIFY=0
     depends_on:
       - redis
+
+  # Next.js frontend
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: rag_transcript_frontend
+    command: npm run dev
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules  # Preserve container's node_modules
+      - /app/.next  # Preserve build cache
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+      - NEXT_PUBLIC_API_V1_PREFIX=/api/v1
+      - NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_d2lzZS1jb3JhbC05Mi5jbGVyay5hY2NvdW50cy5kZXYk
+      - CLERK_SECRET_KEY=sk_test_placeholder_for_local_development
+      - NEXT_PUBLIC_CLERK_SIGN_IN_URL=/sign-in
+      - NEXT_PUBLIC_CLERK_SIGN_UP_URL=/sign-up
+      - NEXT_PUBLIC_CLERK_AFTER_SIGN_IN_URL=/videos
+      - NEXT_PUBLIC_CLERK_AFTER_SIGN_UP_URL=/videos
+      - NODE_TLS_REJECT_UNAUTHORIZED=0
+      - WATCHPACK_POLLING=true  # Enable hot reload in Docker
+    depends_on:
+      - app
 
 volumes:
   postgres_data:

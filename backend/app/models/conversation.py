@@ -45,6 +45,12 @@ class Conversation(Base):
         cascade="all, delete-orphan",
         order_by="ConversationSource.added_at",
     )
+    facts = relationship(
+        "ConversationFact",
+        back_populates="conversation",
+        cascade="all, delete-orphan",
+        order_by="ConversationFact.confidence_score.desc()",
+    )
 
     def __repr__(self):
         return f"<Conversation(id={self.id}, title={self.title}, messages={self.message_count})>"

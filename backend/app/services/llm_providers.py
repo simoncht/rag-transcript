@@ -480,6 +480,7 @@ class LLMService:
     High-level LLM service with retry logic and error handling.
 
     Provides a unified interface for all LLM providers with automatic retries.
+    Supports dynamic provider routing based on model name.
     """
 
     def __init__(self, provider: Optional[LLMProvider] = None):
@@ -493,6 +494,11 @@ class LLMService:
             self.provider = provider
         else:
             self.provider = self._create_provider()
+
+        # Cache additional providers for dynamic routing
+        self._ollama_provider = None
+        self._anthropic_provider = None
+        self._openai_provider = None
 
         self.max_retries = 3
 
@@ -509,6 +515,46 @@ class LLMService:
         else:
             raise ValueError(f"Unknown LLM provider: {provider_type}")
 
+    def _get_provider_for_model(self, model_name: Optional[str]) -> LLMProvider:
+        """
+        Determine which provider to use based on model name.
+
+        Routes to:
+        - Ollama: for models with ":" in name (e.g., "qwen3-vl:235b", "llama2:7b")
+        - Anthropic: for models starting with "claude-"
+        - OpenAI: for models starting with "gpt-"
+        - Default: configured provider
+
+        Args:
+            model_name: Model name to route
+
+        Returns:
+            LLMProvider instance
+        """
+        if not model_name:
+            return self.provider
+
+        # Ollama models typically use "model:tag" format
+        if ":" in model_name:
+            if self._ollama_provider is None:
+                self._ollama_provider = OllamaProvider()
+            return self._ollama_provider
+
+        # Anthropic Claude models
+        if model_name.startswith("claude-"):
+            if self._anthropic_provider is None:
+                self._anthropic_provider = AnthropicProvider()
+            return self._anthropic_provider
+
+        # OpenAI models
+        if model_name.startswith("gpt-"):
+            if self._openai_provider is None:
+                self._openai_provider = OpenAIProvider()
+            return self._openai_provider
+
+        # Default to configured provider
+        return self.provider
+
     def complete(
         self,
         messages: List[Message],
@@ -520,6 +566,12 @@ class LLMService:
     ) -> LLMResponse:
         """
         Generate completion with automatic retry on failure.
+
+        Automatically routes to the correct provider based on model name:
+        - Models with ":" (e.g., "qwen3-vl:235b") → Ollama
+        - Models starting with "claude-" → Anthropic
+        - Models starting with "gpt-" → OpenAI
+        - No model specified → Default configured provider
 
         Args:
             messages: List of messages
@@ -535,8 +587,11 @@ class LLMService:
         temperature = temperature if temperature is not None else settings.llm_temperature
         max_tokens = max_tokens if max_tokens is not None else settings.llm_max_tokens
 
+        # Select provider based on model name
+        provider = self._get_provider_for_model(model)
+
         if not retry:
-            return self.provider.complete(
+            return provider.complete(
                 messages,
                 temperature,
                 max_tokens,
@@ -548,7 +603,7 @@ class LLMService:
         last_exception = None
         for attempt in range(self.max_retries):
             try:
-                return self.provider.complete(
+                return provider.complete(
                     messages,
                     temperature,
                     max_tokens,
@@ -570,15 +625,19 @@ class LLMService:
         messages: List[Message],
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
+        model: Optional[str] = None,
         **kwargs
     ) -> Iterator[str]:
         """
         Generate streaming completion.
 
+        Automatically routes to the correct provider based on model name.
+
         Args:
             messages: List of messages
             temperature: Sampling temperature
             max_tokens: Maximum tokens to generate
+            model: Optional explicit model name to use
             **kwargs: Additional parameters
 
         Yields:
@@ -587,7 +646,10 @@ class LLMService:
         temperature = temperature if temperature is not None else settings.llm_temperature
         max_tokens = max_tokens if max_tokens is not None else settings.llm_max_tokens
 
-        yield from self.provider.stream_complete(messages, temperature, max_tokens, **kwargs)
+        # Select provider based on model name
+        provider = self._get_provider_for_model(model)
+
+        yield from provider.stream_complete(messages, temperature, max_tokens, model=model, **kwargs)
 
     def get_model_info(self) -> Dict:
         """Get model information."""

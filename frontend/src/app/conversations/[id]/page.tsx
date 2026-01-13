@@ -56,15 +56,37 @@ import type { Conversation } from "@/lib/types";
 const EMPTY_MESSAGES: Message[] = [];
 
 const MODEL_OPTIONS = [
+  // Ollama Cloud Models (Free - runs on Ollama Cloud infrastructure)
   {
     id: "qwen3-vl:235b-instruct-cloud",
-    label: "Qwen3 VL 235B (Cloud)",
-    description: "Vision context depth textured reasoning",
+    label: "Qwen3 VL 235B",
+    description: "Free - Vision & deep reasoning (Ollama Cloud)",
   },
   {
     id: "gpt-oss:120b-cloud",
-    label: "GPT-OSS 120B (Cloud)",
-    description: "Broad context nuance pattern spotting",
+    label: "GPT-OSS 120B",
+    description: "Free - Broad context understanding (Ollama Cloud)",
+  },
+  {
+    id: "qwen3-coder:480b-cloud",
+    label: "Qwen3 Coder 480B",
+    description: "Free - Code-focused large model (Ollama Cloud)",
+  },
+  // Anthropic Models (Paid API)
+  {
+    id: "claude-3-5-sonnet-20241022",
+    label: "Claude 3.5 Sonnet",
+    description: "Paid - Best balance of speed and intelligence",
+  },
+  {
+    id: "claude-3-opus-20240229",
+    label: "Claude 3 Opus",
+    description: "Paid - Most capable for complex tasks",
+  },
+  {
+    id: "claude-3-haiku-20240307",
+    label: "Claude 3 Haiku",
+    description: "Paid - Fastest for simple tasks",
   },
 ];
 

@@ -13,19 +13,32 @@ export const metadata: Metadata = {
   description: "AI-powered video transcript chat application",
 };
 
+// Check if Clerk is configured with valid keys
+const isClerkConfigured = () => {
+  const publishableKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+  return publishableKey &&
+         publishableKey.startsWith('pk_') &&
+         !publishableKey.includes('xxxx');
+};
+
 export default function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  return (
-    <ClerkProvider>
-      <html lang="en" suppressHydrationWarning>
-        <body className={cn("min-h-screen bg-background font-sans antialiased", inter.className)}>
-          <Providers>{children}</Providers>
-          <Toaster />
-        </body>
-      </html>
-    </ClerkProvider>
+  const content = (
+    <html lang="en" suppressHydrationWarning>
+      <body className={cn("min-h-screen bg-background font-sans antialiased", inter.className)}>
+        <Providers>{children}</Providers>
+        <Toaster />
+      </body>
+    </html>
   );
+
+  // Only use ClerkProvider if valid keys are configured
+  if (isClerkConfigured()) {
+    return <ClerkProvider>{content}</ClerkProvider>;
+  }
+
+  return content;
 }

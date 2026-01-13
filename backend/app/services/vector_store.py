@@ -164,8 +164,7 @@ class QdrantVectorStore(VectorStore):
 
             # Prepare payload (metadata)
             payload = {
-                "chunk_id": str(chunk.chunk_index),  # Use chunk_index as id within video (legacy)
-                "chunk_db_id": str(chunk.id),  # Preferred stable identifier
+                "chunk_id": str(chunk.chunk_index),  # Use chunk_index as unique id within video
                 "video_id": str(video_id),
                 "user_id": str(user_id),
                 "text": chunk.text,

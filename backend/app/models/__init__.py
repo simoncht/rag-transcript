@@ -10,6 +10,7 @@ from app.models.chunk import Chunk
 from app.models.conversation import Conversation
 from app.models.conversation_source import ConversationSource
 from app.models.conversation_insight import ConversationInsight
+from app.models.conversation_fact import ConversationFact
 from app.models.message import Message, MessageChunkReference
 from app.models.collection import Collection, CollectionVideo, CollectionMember
 from app.models.usage import UsageEvent, UserQuota
@@ -23,6 +24,7 @@ __all__ = [
     "Conversation",
     "ConversationSource",
     "ConversationInsight",
+    "ConversationFact",
     "Message",
     "MessageChunkReference",
     "Collection",

@@ -963,7 +963,7 @@ async def send_message(
                 f"The response may be speculative.\n\n{context}"
             )
 
-    # 6. Get conversation history (last 5 messages)
+    # 6. Get conversation history (last 10 messages) - Phase 1 improvement
     history_messages = (
         db.query(MessageModel)
         .filter(
@@ -971,16 +971,37 @@ async def send_message(
             MessageModel.role != SYSTEM_ROLE,
         )
         .order_by(MessageModel.created_at.desc())
-        .limit(5)
+        .limit(10)
         .all()
     )
     history_messages.reverse()  # Oldest first
+
+    # NEW: Phase 2 - Load conversation facts (only for conversations with 15+ messages)
+    facts_section = ""
+    if conversation.message_count >= 15:
+        from app.models.conversation_fact import ConversationFact
+        conversation_facts = (
+            db.query(ConversationFact)
+            .filter(ConversationFact.conversation_id == conversation_id)
+            .order_by(ConversationFact.confidence_score.desc())
+            .limit(10)  # Top 10 facts only
+            .all()
+        )
+
+        # Build compressed facts section
+        if conversation_facts:
+            # Compressed format: key=value(T1), key2=value2(T2)
+            facts_items = [
+                f"{fact.fact_key}={fact.fact_value}(T{fact.source_turn})"
+                for fact in conversation_facts
+            ]
+            facts_section = f"\n\n**Known Facts**: {', '.join(facts_items)}"
 
     # 7. Build LLM messages (streamlined prompt - Phase 2)
     system_prompt = (
         textwrap.dedent(
             """
-        You are InsightGuide, an AI assistant that answers questions using ONLY information from provided video transcripts.
+        You are InsightGuide, an AI assistant that answers questions using ONLY information from provided video transcripts.{facts}
 
         **Core Rules**:
         1. Use ONLY the provided source transcripts - never add external knowledge
@@ -1010,7 +1031,7 @@ async def send_message(
         """
         )
         .strip()
-        .format(mode=request.mode)
+        .format(mode=request.mode, facts=facts_section)
     )
 
     llm_messages = [LLMMessage(role="system", content=system_prompt)]
@@ -1119,6 +1140,29 @@ async def send_message(
 
     db.commit()
     db.refresh(assistant_message)
+
+    # NEW: Phase 2 - Extract facts from conversation turn
+    try:
+        from app.services.fact_extraction import fact_extraction_service
+
+        extracted_facts = fact_extraction_service.extract_facts(
+            db=db,
+            message=assistant_message,
+            conversation=conversation,
+            user_query=request.message
+        )
+
+        # Save facts to database
+        for fact in extracted_facts:
+            db.add(fact)
+
+        if extracted_facts:
+            db.commit()
+            logger.info(f"Saved {len(extracted_facts)} facts for conversation {conversation_id}")
+
+    except Exception as e:
+        logger.warning(f"Fact extraction failed: {e}")
+        # Continue without facts (graceful degradation)
 
     # 12. Build response with chunk references
     response_time = time.time() - start_time
