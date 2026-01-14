@@ -15,10 +15,19 @@ from sqlalchemy.orm import Session
 
 from app.core.auth import get_current_user
 from app.db.base import get_db
-from app.models import Video, Job, Transcript, User
-from app.schemas import VideoIngestRequest, VideoIngestResponse, VideoDetail, VideoList, VideoUpdateTagsRequest, TranscriptDetail, VideoDeleteRequest, VideoDeleteResponse, VideoDeleteBreakdown
+from app.models import Video, Job, Transcript, User, CollectionVideo
+from app.schemas import (
+    VideoIngestRequest,
+    VideoIngestResponse,
+    VideoDetail,
+    VideoList,
+    VideoUpdateTagsRequest,
+    TranscriptDetail,
+    VideoDeleteRequest,
+    VideoDeleteResponse,
+    VideoDeleteBreakdown,
+)
 from app.services.youtube import youtube_service, YouTubeDownloadError
-from app.services.usage_tracker import UsageTracker, QuotaExceededError
 from app.services.video_processing import reset_video_processing
 from app.services.vector_store import vector_store_service
 from app.tasks.video_tasks import process_video_pipeline
@@ -30,7 +39,7 @@ router = APIRouter()
 async def ingest_video(
     request: VideoIngestRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
     """
     Ingest a YouTube video for processing.
@@ -75,7 +84,7 @@ async def ingest_video(
             language=video_info["language"],
             chapters=video_info["chapters"],
             status="pending",
-            progress_percent=0.0
+            progress_percent=0.0,
         )
         db.add(video)
         db.flush()
@@ -86,7 +95,7 @@ async def ingest_video(
             video_id=video.id,
             job_type="full_pipeline",
             status="pending",
-            progress_percent=0.0
+            progress_percent=0.0,
         )
         db.add(job)
         db.commit()
@@ -98,7 +107,7 @@ async def ingest_video(
             video_id=str(video.id),
             youtube_url=request.youtube_url,
             user_id=str(current_user.id),
-            job_id=str(job.id)
+            job_id=str(job.id),
         )
 
         # Update job with Celery task ID
@@ -109,7 +118,7 @@ async def ingest_video(
             video_id=video.id,
             job_id=job.id,
             status="pending",
-            message="Video ingestion started. Use the job_id to track progress."
+            message="Video ingestion started. Use the job_id to track progress.",
         )
 
     except YouTubeDownloadError as e:
@@ -124,7 +133,7 @@ async def list_videos(
     limit: int = Query(50, ge=1, le=100, description="Number of records to return"),
     status: Optional[str] = Query(None, description="Filter by status"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
     """
     List user's videos with pagination and filtering.
@@ -138,8 +147,7 @@ async def list_videos(
         VideoList with videos and total count
     """
     query = db.query(Video).filter(
-        Video.user_id == current_user.id,
-        Video.is_deleted == False
+        Video.user_id == current_user.id, Video.is_deleted.is_(False)
     )
 
     # Apply status filter
@@ -154,9 +162,7 @@ async def list_videos(
 
     video_ids = [v.id for v in videos]
     transcripts = (
-        db.query(Transcript)
-        .filter(Transcript.video_id.in_(video_ids))
-        .all()
+        db.query(Transcript).filter(Transcript.video_id.in_(video_ids)).all()
         if video_ids
         else []
     )
@@ -184,17 +190,14 @@ async def list_videos(
             )
         )
 
-    return VideoList(
-        total=total,
-        videos=video_details
-    )
+    return VideoList(total=total, videos=video_details)
 
 
 @router.get("/{video_id}", response_model=VideoDetail)
 async def get_video(
     video_id: uuid.UUID,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
     """
     Get detailed information about a specific video.
@@ -205,11 +208,15 @@ async def get_video(
     Returns:
         VideoDetail with full video information
     """
-    video = db.query(Video).filter(
-        Video.id == video_id,
-        Video.user_id == current_user.id,
-        Video.is_deleted == False
-    ).first()
+    video = (
+        db.query(Video)
+        .filter(
+            Video.id == video_id,
+            Video.user_id == current_user.id,
+            Video.is_deleted.is_(False),
+        )
+        .first()
+    )
 
     if not video:
         raise HTTPException(status_code=404, detail="Video not found")
@@ -235,18 +242,22 @@ async def get_video(
 async def get_video_transcript(
     video_id: uuid.UUID,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
     """
     Retrieve the full transcript for a processed video.
 
     Returns the complete text plus time-coded segments for review.
     """
-    video = db.query(Video).filter(
-        Video.id == video_id,
-        Video.user_id == current_user.id,
-        Video.is_deleted == False
-    ).first()
+    video = (
+        db.query(Video)
+        .filter(
+            Video.id == video_id,
+            Video.user_id == current_user.id,
+            Video.is_deleted.is_(False),
+        )
+        .first()
+    )
 
     if not video:
         raise HTTPException(status_code=404, detail="Video not found")
@@ -256,6 +267,46 @@ async def get_video_transcript(
         raise HTTPException(status_code=404, detail="Transcript not available yet")
 
     return TranscriptDetail.model_validate(transcript)
+
+
+@router.get("/{video_id}/collections")
+async def get_video_collections(
+    video_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Get the list of collection IDs that contain this video.
+
+    Args:
+        video_id: Video UUID
+
+    Returns:
+        Dict with collection_ids array
+    """
+    video = (
+        db.query(Video)
+        .filter(
+            Video.id == video_id,
+            Video.user_id == current_user.id,
+            Video.is_deleted.is_(False),
+        )
+        .first()
+    )
+
+    if not video:
+        raise HTTPException(status_code=404, detail="Video not found")
+
+    # Get all collection IDs for this video
+    collection_ids = (
+        db.query(CollectionVideo.collection_id)
+        .filter(CollectionVideo.video_id == video_id)
+        .all()
+    )
+
+    return {
+        "collection_ids": [str(cid[0]) for cid in collection_ids]
+    }
 
 
 @router.post("/{video_id}/reprocess", response_model=VideoIngestResponse)
@@ -272,7 +323,11 @@ async def reprocess_video(
     """
     video = (
         db.query(Video)
-        .filter(Video.id == video_id, Video.user_id == current_user.id, Video.is_deleted == False)  # noqa: E712
+        .filter(
+            Video.id == video_id,
+            Video.user_id == current_user.id,
+            Video.is_deleted.is_(False),
+        )  # noqa: E712
         .first()
     )
     if not video:
@@ -327,7 +382,7 @@ def _estimate_index_size_mb(video: Video) -> float:
 async def delete_videos(
     request: VideoDeleteRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
     """
     Delete one or more videos with granular options.
@@ -347,17 +402,23 @@ async def delete_videos(
     if not request.video_ids:
         raise HTTPException(status_code=400, detail="No videos specified")
 
-    videos = db.query(Video).filter(
-        Video.id.in_(request.video_ids),
-        Video.user_id == current_user.id,
-        Video.is_deleted == False
-    ).all()
+    videos = (
+        db.query(Video)
+        .filter(
+            Video.id.in_(request.video_ids),
+            Video.user_id == current_user.id,
+            Video.is_deleted.is_(False),
+        )
+        .all()
+    )
 
     if not videos:
         raise HTTPException(status_code=404, detail="No deletable videos found")
 
     if len(videos) != len(request.video_ids):
-        raise HTTPException(status_code=404, detail="Some videos not found or already deleted")
+        raise HTTPException(
+            status_code=404, detail="Some videos not found or already deleted"
+        )
 
     breakdowns = []
     total_savings = 0.0
@@ -375,7 +436,7 @@ async def delete_videos(
             audio_size_mb=round(audio_size, 3),
             transcript_size_mb=transcript_size,
             index_size_mb=index_size,
-            total_size_mb=round(total_size, 3)
+            total_size_mb=round(total_size, 3),
         )
         breakdowns.append(breakdown)
 
@@ -416,7 +477,7 @@ async def delete_videos(
         deleted_count=len(videos),
         videos=breakdowns,
         total_savings_mb=round(total_savings, 3),
-        message=f"Successfully deleted {len(videos)} video(s)"
+        message=f"Successfully deleted {len(videos)} video(s)",
     )
 
 
@@ -424,7 +485,7 @@ async def delete_videos(
 async def delete_video(
     video_id: uuid.UUID,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
     """
     Delete a single video (backward compatibility endpoint).
@@ -442,7 +503,7 @@ async def delete_video(
         remove_from_library=True,
         delete_search_index=True,
         delete_audio=True,
-        delete_transcript=True
+        delete_transcript=True,
     )
     return await delete_videos(request, db, current_user)
 
@@ -452,7 +513,7 @@ async def update_video_tags(
     video_id: uuid.UUID,
     request: VideoUpdateTagsRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
     """
     Update tags for a video.
@@ -464,11 +525,15 @@ async def update_video_tags(
     Returns:
         VideoDetail with updated video
     """
-    video = db.query(Video).filter(
-        Video.id == video_id,
-        Video.user_id == current_user.id,
-        Video.is_deleted == False
-    ).first()
+    video = (
+        db.query(Video)
+        .filter(
+            Video.id == video_id,
+            Video.user_id == current_user.id,
+            Video.is_deleted.is_(False),
+        )
+        .first()
+    )
 
     if not video:
         raise HTTPException(status_code=404, detail="Video not found")

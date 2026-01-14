@@ -42,6 +42,11 @@ export const videosApi = {
     return response.data;
   },
 
+  async getCollections(videoId: string): Promise<{ collection_ids: string[] }> {
+    const response = await apiClient.get(`/videos/${videoId}/collections`);
+    return response.data;
+  },
+
   async reprocess(videoId: string): Promise<{ video_id: string; job_id: string; status: string; message: string }> {
     const response = await apiClient.post(`/videos/${videoId}/reprocess`);
     return response.data;
