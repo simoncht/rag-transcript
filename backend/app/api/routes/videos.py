@@ -10,10 +10,10 @@ Endpoints:
 import uuid
 from typing import List, Optional
 from pathlib import Path
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 
-from app.core.auth import get_current_user
+from app.core.nextauth import get_current_user
 from app.db.base import get_db
 from app.models import Video, Job, Transcript, User, CollectionVideo
 from app.schemas import (
@@ -26,18 +26,33 @@ from app.schemas import (
     VideoDeleteRequest,
     VideoDeleteResponse,
     VideoDeleteBreakdown,
+    VideoCancelRequest,
+    VideoCancelResponse,
+    CleanupSummary,
+    BulkCancelRequest,
+    BulkCancelResponse,
+    BulkCancelResultItem,
 )
 from app.services.youtube import youtube_service, YouTubeDownloadError
 from app.services.video_processing import reset_video_processing
 from app.services.vector_store import vector_store_service
+from app.services.job_cancellation import (
+    cancel_video_processing,
+    is_cancelable,
+    CleanupOption,
+    CANCELABLE_STATUSES,
+)
 from app.tasks.video_tasks import process_video_pipeline
+from app.core.rate_limit import limiter
 
 router = APIRouter()
 
 
 @router.post("/ingest", response_model=VideoIngestResponse)
+@limiter.limit("10/hour")
 async def ingest_video(
-    request: VideoIngestRequest,
+    request: Request,
+    ingest_request: VideoIngestRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -56,22 +71,40 @@ async def ingest_video(
     """
     try:
         # Extract and validate video info
-        video_info = youtube_service.get_video_info(request.youtube_url)
+        video_info = youtube_service.get_video_info(ingest_request.youtube_url)
 
         # Validate video
         is_valid, error_message = youtube_service.validate_video(video_info)
         if not is_valid:
             raise HTTPException(status_code=400, detail=error_message)
 
-        # NOTE: Quota checks are temporarily disabled during local development.
-        # The UsageTracker and quota types ("videos", "minutes") can be re-enabled
-        # when introducing paid tiers or usage-based billing.
+        # Check for duplicate - same YouTube video for same user
+        existing_video = (
+            db.query(Video)
+            .filter(
+                Video.user_id == current_user.id,
+                Video.youtube_id == video_info["youtube_id"],
+                Video.is_deleted.is_(False),
+            )
+            .first()
+        )
+        if existing_video:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Video already exists: '{existing_video.title}' (status: {existing_video.status}, id: {existing_video.id})",
+            )
+
+        # Check user quotas
+        from app.core.quota import check_video_quota, check_minutes_quota
+        await check_video_quota(current_user, db)
+        duration_minutes = int(video_info["duration_seconds"] / 60)
+        await check_minutes_quota(current_user, duration_minutes, db)
 
         # Create video record
         video = Video(
             user_id=current_user.id,
             youtube_id=video_info["youtube_id"],
-            youtube_url=request.youtube_url,
+            youtube_url=ingest_request.youtube_url,
             title=video_info["title"],
             description=video_info["description"],
             channel_name=video_info["channel_name"],
@@ -105,7 +138,7 @@ async def ingest_video(
         # Queue background task
         task = process_video_pipeline.delay(
             video_id=str(video.id),
-            youtube_url=request.youtube_url,
+            youtube_url=ingest_request.youtube_url,
             user_id=str(current_user.id),
             job_id=str(job.id),
         )
@@ -123,6 +156,9 @@ async def ingest_video(
 
     except YouTubeDownloadError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        # Re-raise HTTP exceptions as-is (e.g., validation failures, quota errors)
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to ingest video: {str(e)}")
 
@@ -360,6 +396,169 @@ async def reprocess_video(
         job_id=job.id,
         status="pending",
         message="Video reprocessing started. Use the job_id to track progress.",
+    )
+
+
+@router.post("/{video_id}/cancel", response_model=VideoCancelResponse)
+async def cancel_video(
+    video_id: uuid.UUID,
+    cancel_request: VideoCancelRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Cancel a video's processing and clean up partial data.
+
+    Args:
+        video_id: Video UUID
+        cancel_request: Cancel options (cleanup_option: 'keep_video' or 'full_delete')
+
+    Returns:
+        VideoCancelResponse with operation summary
+    """
+    video = (
+        db.query(Video)
+        .filter(
+            Video.id == video_id,
+            Video.user_id == current_user.id,
+            Video.is_deleted.is_(False),
+        )
+        .first()
+    )
+
+    if not video:
+        raise HTTPException(status_code=404, detail="Video not found")
+
+    # Check if video can be canceled
+    if not is_cancelable(video):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Video cannot be canceled - status is '{video.status}'. Only videos in non-terminal statuses can be canceled.",
+        )
+
+    # Parse cleanup option
+    try:
+        cleanup_option = CleanupOption(cancel_request.cleanup_option)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid cleanup_option: {cancel_request.cleanup_option}. Must be 'keep_video' or 'full_delete'.",
+        )
+
+    # Cancel the video
+    result = cancel_video_processing(db, video, cleanup_option)
+
+    if result.error:
+        raise HTTPException(status_code=400, detail=result.error)
+
+    return VideoCancelResponse(
+        video_id=result.video_id,
+        previous_status=result.previous_status,
+        new_status=result.new_status,
+        celery_task_revoked=result.celery_task_revoked,
+        cleanup_summary=CleanupSummary(
+            transcript_deleted=result.cleanup_summary.transcript_deleted,
+            chunks_deleted=result.cleanup_summary.chunks_deleted,
+            audio_file_deleted=result.cleanup_summary.audio_file_deleted,
+            transcript_file_deleted=result.cleanup_summary.transcript_file_deleted,
+            vectors_deleted=result.cleanup_summary.vectors_deleted,
+        ),
+    )
+
+
+@router.post("/cancel-bulk", response_model=BulkCancelResponse)
+async def cancel_videos_bulk(
+    bulk_request: BulkCancelRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Cancel multiple videos at once.
+
+    Args:
+        bulk_request: List of video IDs and cleanup option
+
+    Returns:
+        BulkCancelResponse with per-video results
+    """
+    if not bulk_request.video_ids:
+        raise HTTPException(status_code=400, detail="No videos specified")
+
+    # Parse cleanup option
+    try:
+        cleanup_option = CleanupOption(bulk_request.cleanup_option)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid cleanup_option: {bulk_request.cleanup_option}. Must be 'keep_video' or 'full_delete'.",
+        )
+
+    results = []
+    canceled_count = 0
+    skipped_count = 0
+
+    for video_id in bulk_request.video_ids:
+        video = (
+            db.query(Video)
+            .filter(
+                Video.id == video_id,
+                Video.user_id == current_user.id,
+                Video.is_deleted.is_(False),
+            )
+            .first()
+        )
+
+        if not video:
+            results.append(
+                BulkCancelResultItem(
+                    video_id=video_id,
+                    success=False,
+                    error="Video not found",
+                )
+            )
+            skipped_count += 1
+            continue
+
+        if not is_cancelable(video):
+            results.append(
+                BulkCancelResultItem(
+                    video_id=video_id,
+                    success=False,
+                    previous_status=video.status,
+                    error=f"Cannot cancel - status is '{video.status}'",
+                )
+            )
+            skipped_count += 1
+            continue
+
+        result = cancel_video_processing(db, video, cleanup_option)
+
+        if result.error:
+            results.append(
+                BulkCancelResultItem(
+                    video_id=video_id,
+                    success=False,
+                    previous_status=result.previous_status,
+                    error=result.error,
+                )
+            )
+            skipped_count += 1
+        else:
+            results.append(
+                BulkCancelResultItem(
+                    video_id=video_id,
+                    success=True,
+                    previous_status=result.previous_status,
+                    new_status=result.new_status,
+                )
+            )
+            canceled_count += 1
+
+    return BulkCancelResponse(
+        total=len(bulk_request.video_ids),
+        canceled=canceled_count,
+        skipped=skipped_count,
+        results=results,
     )
 
 

@@ -31,6 +31,7 @@ class EnrichedChunk:
         keywords: List of key topics/entities
         embedding_text: Combined text for embedding generation
     """
+
     chunk: Chunk
     summary: Optional[str] = None
     title: Optional[str] = None
@@ -59,7 +60,7 @@ class ContextualEnricher:
     def __init__(
         self,
         llm_service: Optional[LLMService] = None,
-        video_context: Optional[str] = None
+        video_context: Optional[str] = None,
     ):
         """
         Initialize contextual enricher.
@@ -100,7 +101,7 @@ class ContextualEnricher:
                 "- Summary should capture the essence and key points\n"
                 "- Keywords should be searchable terms someone might use to find this content\n"
                 "- Return ONLY valid JSON, no additional text"
-            )
+            ),
         )
 
         # Add video context if available
@@ -117,7 +118,7 @@ class ContextualEnricher:
                 f"Analyze this transcript segment (from {timestamp_str}):{context_info}\n\n"
                 f"Transcript:\n{chunk.text}\n\n"
                 "Return JSON with title, summary, and keywords."
-            )
+            ),
         )
 
         return [system_message, user_message]
@@ -184,37 +185,78 @@ class ContextualEnricher:
             Dictionary with basic title, summary, keywords
         """
         # Use first sentence as title (limited to 50 chars)
-        sentences = chunk.text.split('. ')
+        sentences = chunk.text.split(". ")
         first_sentence = sentences[0] if sentences else chunk.text
-        title = first_sentence[:50] + "..." if len(first_sentence) > 50 else first_sentence
+        title = (
+            first_sentence[:50] + "..." if len(first_sentence) > 50 else first_sentence
+        )
 
         # Use first 2-3 sentences as summary
         summary_sentences = sentences[:3] if len(sentences) >= 3 else sentences
-        summary = '. '.join(summary_sentences)
-        if not summary.endswith('.'):
-            summary += '.'
+        summary = ". ".join(summary_sentences)
+        if not summary.endswith("."):
+            summary += "."
 
         # Extract simple keywords (most common words, excluding stopwords)
-        stopwords = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for',
-                     'of', 'with', 'by', 'from', 'as', 'is', 'was', 'are', 'were', 'be',
-                     'this', 'that', 'these', 'those', 'i', 'you', 'he', 'she', 'it',
-                     'we', 'they', 'what', 'which', 'who', 'when', 'where', 'why', 'how'}
+        stopwords = {
+            "the",
+            "a",
+            "an",
+            "and",
+            "or",
+            "but",
+            "in",
+            "on",
+            "at",
+            "to",
+            "for",
+            "of",
+            "with",
+            "by",
+            "from",
+            "as",
+            "is",
+            "was",
+            "are",
+            "were",
+            "be",
+            "this",
+            "that",
+            "these",
+            "those",
+            "i",
+            "you",
+            "he",
+            "she",
+            "it",
+            "we",
+            "they",
+            "what",
+            "which",
+            "who",
+            "when",
+            "where",
+            "why",
+            "how",
+        }
 
         words = chunk.text.lower().split()
         word_freq = {}
         for word in words:
             # Clean word
-            word = ''.join(c for c in word if c.isalnum())
+            word = "".join(c for c in word if c.isalnum())
             if word and word not in stopwords and len(word) > 3:
                 word_freq[word] = word_freq.get(word, 0) + 1
 
         # Get top 5 keywords
-        keywords = sorted(word_freq.keys(), key=lambda w: word_freq[w], reverse=True)[:5]
+        keywords = sorted(word_freq.keys(), key=lambda w: word_freq[w], reverse=True)[
+            :5
+        ]
 
         return {
             "title": title,
             "summary": summary[:300],  # Limit summary length
-            "keywords": keywords
+            "keywords": keywords,
         }
 
     def enrich_chunk(self, chunk: Chunk) -> EnrichedChunk:
@@ -234,7 +276,7 @@ class ContextualEnricher:
                 chunk=chunk,
                 title=fallback["title"],
                 summary=fallback["summary"],
-                keywords=fallback["keywords"]
+                keywords=fallback["keywords"],
             )
 
         # Try to enrich using LLM with retries
@@ -245,8 +287,8 @@ class ContextualEnricher:
                 response = self.llm_service.complete(
                     messages=messages,
                     temperature=0.3,  # Lower temperature for more consistent output
-                    max_tokens=500,   # Enough for title + summary + keywords
-                    retry=False       # We handle retries here
+                    max_tokens=500,  # Enough for title + summary + keywords
+                    retry=False,  # We handle retries here
                 )
 
                 # Parse response
@@ -256,30 +298,30 @@ class ContextualEnricher:
                     chunk=chunk,
                     title=enrichment_data["title"],
                     summary=enrichment_data["summary"],
-                    keywords=enrichment_data["keywords"]
+                    keywords=enrichment_data["keywords"],
                 )
 
             except Exception as e:
                 if attempt < self.max_retries - 1:
                     # Wait before retry (exponential backoff)
-                    wait_time = 2 ** attempt
+                    wait_time = 2**attempt
                     time.sleep(wait_time)
                     continue
                 else:
                     # All retries failed, use fallback
-                    print(f"Warning: Enrichment failed for chunk {chunk.chunk_index}, using fallback. Error: {str(e)}")
+                    print(
+                        f"Warning: Enrichment failed for chunk {chunk.chunk_index}, using fallback. Error: {str(e)}"
+                    )
                     fallback = self._create_fallback_enrichment(chunk)
                     return EnrichedChunk(
                         chunk=chunk,
                         title=fallback["title"],
                         summary=fallback["summary"],
-                        keywords=fallback["keywords"]
+                        keywords=fallback["keywords"],
                     )
 
     def enrich_chunks_batch(
-        self,
-        chunks: List[Chunk],
-        show_progress: bool = False
+        self, chunks: List[Chunk], show_progress: bool = False
     ) -> List[EnrichedChunk]:
         """
         Enrich multiple chunks in batch.
@@ -310,7 +352,9 @@ class ContextualEnricher:
 
         return enriched_chunks
 
-    def set_video_context(self, video_title: str, video_description: Optional[str] = None):
+    def set_video_context(
+        self, video_title: str, video_description: Optional[str] = None
+    ):
         """
         Set video context to improve enrichment quality.
 
@@ -321,7 +365,11 @@ class ContextualEnricher:
         context_parts = [f"Title: {video_title}"]
         if video_description:
             # Limit description length
-            desc = video_description[:500] + "..." if len(video_description) > 500 else video_description
+            desc = (
+                video_description[:500] + "..."
+                if len(video_description) > 500
+                else video_description
+            )
             context_parts.append(f"Description: {desc}")
 
         self.video_context = " | ".join(context_parts)

@@ -103,4 +103,3 @@ def downgrade() -> None:
         table_name="conversation_insights",
     )
     op.drop_table("conversation_insights")
-

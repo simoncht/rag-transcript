@@ -193,15 +193,27 @@ def test_map_topics_to_chunks_tracks_totals_across_all_chunks(
     video_b = uuid.uuid4()
 
     topics = [
-        TopicNode(id="topic-1", label="Alpha Topic", description="Desc", keywords=["alpha"]),
-        TopicNode(id="topic-2", label="Beta Topic", description="Desc", keywords=["beta"]),
+        TopicNode(
+            id="topic-1", label="Alpha Topic", description="Desc", keywords=["alpha"]
+        ),
+        TopicNode(
+            id="topic-2", label="Beta Topic", description="Desc", keywords=["beta"]
+        ),
     ]
 
     chunks: list[Chunk] = []
     for i in range(20):
-        chunks.append(_make_chunk(video_id=video_a, user_id=user_id, chunk_index=i, keywords=["alpha"]))
+        chunks.append(
+            _make_chunk(
+                video_id=video_a, user_id=user_id, chunk_index=i, keywords=["alpha"]
+            )
+        )
     for i in range(10):
-        chunks.append(_make_chunk(video_id=video_b, user_id=user_id, chunk_index=i, keywords=["beta"]))
+        chunks.append(
+            _make_chunk(
+                video_id=video_b, user_id=user_id, chunk_index=i, keywords=["beta"]
+            )
+        )
 
     videos_by_id = {
         video_a: type("V", (), {"title": "Video A"})(),
@@ -245,23 +257,36 @@ def test_map_topics_to_chunks_reuses_qdrant_vectors(
         def __init__(self) -> None:
             self.calls: list[list[str]] = []
 
-        def embed_batch(self, texts: list[str], batch_size=None, show_progress: bool = False):  # noqa: ANN001
+        def embed_batch(
+            self, texts: list[str], batch_size=None, show_progress: bool = False
+        ):  # noqa: ANN001
             self.calls.append(list(texts))
-            return super().embed_batch(texts, batch_size=batch_size, show_progress=show_progress)
+            return super().embed_batch(
+                texts, batch_size=batch_size, show_progress=show_progress
+            )
 
     user_id = uuid.uuid4()
     video_a = uuid.uuid4()
 
     topics = [
-        TopicNode(id="topic-1", label="Alpha Topic", description="Desc", keywords=["alpha"]),
+        TopicNode(
+            id="topic-1", label="Alpha Topic", description="Desc", keywords=["alpha"]
+        ),
     ]
 
     chunks: list[Chunk] = []
     for i in range(8):
-        chunks.append(_make_chunk(video_id=video_a, user_id=user_id, chunk_index=i, keywords=["alpha"]))
+        chunks.append(
+            _make_chunk(
+                video_id=video_a, user_id=user_id, chunk_index=i, keywords=["alpha"]
+            )
+        )
 
     # Pretend Qdrant already has vectors for all chunks.
-    indexed = {(c.video_id, int(c.chunk_index)): np.array([1.0, 0.0, 0.0], dtype=float) for c in chunks}
+    indexed = {
+        (c.video_id, int(c.chunk_index)): np.array([1.0, 0.0, 0.0], dtype=float)
+        for c in chunks
+    }
 
     monkeypatch.setattr(
         "app.services.vector_store.vector_store_service.fetch_video_chunk_vectors",

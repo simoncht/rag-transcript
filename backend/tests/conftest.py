@@ -12,8 +12,10 @@ from sqlalchemy.dialects import postgresql
 from sqlalchemy import JSON, TypeDecorator, CHAR
 import uuid as uuid_module
 
+
 class GUID(TypeDecorator):
     """Platform-independent GUID type. Uses PostgreSQL's UUID type, otherwise uses CHAR(36)."""
+
     impl = CHAR
     cache_ok = True
 
@@ -23,7 +25,7 @@ class GUID(TypeDecorator):
         super().__init__()
 
     def load_dialect_impl(self, dialect):
-        if dialect.name == 'postgresql':
+        if dialect.name == "postgresql":
             return dialect.type_descriptor(_original_uuid(as_uuid=self.as_uuid))
         else:
             return dialect.type_descriptor(CHAR(36))
@@ -43,6 +45,7 @@ class GUID(TypeDecorator):
             return value
         else:
             return uuid_module.UUID(value)
+
 
 # Monkey patch BEFORE models are imported
 _original_uuid = postgresql.UUID
@@ -154,6 +157,7 @@ def db():
 def sample_embedding():
     """Fixture providing a sample embedding vector."""
     import numpy as np
+
     return np.random.rand(384).astype(np.float32)
 
 
@@ -172,7 +176,9 @@ def sample_query():
 @pytest.fixture
 def sample_chunk_text():
     """Fixture providing sample chunk text."""
-    return "This is a sample transcript chunk with relevant content about the video topic."
+    return (
+        "This is a sample transcript chunk with relevant content about the video topic."
+    )
 
 
 @pytest.fixture

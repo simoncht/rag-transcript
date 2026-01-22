@@ -29,7 +29,9 @@ def test_resolve_collection_name_falls_back() -> None:
     assert resolve_collection_name(OldService()) == settings.qdrant_collection_name
 
 
-def test_set_active_embedding_model_returns_service(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_set_active_embedding_model_returns_service(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     import numpy as np
 
     from app.services import embeddings as embeddings_module

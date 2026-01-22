@@ -560,7 +560,9 @@ def test_send_message_resolves_chunk_by_db_id_without_timestamp_match(
         _fake_complete,
         raising=False,
     )
-    monkeypatch.setattr("app.core.config.settings.enable_reranking", False, raising=False)
+    monkeypatch.setattr(
+        "app.core.config.settings.enable_reranking", False, raising=False
+    )
 
     app = _create_test_app(fake_db, user_id)
     client = TestClient(app)
@@ -700,7 +702,9 @@ def test_send_message_resolves_chunk_by_index_when_db_id_missing(
         _fake_complete,
         raising=False,
     )
-    monkeypatch.setattr("app.core.config.settings.enable_reranking", False, raising=False)
+    monkeypatch.setattr(
+        "app.core.config.settings.enable_reranking", False, raising=False
+    )
 
     app = _create_test_app(fake_db, user_id)
     client = TestClient(app)
@@ -722,3 +726,4 @@ def test_send_message_resolves_chunk_by_index_when_db_id_missing(
     resp_ref = resp.json()["chunk_references"][0]
     assert resp_ref["chunk_id"] == str(chunk.id)
     assert resp_ref["start_timestamp"] == 321.0
+    assert resp_ref["jump_url"] == "https://youtube.com/watch?v=chunk-index&t=321"

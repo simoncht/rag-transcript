@@ -38,7 +38,9 @@ def test_search_prefers_chunk_db_id(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(vs, "client", SimpleNamespace(search=_search), raising=False)
 
-    results = vs.search(np.zeros(3, dtype=np.float32), user_id=user_id, video_ids=[video_id])
+    results = vs.search(
+        np.zeros(3, dtype=np.float32), user_id=user_id, video_ids=[video_id]
+    )
     assert len(results) == 1
     first = results[0]
     assert first.chunk_id == chunk_id
@@ -70,7 +72,9 @@ def test_search_derives_chunk_id_from_video_and_index() -> None:
 
     vs.client = SimpleNamespace(search=_search)
 
-    results = vs.search(np.zeros(3, dtype=np.float32), user_id=user_id, video_ids=[video_id])
+    results = vs.search(
+        np.zeros(3, dtype=np.float32), user_id=user_id, video_ids=[video_id]
+    )
     assert len(results) == 1
     first = results[0]
     expected_fallback_id = uuid.uuid5(video_id, "2")

@@ -10,7 +10,7 @@ Supports:
 Provides unified interface for chat completion with retry logic and streaming support.
 """
 from abc import ABC, abstractmethod
-from typing import List, Dict, Optional, Iterator, Any
+from typing import List, Dict, Optional, Iterator
 from dataclasses import dataclass
 import time
 import httpx
@@ -21,6 +21,7 @@ from app.core.config import settings
 @dataclass
 class Message:
     """Chat message."""
+
     role: str  # 'system', 'user', or 'assistant'
     content: str
 
@@ -28,10 +29,13 @@ class Message:
 @dataclass
 class LLMResponse:
     """Response from LLM."""
+
     content: str
     model: str
     provider: str
-    usage: Optional[Dict[str, int]] = None  # {input_tokens, output_tokens, total_tokens}
+    usage: Optional[
+        Dict[str, int]
+    ] = None  # {input_tokens, output_tokens, total_tokens}
     finish_reason: Optional[str] = None
     response_time_seconds: Optional[float] = None
 
@@ -45,7 +49,7 @@ class LLMProvider(ABC):
         messages: List[Message],
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
-        **kwargs
+        **kwargs,
     ) -> LLMResponse:
         """
         Generate a completion for the given messages.
@@ -67,7 +71,7 @@ class LLMProvider(ABC):
         messages: List[Message],
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
-        **kwargs
+        **kwargs,
     ) -> Iterator[str]:
         """
         Generate a streaming completion.
@@ -96,12 +100,7 @@ class OllamaProvider(LLMProvider):
     Connects to Ollama HTTP API (typically running on localhost:11434).
     """
 
-    def __init__(
-        self,
-        base_url: str = None,
-        model: str = None,
-        timeout: int = 300
-    ):
+    def __init__(self, base_url: str = None, model: str = None, timeout: int = 300):
         """
         Initialize Ollama provider.
 
@@ -120,7 +119,7 @@ class OllamaProvider(LLMProvider):
         messages: List[Message],
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
-        **kwargs
+        **kwargs,
     ) -> LLMResponse:
         """Generate completion using Ollama."""
         start_time = time.time()
@@ -130,15 +129,14 @@ class OllamaProvider(LLMProvider):
 
         # Convert messages to Ollama format
         ollama_messages = [
-            {"role": msg.role, "content": msg.content}
-            for msg in messages
+            {"role": msg.role, "content": msg.content} for msg in messages
         ]
 
         payload = {
             "model": override_model or self.model,
             "messages": ollama_messages,
             "stream": False,
-            "options": {}
+            "options": {},
         }
 
         if temperature is not None:
@@ -149,8 +147,11 @@ class OllamaProvider(LLMProvider):
 
         # Debug logging
         import logging
+
         logger = logging.getLogger(__name__)
-        logger.info(f"Ollama request: model={payload['model']}, num_predict={payload['options'].get('num_predict', 'NOT SET')}, max_tokens_param={max_tokens}")
+        logger.info(
+            f"Ollama request: model={payload['model']}, num_predict={payload['options'].get('num_predict', 'NOT SET')}, max_tokens_param={max_tokens}"
+        )
 
         try:
             response = self.client.post("/api/chat", json=payload)
@@ -166,10 +167,11 @@ class OllamaProvider(LLMProvider):
                 usage={
                     "input_tokens": data.get("prompt_eval_count", 0),
                     "output_tokens": data.get("eval_count", 0),
-                    "total_tokens": data.get("prompt_eval_count", 0) + data.get("eval_count", 0)
+                    "total_tokens": data.get("prompt_eval_count", 0)
+                    + data.get("eval_count", 0),
                 },
                 finish_reason=data.get("done_reason"),
-                response_time_seconds=response_time
+                response_time_seconds=response_time,
             )
 
         except httpx.HTTPError as e:
@@ -180,20 +182,19 @@ class OllamaProvider(LLMProvider):
         messages: List[Message],
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
-        **kwargs
+        **kwargs,
     ) -> Iterator[str]:
         """Generate streaming completion using Ollama."""
         override_model = kwargs.pop("model", None)
         ollama_messages = [
-            {"role": msg.role, "content": msg.content}
-            for msg in messages
+            {"role": msg.role, "content": msg.content} for msg in messages
         ]
 
         payload = {
             "model": override_model or self.model,
             "messages": ollama_messages,
             "stream": True,
-            "options": {}
+            "options": {},
         }
 
         if temperature is not None:
@@ -208,6 +209,7 @@ class OllamaProvider(LLMProvider):
                 for line in response.iter_lines():
                     if line:
                         import json
+
                         data = json.loads(line)
                         if "message" in data and "content" in data["message"]:
                             yield data["message"]["content"]
@@ -217,21 +219,13 @@ class OllamaProvider(LLMProvider):
 
     def get_model_info(self) -> Dict:
         """Get model information."""
-        return {
-            "provider": "ollama",
-            "model": self.model,
-            "base_url": self.base_url
-        }
+        return {"provider": "ollama", "model": self.model, "base_url": self.base_url}
 
 
 class OpenAIProvider(LLMProvider):
     """OpenAI LLM provider (GPT models)."""
 
-    def __init__(
-        self,
-        api_key: str = None,
-        model: str = None
-    ):
+    def __init__(self, api_key: str = None, model: str = None):
         """
         Initialize OpenAI provider.
 
@@ -253,7 +247,7 @@ class OpenAIProvider(LLMProvider):
         messages: List[Message],
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
-        **kwargs
+        **kwargs,
     ) -> LLMResponse:
         """Generate completion using OpenAI."""
         start_time = time.time()
@@ -263,8 +257,7 @@ class OpenAIProvider(LLMProvider):
 
         # Convert messages to OpenAI format
         openai_messages = [
-            {"role": msg.role, "content": msg.content}
-            for msg in messages
+            {"role": msg.role, "content": msg.content} for msg in messages
         ]
 
         params = {
@@ -290,10 +283,10 @@ class OpenAIProvider(LLMProvider):
                 usage={
                     "input_tokens": response.usage.prompt_tokens,
                     "output_tokens": response.usage.completion_tokens,
-                    "total_tokens": response.usage.total_tokens
+                    "total_tokens": response.usage.total_tokens,
                 },
                 finish_reason=response.choices[0].finish_reason,
-                response_time_seconds=response_time
+                response_time_seconds=response_time,
             )
 
         except Exception as e:
@@ -304,12 +297,11 @@ class OpenAIProvider(LLMProvider):
         messages: List[Message],
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
-        **kwargs
+        **kwargs,
     ) -> Iterator[str]:
         """Generate streaming completion using OpenAI."""
         openai_messages = [
-            {"role": msg.role, "content": msg.content}
-            for msg in messages
+            {"role": msg.role, "content": msg.content} for msg in messages
         ]
 
         params = {
@@ -336,20 +328,13 @@ class OpenAIProvider(LLMProvider):
 
     def get_model_info(self) -> Dict:
         """Get model information."""
-        return {
-            "provider": "openai",
-            "model": self.model
-        }
+        return {"provider": "openai", "model": self.model}
 
 
 class AnthropicProvider(LLMProvider):
     """Anthropic LLM provider (Claude models)."""
 
-    def __init__(
-        self,
-        api_key: str = None,
-        model: str = None
-    ):
+    def __init__(self, api_key: str = None, model: str = None):
         """
         Initialize Anthropic provider.
 
@@ -371,7 +356,7 @@ class AnthropicProvider(LLMProvider):
         messages: List[Message],
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
-        **kwargs
+        **kwargs,
     ) -> LLMResponse:
         """Generate completion using Anthropic."""
         start_time = time.time()
@@ -387,10 +372,7 @@ class AnthropicProvider(LLMProvider):
             if msg.role == "system":
                 system_message = msg.content
             else:
-                conversation_messages.append({
-                    "role": msg.role,
-                    "content": msg.content
-                })
+                conversation_messages.append({"role": msg.role, "content": msg.content})
 
         params = {
             "model": override_model or self.model,
@@ -416,10 +398,11 @@ class AnthropicProvider(LLMProvider):
                 usage={
                     "input_tokens": response.usage.input_tokens,
                     "output_tokens": response.usage.output_tokens,
-                    "total_tokens": response.usage.input_tokens + response.usage.output_tokens
+                    "total_tokens": response.usage.input_tokens
+                    + response.usage.output_tokens,
                 },
                 finish_reason=response.stop_reason,
-                response_time_seconds=response_time
+                response_time_seconds=response_time,
             )
 
         except Exception as e:
@@ -430,7 +413,7 @@ class AnthropicProvider(LLMProvider):
         messages: List[Message],
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
-        **kwargs
+        **kwargs,
     ) -> Iterator[str]:
         """Generate streaming completion using Anthropic."""
         # Extract system message
@@ -441,10 +424,7 @@ class AnthropicProvider(LLMProvider):
             if msg.role == "system":
                 system_message = msg.content
             else:
-                conversation_messages.append({
-                    "role": msg.role,
-                    "content": msg.content
-                })
+                conversation_messages.append({"role": msg.role, "content": msg.content})
 
         params = {
             "model": self.model,
@@ -469,10 +449,7 @@ class AnthropicProvider(LLMProvider):
 
     def get_model_info(self) -> Dict:
         """Get model information."""
-        return {
-            "provider": "anthropic",
-            "model": self.model
-        }
+        return {"provider": "anthropic", "model": self.model}
 
 
 class LLMService:
@@ -562,7 +539,7 @@ class LLMService:
         max_tokens: Optional[int] = None,
         retry: bool = True,
         model: Optional[str] = None,
-        **kwargs
+        **kwargs,
     ) -> LLMResponse:
         """
         Generate completion with automatic retry on failure.
@@ -584,7 +561,9 @@ class LLMService:
         Returns:
             LLMResponse object
         """
-        temperature = temperature if temperature is not None else settings.llm_temperature
+        temperature = (
+            temperature if temperature is not None else settings.llm_temperature
+        )
         max_tokens = max_tokens if max_tokens is not None else settings.llm_max_tokens
 
         # Select provider based on model name
@@ -614,7 +593,7 @@ class LLMService:
                 last_exception = e
                 if attempt < self.max_retries - 1:
                     # Exponential backoff
-                    wait_time = 2 ** attempt
+                    wait_time = 2**attempt
                     time.sleep(wait_time)
                     continue
                 else:
@@ -626,7 +605,7 @@ class LLMService:
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
         model: Optional[str] = None,
-        **kwargs
+        **kwargs,
     ) -> Iterator[str]:
         """
         Generate streaming completion.
@@ -643,13 +622,17 @@ class LLMService:
         Yields:
             Content chunks
         """
-        temperature = temperature if temperature is not None else settings.llm_temperature
+        temperature = (
+            temperature if temperature is not None else settings.llm_temperature
+        )
         max_tokens = max_tokens if max_tokens is not None else settings.llm_max_tokens
 
         # Select provider based on model name
         provider = self._get_provider_for_model(model)
 
-        yield from provider.stream_complete(messages, temperature, max_tokens, model=model, **kwargs)
+        yield from provider.stream_complete(
+            messages, temperature, max_tokens, model=model, **kwargs
+        )
 
     def get_model_info(self) -> Dict:
         """Get model information."""

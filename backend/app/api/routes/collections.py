@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 
-from app.core.auth import get_current_user
+from app.core.nextauth import get_current_user
 from app.db.base import get_db
 from app.models import Collection, CollectionVideo, Video, User
 from app.schemas import (

@@ -4,11 +4,11 @@ Admin API endpoints for user management and system monitoring.
 All routes require admin (superuser) authentication.
 """
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import List, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import func, and_, or_
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.core.admin_auth import get_admin_user
@@ -20,24 +20,118 @@ from app.models import (
     Conversation,
     Message,
     UserQuota,
-    UsageEvent,
     Chunk,
+    MessageChunkReference,
+    AdminAuditLog,
 )
 from app.schemas import (
-    UserSummary,
-    UserListResponse,
+    AdminCollectionOverview,
+    AdminVideoItem,
+    AdminVideoOverview,
+    ContentOverviewResponse,
+    ConversationDetailResponse,
+    ConversationListResponse,
+    ConversationMessage,
+    ConversationSummary,
+    DashboardResponse,
+    QASource,
+    QAFeedItem,
+    QAFeedResponse,
+    AuditLogItem,
+    AuditLogResponse,
+    QuotaOverrideRequest,
+    SystemStats,
+    UserCostBreakdown,
     UserDetail,
     UserDetailMetrics,
-    UserCostBreakdown,
-    UserUpdateRequest,
-    QuotaOverrideRequest,
-    DashboardResponse,
-    SystemStats,
     UserEngagementStats,
+    UserListResponse,
+    UserSummary,
+    UserUpdateRequest,
+    AbuseAlertResponse,
 )
 from app.services.usage_tracker import UsageTracker
 
 router = APIRouter()
+
+
+def _estimate_response_cost(
+    input_tokens: Optional[int], output_tokens: Optional[int]
+) -> Optional[float]:
+    """
+    Estimate LLM cost for a single answer using the same pricing assumptions
+    used elsewhere in the admin panel.
+    """
+    if not input_tokens and not output_tokens:
+        return None
+
+    input_tokens = input_tokens or 0
+    output_tokens = output_tokens or 0
+
+    llm_input_cost = (input_tokens / 1_000_000) * 3.0
+    llm_output_cost = (output_tokens / 1_000_000) * 15.0
+    total = llm_input_cost + llm_output_cost
+    return round(total, 4)
+
+
+def _safe_snippet(text: Optional[str], max_length: int = 220) -> Optional[str]:
+    """Return a short, display-friendly snippet."""
+    if not text:
+        return None
+    if len(text) <= max_length:
+        return text
+    return text[: max_length - 1] + "…"
+
+
+def _extract_flags(metadata: Optional[dict]) -> List[str]:
+    """Collect any moderation/safety flags stored on a message."""
+    flags: List[str] = []
+    if not isinstance(metadata, dict):
+        return flags
+
+    for key in ("flags", "moderation_flags", "safety_flags"):
+        value = metadata.get(key)
+        if isinstance(value, list):
+            flags.extend(str(v) for v in value)
+        elif isinstance(value, str):
+            flags.append(value)
+
+    if metadata.get("had_error"):
+        flags.append("error")
+    if metadata.get("pii_detected"):
+        flags.append("pii_detected")
+
+    return sorted(set(flags))
+
+
+def _load_sources(
+    db: Session, message_id: UUID, limit: int = 5
+) -> List[QASource]:
+    """Load a limited set of chunk references for an assistant message."""
+    refs = (
+        db.query(MessageChunkReference, Chunk, Video)
+        .join(Chunk, MessageChunkReference.chunk_id == Chunk.id)
+        .join(Video, Chunk.video_id == Video.id)
+        .filter(MessageChunkReference.message_id == message_id)
+        .order_by(MessageChunkReference.rank.asc())
+        .limit(limit)
+        .all()
+    )
+
+    sources: List[QASource] = []
+    for ref, chunk, video in refs:
+        sources.append(
+            QASource(
+                chunk_id=chunk.id,
+                video_id=chunk.video_id,
+                video_title=video.title,
+                score=ref.relevance_score,
+                snippet=_safe_snippet(chunk.text),
+                start_timestamp=chunk.start_timestamp,
+                end_timestamp=chunk.end_timestamp,
+            )
+        )
+    return sources
 
 
 def calculate_user_metrics(db: Session, user_id: UUID) -> UserDetailMetrics:
@@ -53,8 +147,7 @@ def calculate_user_metrics(db: Session, user_id: UUID) -> UserDetailMetrics:
     """
     # Video metrics
     videos_query = db.query(Video).filter(
-        Video.user_id == user_id,
-        Video.is_deleted == False  # noqa: E712
+        Video.user_id == user_id, Video.is_deleted.is_(False)  # noqa: E712
     )
     videos_total = videos_query.count()
     videos_completed = videos_query.filter(Video.status == "completed").count()
@@ -66,11 +159,14 @@ def calculate_user_metrics(db: Session, user_id: UUID) -> UserDetailMetrics:
     total_minutes = (
         videos_query.with_entities(func.sum(Video.duration_seconds))
         .filter(Video.status == "completed")
-        .scalar() or 0
+        .scalar()
+        or 0
     ) / 60.0
 
     # Collection metrics
-    collections_total = db.query(Collection).filter(Collection.user_id == user_id).count()
+    collections_total = (
+        db.query(Collection).filter(Collection.user_id == user_id).count()
+    )
     collections_with_videos = (
         db.query(Collection)
         .join(Collection.collection_videos)
@@ -88,22 +184,16 @@ def calculate_user_metrics(db: Session, user_id: UUID) -> UserDetailMetrics:
 
     # Message metrics
     messages_query = (
-        db.query(Message)
-        .join(Conversation)
-        .filter(Conversation.user_id == user_id)
+        db.query(Message).join(Conversation).filter(Conversation.user_id == user_id)
     )
-    messages_total = messages_query.count()
     messages_sent = messages_query.filter(Message.role == "user").count()
     messages_received = messages_query.filter(Message.role == "assistant").count()
 
     # Token metrics
-    token_stats = (
-        messages_query.with_entities(
-            func.sum(Message.input_tokens).label("input"),
-            func.sum(Message.output_tokens).label("output"),
-        )
-        .first()
-    )
+    token_stats = messages_query.with_entities(
+        func.sum(Message.input_tokens).label("input"),
+        func.sum(Message.output_tokens).label("output"),
+    ).first()
     input_tokens = int(token_stats.input or 0)
     output_tokens = int(token_stats.output or 0)
     total_tokens = input_tokens + output_tokens
@@ -145,7 +235,9 @@ def calculate_user_metrics(db: Session, user_id: UUID) -> UserDetailMetrics:
     )
 
 
-def calculate_user_costs(db: Session, user_id: UUID, metrics: UserDetailMetrics) -> UserCostBreakdown:
+def calculate_user_costs(
+    db: Session, user_id: UUID, metrics: UserDetailMetrics
+) -> UserCostBreakdown:
     """
     Calculate cost breakdown for a user based on usage.
 
@@ -179,10 +271,9 @@ def calculate_user_costs(db: Session, user_id: UUID, metrics: UserDetailMetrics)
     embedding_cost = (embedding_tokens / 1_000_000) * EMBEDDING_COST_PER_1M_TOKENS
 
     # LLM costs
-    llm_cost = (
-        (metrics.input_tokens / 1_000_000) * LLM_INPUT_COST_PER_1M +
-        (metrics.output_tokens / 1_000_000) * LLM_OUTPUT_COST_PER_1M
-    )
+    llm_cost = (metrics.input_tokens / 1_000_000) * LLM_INPUT_COST_PER_1M + (
+        metrics.output_tokens / 1_000_000
+    ) * LLM_OUTPUT_COST_PER_1M
 
     # Storage cost (monthly)
     storage_gb = metrics.storage_mb / 1024.0
@@ -202,7 +293,11 @@ def calculate_user_costs(db: Session, user_id: UUID, metrics: UserDetailMetrics)
     subscription_revenue = tier_revenue.get(user.subscription_tier.lower(), 0.0)
 
     net_profit = subscription_revenue - total_cost
-    profit_margin = (net_profit / subscription_revenue * 100) if subscription_revenue > 0 else -100.0
+    profit_margin = (
+        (net_profit / subscription_revenue * 100)
+        if subscription_revenue > 0
+        else -100.0
+    )
 
     return UserCostBreakdown(
         transcription_cost=round(transcription_cost, 4),
@@ -234,12 +329,13 @@ async def get_admin_dashboard(
     # User stats
     total_users = db.query(User).count()
     active_users = db.query(User).filter(User.is_active == True).count()  # noqa: E712
+    inactive_users = total_users - active_users
 
     # New users this month
-    month_start = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    new_users_this_month = (
-        db.query(User).filter(User.created_at >= month_start).count()
+    month_start = datetime.utcnow().replace(
+        day=1, hour=0, minute=0, second=0, microsecond=0
     )
+    new_users_this_month = db.query(User).filter(User.created_at >= month_start).count()
 
     # Subscription tier breakdown
     tier_counts = (
@@ -250,20 +346,22 @@ async def get_admin_dashboard(
     tier_dict = {tier: count for tier, count in tier_counts}
 
     # Content stats
-    total_videos = db.query(Video).filter(Video.is_deleted == False).count()  # noqa: E712
+    total_videos = db.query(Video).filter(Video.is_deleted.is_(False)).count()
     total_videos_completed = (
         db.query(Video)
-        .filter(Video.is_deleted == False, Video.status == "completed")  # noqa: E712
+        .filter(Video.is_deleted.is_(False), Video.status == "completed")
         .count()
     )
     total_videos_processing = (
         db.query(Video)
-        .filter(Video.is_deleted == False, Video.status.notin_(["completed", "failed"]))  # noqa: E712
+        .filter(
+            Video.is_deleted.is_(False), Video.status.notin_(["completed", "failed"])
+        )
         .count()
     )
     total_videos_failed = (
         db.query(Video)
-        .filter(Video.is_deleted == False, Video.status == "failed")  # noqa: E712
+        .filter(Video.is_deleted.is_(False), Video.status == "failed")  # noqa: E712
         .count()
     )
 
@@ -274,19 +372,23 @@ async def get_admin_dashboard(
     # Usage stats
     total_minutes = (
         db.query(func.sum(Video.duration_seconds))
-        .filter(Video.is_deleted == False, Video.status == "completed")  # noqa: E712
-        .scalar() or 0
+        .filter(Video.is_deleted.is_(False), Video.status == "completed")  # noqa: E712
+        .scalar()
+        or 0
     ) / 60.0
 
     total_tokens = (
-        db.query(func.sum(Message.input_tokens) + func.sum(Message.output_tokens))
-        .scalar() or 0
+        db.query(
+            func.sum(Message.input_tokens) + func.sum(Message.output_tokens)
+        ).scalar()
+        or 0
     )
 
     total_storage_mb = (
         db.query(func.sum(Video.audio_file_size_mb))
-        .filter(Video.is_deleted == False)  # noqa: E712
-        .scalar() or 0.0
+        .filter(Video.is_deleted.is_(False))  # noqa: E712
+        .scalar()
+        or 0.0
     )
 
     # Engagement stats
@@ -342,6 +444,7 @@ async def get_admin_dashboard(
     system_stats = SystemStats(
         total_users=total_users,
         active_users=active_users,
+        inactive_users=inactive_users,
         new_users_this_month=new_users_this_month,
         churned_users_this_month=0,  # TODO: Track churned users
         users_free=tier_dict.get("free", 0),
@@ -349,7 +452,11 @@ async def get_admin_dashboard(
         users_pro=tier_dict.get("pro", 0),
         users_business=tier_dict.get("business", 0),
         users_enterprise=tier_dict.get("enterprise", 0),
+        users_by_tier=tier_dict,
         total_videos=total_videos,
+        videos_completed=total_videos_completed,
+        videos_processing=total_videos_processing,
+        videos_failed=total_videos_failed,
         total_videos_completed=total_videos_completed,
         total_videos_processing=total_videos_processing,
         total_videos_failed=total_videos_failed,
@@ -383,7 +490,9 @@ async def list_users(
     page_size: int = Query(20, ge=1, le=100),
     search: Optional[str] = Query(None, description="Search by email or name"),
     tier: Optional[str] = Query(None, description="Filter by subscription tier"),
-    status: Optional[str] = Query(None, description="Filter by account status: active, inactive"),
+    status: Optional[str] = Query(
+        None, description="Filter by account status: active, inactive"
+    ),
     db: Session = Depends(get_db),
     admin_user: User = Depends(get_admin_user),
 ):
@@ -424,27 +533,34 @@ async def list_users(
     user_summaries = []
     for user in users:
         # Get basic aggregates
-        video_count = db.query(Video).filter(
-            Video.user_id == user.id,
-            Video.is_deleted == False  # noqa: E712
-        ).count()
+        video_count = (
+            db.query(Video)
+            .filter(Video.user_id == user.id, Video.is_deleted.is_(False))  # noqa: E712
+            .count()
+        )
 
-        collection_count = db.query(Collection).filter(Collection.user_id == user.id).count()
+        collection_count = (
+            db.query(Collection).filter(Collection.user_id == user.id).count()
+        )
 
-        conversation_count = db.query(Conversation).filter(Conversation.user_id == user.id).count()
+        conversation_count = (
+            db.query(Conversation).filter(Conversation.user_id == user.id).count()
+        )
 
         message_count = (
             db.query(func.count(Message.id))
             .join(Conversation)
             .filter(Conversation.user_id == user.id)
-            .scalar() or 0
+            .scalar()
+            or 0
         )
 
         token_sum = (
             db.query(func.sum(Message.input_tokens) + func.sum(Message.output_tokens))
             .join(Conversation)
             .filter(Conversation.user_id == user.id)
-            .scalar() or 0
+            .scalar()
+            or 0
         )
 
         # Get quota for storage
@@ -470,7 +586,8 @@ async def list_users(
                 id=user.id,
                 email=user.email,
                 full_name=user.full_name,
-                clerk_user_id=user.clerk_user_id,
+                oauth_provider=user.oauth_provider,
+                oauth_provider_id=user.oauth_provider_id,
                 subscription_tier=user.subscription_tier,
                 subscription_status=user.subscription_status,
                 is_active=user.is_active,
@@ -525,7 +642,8 @@ async def get_user_detail(
         id=user.id,
         email=user.email,
         full_name=user.full_name,
-        clerk_user_id=user.clerk_user_id,
+        oauth_provider=user.oauth_provider,
+                oauth_provider_id=user.oauth_provider_id,
         subscription_tier=user.subscription_tier,
         subscription_status=user.subscription_status,
         is_active=user.is_active,
@@ -583,7 +701,8 @@ async def update_user(
         id=user.id,
         email=user.email,
         full_name=user.full_name,
-        clerk_user_id=user.clerk_user_id,
+        oauth_provider=user.oauth_provider,
+                oauth_provider_id=user.oauth_provider_id,
         subscription_tier=user.subscription_tier,
         subscription_status=user.subscription_status,
         is_active=user.is_active,
@@ -647,7 +766,8 @@ async def override_user_quota(
         id=user.id,
         email=user.email,
         full_name=user.full_name,
-        clerk_user_id=user.clerk_user_id,
+        oauth_provider=user.oauth_provider,
+                oauth_provider_id=user.oauth_provider_id,
         subscription_tier=user.subscription_tier,
         subscription_status=user.subscription_status,
         is_active=user.is_active,
@@ -660,3 +780,408 @@ async def override_user_quota(
         costs=costs,
         admin_notes_count=0,
     )
+
+
+@router.get("/qa-feed", response_model=QAFeedResponse)
+async def get_qa_feed(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    user_id: Optional[UUID] = Query(None, description="Filter by user"),
+    conversation_id: Optional[UUID] = Query(None, description="Filter by conversation"),
+    collection_id: Optional[UUID] = Query(None, description="Filter by collection"),
+    search: Optional[str] = Query(None, description="Search question text"),
+    start: Optional[datetime] = Query(None, description="Start datetime"),
+    end: Optional[datetime] = Query(None, description="End datetime"),
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_admin_user),
+):
+    """
+    Return a paginated question/answer feed for admin monitoring.
+
+    Read-only and scoped to admin users.
+    """
+    query = (
+        db.query(Message)
+        .join(Conversation)
+        .join(User, Conversation.user_id == User.id)
+        .filter(Message.role == "user")
+    )
+
+    if user_id:
+        query = query.filter(Conversation.user_id == user_id)
+    if conversation_id:
+        query = query.filter(Message.conversation_id == conversation_id)
+    if collection_id:
+        query = query.filter(Conversation.collection_id == collection_id)
+    if start:
+        query = query.filter(Message.created_at >= start)
+    if end:
+        query = query.filter(Message.created_at <= end)
+    if search:
+        query = query.filter(Message.content.ilike(f"%{search}%"))
+
+    total = query.count()
+    offset = (page - 1) * page_size
+
+    questions = (
+        query.order_by(Message.created_at.desc())
+        .offset(offset)
+        .limit(page_size)
+        .all()
+    )
+
+    items: List[QAFeedItem] = []
+    for question in questions:
+        answer = (
+            db.query(Message)
+            .filter(
+                Message.conversation_id == question.conversation_id,
+                Message.role == "assistant",
+                Message.created_at >= question.created_at,
+            )
+            .order_by(Message.created_at.asc())
+            .first()
+        )
+
+        response_latency_ms: Optional[float] = None
+        cost_usd: Optional[float] = None
+        input_tokens: Optional[int] = None
+        output_tokens: Optional[int] = None
+        sources: List[QASource] = []
+        answer_id: Optional[UUID] = None
+        answered_at: Optional[datetime] = None
+        flags: List[str] = []
+
+        if answer:
+            answer_id = answer.id
+            answered_at = answer.created_at
+            response_latency_ms = (
+                answer.response_time_seconds * 1000
+                if answer.response_time_seconds is not None
+                else (answer.created_at - question.created_at).total_seconds() * 1000
+            )
+            input_tokens = answer.input_tokens
+            output_tokens = answer.output_tokens
+            cost_usd = _estimate_response_cost(input_tokens, output_tokens)
+            sources = _load_sources(db, answer.id)
+            flags = _extract_flags(answer.message_metadata)
+
+        conversation = question.conversation
+        user_email = getattr(conversation.user, "email", None)
+
+        items.append(
+            QAFeedItem(
+                qa_id=answer_id or question.id,
+                question_id=question.id,
+                answer_id=answer_id,
+                user_id=conversation.user_id,
+                user_email=user_email,
+                conversation_id=conversation.id,
+                collection_id=conversation.collection_id,
+                question=question.content,
+                answer=answer.content if answer else None,
+                asked_at=question.created_at,
+                answered_at=answered_at,
+                response_latency_ms=response_latency_ms,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cost_usd=cost_usd,
+                flags=flags,
+                sources=sources,
+            )
+        )
+
+    return QAFeedResponse(
+        total=total,
+        page=page,
+        page_size=page_size,
+        items=items,
+    )
+
+
+@router.get("/audit/messages", response_model=AuditLogResponse)
+async def list_audit_messages(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    event_type: str = Query("chat_message", description="Filter by audit event type"),
+    user_id: Optional[UUID] = Query(None, description="Filter by user"),
+    conversation_id: Optional[UUID] = Query(None, description="Filter by conversation"),
+    role: Optional[str] = Query(None, description="Filter by message role"),
+    has_flags: Optional[bool] = Query(None, description="Only entries with flags"),
+    search: Optional[str] = Query(None, description="Search content"),
+    start: Optional[datetime] = Query(None, description="Start datetime"),
+    end: Optional[datetime] = Query(None, description="End datetime"),
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_admin_user),
+):
+    """
+    Return paginated audit log events for chat monitoring.
+    """
+    query = db.query(AdminAuditLog, User.email).outerjoin(User, AdminAuditLog.user_id == User.id)
+
+    if event_type:
+        query = query.filter(AdminAuditLog.event_type == event_type)
+    if user_id:
+        query = query.filter(AdminAuditLog.user_id == user_id)
+    if conversation_id:
+        query = query.filter(AdminAuditLog.conversation_id == conversation_id)
+    if role:
+        query = query.filter(AdminAuditLog.role == role)
+    if start:
+        query = query.filter(AdminAuditLog.created_at >= start)
+    if end:
+        query = query.filter(AdminAuditLog.created_at <= end)
+    if search:
+        query = query.filter(AdminAuditLog.content.ilike(f"%{search}%"))
+    if has_flags is True:
+        query = query.filter(
+            AdminAuditLog.flags.isnot(None),
+            func.cardinality(AdminAuditLog.flags) > 0,
+        )
+    elif has_flags is False:
+        query = query.filter(
+            or_(AdminAuditLog.flags.is_(None), func.cardinality(AdminAuditLog.flags) == 0)
+        )
+
+    total = query.count()
+    offset = (page - 1) * page_size
+    rows = (
+        query.order_by(AdminAuditLog.created_at.desc())
+        .offset(offset)
+        .limit(page_size)
+        .all()
+    )
+
+    items: List[AuditLogItem] = []
+    for log, email in rows:
+        items.append(
+            AuditLogItem(
+                id=log.id,
+                event_type=log.event_type,
+                user_id=log.user_id,
+                user_email=email,
+                conversation_id=log.conversation_id,
+                message_id=log.message_id,
+                role=log.role,
+                content=log.content,
+                token_count=log.token_count,
+                input_tokens=log.input_tokens,
+                output_tokens=log.output_tokens,
+                flags=log.flags or [],
+                created_at=log.created_at,
+                ip_hash=log.ip_hash,
+                user_agent=log.user_agent,
+                metadata=log.message_metadata or {},
+            )
+        )
+
+    return AuditLogResponse(
+        total=total,
+        page=page,
+        page_size=page_size,
+        items=items,
+    )
+
+
+@router.get("/conversations", response_model=ConversationListResponse)
+async def list_admin_conversations(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    user_id: Optional[UUID] = Query(None, description="Filter by user"),
+    collection_id: Optional[UUID] = Query(None, description="Filter by collection"),
+    search: Optional[str] = Query(None, description="Search conversation title"),
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_admin_user),
+):
+    """
+    List conversations for admin review.
+    """
+    query = db.query(Conversation, User.email).join(
+        User, Conversation.user_id == User.id
+    )
+
+    if user_id:
+        query = query.filter(Conversation.user_id == user_id)
+    if collection_id:
+        query = query.filter(Conversation.collection_id == collection_id)
+    if search:
+        query = query.filter(Conversation.title.ilike(f"%{search}%"))
+
+    total = query.count()
+    offset = (page - 1) * page_size
+    rows = (
+        query.order_by(Conversation.created_at.desc())
+        .offset(offset)
+        .limit(page_size)
+        .all()
+    )
+
+    conversations: List[ConversationSummary] = []
+    for conversation, email in rows:
+        conversations.append(
+            ConversationSummary(
+                id=conversation.id,
+                user_id=conversation.user_id,
+                user_email=email,
+                title=conversation.title,
+                collection_id=conversation.collection_id,
+                message_count=conversation.message_count,
+                total_tokens=conversation.total_tokens_used or 0,
+                started_at=conversation.created_at,
+                last_message_at=conversation.last_message_at,
+            )
+        )
+
+    return ConversationListResponse(
+        total=total,
+        page=page,
+        page_size=page_size,
+        conversations=conversations,
+    )
+
+
+@router.get(
+    "/conversations/{conversation_id}", response_model=ConversationDetailResponse
+)
+async def get_admin_conversation_detail(
+    conversation_id: UUID,
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_admin_user),
+):
+    """
+    Return the full timeline for a conversation.
+    """
+    record = (
+        db.query(Conversation, User.email)
+        .join(User, Conversation.user_id == User.id)
+        .filter(Conversation.id == conversation_id)
+        .first()
+    )
+    if not record:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found"
+        )
+
+    conversation, email = record
+    messages = (
+        db.query(Message)
+        .filter(Message.conversation_id == conversation_id)
+        .order_by(Message.created_at.asc())
+        .all()
+    )
+
+    timeline: List[ConversationMessage] = []
+    for msg in messages:
+        sources = _load_sources(db, msg.id) if msg.role == "assistant" else []
+        timeline.append(
+            ConversationMessage(
+                id=msg.id,
+                role=msg.role,
+                content=msg.content,
+                created_at=msg.created_at,
+                input_tokens=msg.input_tokens,
+                output_tokens=msg.output_tokens,
+                response_time_seconds=msg.response_time_seconds,
+                sources=sources,
+            )
+        )
+
+    return ConversationDetailResponse(
+        id=conversation.id,
+        user_id=conversation.user_id,
+        user_email=email,
+        title=conversation.title,
+        collection_id=conversation.collection_id,
+        message_count=conversation.message_count,
+        total_tokens=conversation.total_tokens_used or 0,
+        created_at=conversation.created_at,
+        updated_at=conversation.updated_at,
+        last_message_at=conversation.last_message_at,
+        messages=timeline,
+    )
+
+
+@router.get("/content/overview", response_model=ContentOverviewResponse)
+async def get_content_overview(
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_admin_user),
+):
+    """
+    Lightweight content overview for admin dashboard.
+    """
+    base_videos = db.query(Video).filter(Video.is_deleted.is_(False))
+    total_videos = base_videos.count()
+    completed = base_videos.filter(Video.status == "completed").count()
+    failed = base_videos.filter(Video.status == "failed").count()
+    processing = base_videos.filter(
+        Video.status.notin_(["completed", "failed"])
+    ).count()
+    queued = base_videos.filter(Video.status == "pending").count()
+
+    recent_videos = (
+        db.query(Video, User.email)
+        .join(User, Video.user_id == User.id)
+        .filter(Video.is_deleted.is_(False))
+        .order_by(Video.created_at.desc())
+        .limit(8)
+        .all()
+    )
+    recent_items = [
+        AdminVideoItem(
+            id=video.id,
+            title=video.title,
+            user_email=email,
+            status=video.status,
+            progress_percent=video.progress_percent or 0.0,
+            error_message=video.error_message,
+            created_at=video.created_at,
+            updated_at=video.updated_at,
+        )
+        for video, email in recent_videos
+    ]
+
+    total_collections = db.query(Collection).count()
+    with_videos = (
+        db.query(func.count(func.distinct(Collection.id)))
+        .join(Collection.collection_videos)
+        .scalar()
+        or 0
+    )
+    empty = max(total_collections - with_videos, 0)
+    recent_created_rows = (
+        db.query(Collection.id)
+        .order_by(Collection.created_at.desc())
+        .limit(10)
+        .all()
+    )
+    recent_created = [row.id for row in recent_created_rows]
+
+    return ContentOverviewResponse(
+        videos=AdminVideoOverview(
+            total=total_videos,
+            completed=completed,
+            processing=processing,
+            failed=failed,
+            queued=queued,
+            recent=recent_items,
+        ),
+        collections=AdminCollectionOverview(
+            total=total_collections,
+            with_videos=with_videos,
+            empty=empty,
+            recent_created=recent_created,
+        ),
+    )
+
+
+@router.get("/alerts", response_model=AbuseAlertResponse)
+async def get_admin_alerts(
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_admin_user),
+):
+    """
+    Placeholder alerts endpoint for admin review.
+
+    Returns an empty list until alerting is implemented.
+    """
+    return AbuseAlertResponse(total=0, alerts=[])

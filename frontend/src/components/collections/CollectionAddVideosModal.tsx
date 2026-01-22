@@ -33,11 +33,11 @@ export function CollectionAddVideosModal({
   const [error, setError] = useState("");
   const queryClient = useQueryClient();
 
-  const { data, isLoading } = useQuery({
-    queryKey: ["videos", "collection-add"],
-    queryFn: () => videosApi.list(0, 200),
+  const { data, isLoading, error: queryError } = useQuery({
+    queryKey: ["videos-completed-for-collection"],
+    queryFn: () => videosApi.list(0, 100, "completed"),
     enabled: open,
-    staleTime: 1000 * 60 * 3,
+    staleTime: 0, // Always fetch fresh data when modal opens
   });
 
   const addMutation = useMutation({
@@ -126,10 +126,14 @@ export function CollectionAddVideosModal({
               <div className="py-8 text-center text-sm text-muted-foreground">
                 Loading videos...
               </div>
+            ) : queryError ? (
+              <div className="py-8 text-center text-sm text-destructive">
+                Failed to load videos. Please try again.
+              </div>
             ) : filteredVideos.length === 0 ? (
               <div className="py-8 text-center text-sm text-muted-foreground">
                 {videos.length === 0
-                  ? "Add a video to your library first."
+                  ? "No completed videos yet. Videos are ready to add once processing finishes."
                   : "No videos were found for that search term."}
               </div>
             ) : (
@@ -142,13 +146,17 @@ export function CollectionAddVideosModal({
                   <label
                     key={video.id}
                     htmlFor={checkboxId}
-                    className="flex cursor-pointer flex-col rounded-lg border p-3 transition hover:border-primary/60"
+                    className={`flex flex-col rounded-lg border p-3 transition ${
+                      alreadyAdded
+                        ? "cursor-default border-green-200 bg-green-50/50"
+                        : "cursor-pointer hover:border-primary/60"
+                    }`}
                   >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex items-start gap-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-3">
                         <Checkbox
                           id={checkboxId}
-                          checked={isSelected}
+                          checked={alreadyAdded || isSelected}
                           onCheckedChange={(checked) => {
                             if (alreadyAdded) return;
                             if (checked) {
@@ -162,23 +170,25 @@ export function CollectionAddVideosModal({
                             }
                           }}
                           disabled={alreadyAdded || addMutation.isPending}
+                          className={alreadyAdded ? "opacity-50" : ""}
                         />
-                        <div>
-                          <p className="text-sm font-medium text-foreground">{video.title}</p>
+                        <div className="min-w-0 flex-1">
+                          <p className={`text-sm font-medium ${alreadyAdded ? "text-muted-foreground" : "text-foreground"}`}>
+                            {video.title}
+                          </p>
                           <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                             <span>{formatDuration(video.duration_seconds)}</span>
-                            <span className="capitalize">{video.status}</span>
                           </div>
                         </div>
                       </div>
                       {alreadyAdded && (
-                        <Badge variant="outline" className="text-xs">
-                          Already in collection
+                        <Badge variant="outline" className="shrink-0 whitespace-nowrap border-green-300 bg-green-100 text-xs text-green-700">
+                          Added
                         </Badge>
                       )}
                     </div>
                     {video.tags.length > 0 && (
-                      <div className="mt-3 flex flex-wrap gap-2">
+                      <div className="mt-3 flex flex-wrap gap-2 pl-7">
                         {video.tags.map((tag) => (
                           <Badge key={tag} variant="secondary" className="text-[11px]">
                             #{tag}

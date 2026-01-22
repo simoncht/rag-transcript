@@ -9,6 +9,7 @@ Tracks:
 
 Enforces quotas before operations and logs all billable events.
 """
+import logging
 from typing import Optional, Dict
 from uuid import UUID
 from datetime import datetime, timedelta
@@ -18,9 +19,12 @@ from sqlalchemy.orm import Session
 from app.models import UsageEvent, UserQuota, User
 from app.core.config import settings
 
+logger = logging.getLogger(__name__)
+
 
 class QuotaExceededError(Exception):
     """Raised when a user exceeds their quota."""
+
     def __init__(self, quota_type: str, used: float, limit: float):
         self.quota_type = quota_type
         self.used = used
@@ -121,7 +125,7 @@ class UsageTracker:
                 "messages": 999999,
                 "storage_mb": Decimal(100000),  # 100 GB
                 "embedding_tokens": None,
-            }
+            },
         }
 
         limits = tier_limits.get(tier, tier_limits["free"])
@@ -157,20 +161,36 @@ class UsageTracker:
         Raises:
             QuotaExceededError: If quota exceeded
         """
+        # Admin users bypass all quotas
+        user = self.db.query(User).filter(User.id == user_id).first()
+        if user and user.is_superuser:
+            logger.info(f"Admin user {user_id} bypassing {quota_type} quota check in usage_tracker")
+            return True
+
         quota = self._get_or_create_quota(user_id)
 
         if quota_type == "videos":
             if quota.videos_used + amount > quota.videos_limit:
-                raise QuotaExceededError("videos", quota.videos_used, quota.videos_limit)
+                raise QuotaExceededError(
+                    "videos", quota.videos_used, quota.videos_limit
+                )
         elif quota_type == "minutes":
             if quota.minutes_used + Decimal(amount) > quota.minutes_limit:
-                raise QuotaExceededError("minutes", float(quota.minutes_used), float(quota.minutes_limit))
+                raise QuotaExceededError(
+                    "minutes", float(quota.minutes_used), float(quota.minutes_limit)
+                )
         elif quota_type == "messages":
             if quota.messages_used + amount > quota.messages_limit:
-                raise QuotaExceededError("messages", quota.messages_used, quota.messages_limit)
+                raise QuotaExceededError(
+                    "messages", quota.messages_used, quota.messages_limit
+                )
         elif quota_type == "storage":
             if quota.storage_mb_used + Decimal(amount) > quota.storage_mb_limit:
-                raise QuotaExceededError("storage_mb", float(quota.storage_mb_used), float(quota.storage_mb_limit))
+                raise QuotaExceededError(
+                    "storage_mb",
+                    float(quota.storage_mb_used),
+                    float(quota.storage_mb_limit),
+                )
 
         return True
 
@@ -179,7 +199,7 @@ class UsageTracker:
         user_id: UUID,
         video_id: UUID,
         duration_seconds: float,
-        audio_size_mb: float
+        audio_size_mb: float,
     ):
         """
         Track video ingestion event.
@@ -220,7 +240,7 @@ class UsageTracker:
         video_id: UUID,
         duration_seconds: float,
         chunk_count: int,
-        model_used: str
+        model_used: str,
     ):
         """
         Track transcription completion.
@@ -256,7 +276,7 @@ class UsageTracker:
         message_id: UUID,
         tokens_in: int,
         tokens_out: int,
-        chunks_retrieved: int
+        chunks_retrieved: int,
     ):
         """
         Track chat message sent.
@@ -295,7 +315,7 @@ class UsageTracker:
         user_id: UUID,
         chunk_count: int,
         model_used: str,
-        embedding_dimensions: int
+        embedding_dimensions: int,
     ):
         """
         Track embedding generation (relevant for API-based embeddings).
@@ -372,6 +392,42 @@ class UsageTracker:
         """
         quota = self._get_or_create_quota(user_id)
 
+        # Check if user is admin - admins get unlimited quotas
+        user = self.db.query(User).filter(User.id == user_id).first()
+        is_admin = user and user.is_superuser
+
+        if is_admin:
+            logger.info(f"Admin user {user_id} returning unlimited usage summary limits")
+            # Return unlimited limits for admins
+            return {
+                "period_start": quota.quota_period_start.isoformat(),
+                "period_end": quota.quota_period_end.isoformat(),
+                "videos": {
+                    "used": quota.videos_used,
+                    "limit": -1,
+                    "remaining": -1,
+                    "percentage": 0,
+                },
+                "minutes": {
+                    "used": float(quota.minutes_used),
+                    "limit": -1,
+                    "remaining": -1,
+                    "percentage": 0,
+                },
+                "messages": {
+                    "used": quota.messages_used,
+                    "limit": -1,
+                    "remaining": -1,
+                    "percentage": 0,
+                },
+                "storage_mb": {
+                    "used": float(quota.storage_mb_used),
+                    "limit": -1,
+                    "remaining": -1,
+                    "percentage": 0,
+                },
+            }
+
         return {
             "period_start": quota.quota_period_start.isoformat(),
             "period_end": quota.quota_period_end.isoformat(),
@@ -379,24 +435,36 @@ class UsageTracker:
                 "used": quota.videos_used,
                 "limit": quota.videos_limit,
                 "remaining": quota.remaining_quota("videos"),
-                "percentage": (quota.videos_used / quota.videos_limit * 100) if quota.videos_limit > 0 else 0,
+                "percentage": (quota.videos_used / quota.videos_limit * 100)
+                if quota.videos_limit > 0
+                else 0,
             },
             "minutes": {
                 "used": float(quota.minutes_used),
                 "limit": float(quota.minutes_limit),
                 "remaining": quota.remaining_quota("minutes"),
-                "percentage": (float(quota.minutes_used) / float(quota.minutes_limit) * 100) if quota.minutes_limit > 0 else 0,
+                "percentage": (
+                    float(quota.minutes_used) / float(quota.minutes_limit) * 100
+                )
+                if quota.minutes_limit > 0
+                else 0,
             },
             "messages": {
                 "used": quota.messages_used,
                 "limit": quota.messages_limit,
                 "remaining": quota.remaining_quota("messages"),
-                "percentage": (quota.messages_used / quota.messages_limit * 100) if quota.messages_limit > 0 else 0,
+                "percentage": (quota.messages_used / quota.messages_limit * 100)
+                if quota.messages_limit > 0
+                else 0,
             },
             "storage_mb": {
                 "used": float(quota.storage_mb_used),
                 "limit": float(quota.storage_mb_limit),
                 "remaining": quota.remaining_quota("storage"),
-                "percentage": (float(quota.storage_mb_used) / float(quota.storage_mb_limit) * 100) if quota.storage_mb_limit > 0 else 0,
+                "percentage": (
+                    float(quota.storage_mb_used) / float(quota.storage_mb_limit) * 100
+                )
+                if quota.storage_mb_limit > 0
+                else 0,
             },
         }

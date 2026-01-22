@@ -12,7 +12,6 @@ from abc import ABC, abstractmethod
 from typing import List, Dict, Optional
 import numpy as np
 from functools import lru_cache
-import hashlib
 
 from app.core.config import settings
 
@@ -90,7 +89,6 @@ class SentenceTransformerEmbedding(EmbeddingProvider):
         Args:
             model_name: Model name (defaults to settings.embedding_model)
         """
-        # SSL bypass is handled globally in app.core.ssl_patch
         from sentence_transformers import SentenceTransformer
 
         self.model_name = model_name or settings.embedding_model
@@ -109,7 +107,7 @@ class SentenceTransformerEmbedding(EmbeddingProvider):
             texts,
             convert_to_numpy=True,
             batch_size=settings.embedding_batch_size,
-            show_progress_bar=False
+            show_progress_bar=False,
         )
         # Normalize all embeddings
         return [self._normalize(emb) for emb in embeddings]
@@ -142,10 +140,11 @@ class BertEmbedding(EmbeddingProvider):
     def __init__(self, model_name: str = None):
         """Initialize BERT model."""
         from transformers import AutoModel, AutoTokenizer
-        import torch
 
         self.model_name = model_name or settings.embedding_model
-        self.tokenizer = AutoTokenizer.from_pretrained(self.model_name, local_files_only=True)
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            self.model_name, local_files_only=True
+        )
         self.model = AutoModel.from_pretrained(self.model_name, local_files_only=True)
         self.model.eval()  # Set to evaluation mode
         self.dimensions = self.model.config.hidden_size
@@ -157,10 +156,10 @@ class BertEmbedding(EmbeddingProvider):
 
         inputs = self.tokenizer(
             text,
-            return_tensors='pt',
+            return_tensors="pt",
             padding=True,
             truncation=True,
-            max_length=self.max_length
+            max_length=self.max_length,
         )
 
         with torch.no_grad():
@@ -176,10 +175,10 @@ class BertEmbedding(EmbeddingProvider):
 
         inputs = self.tokenizer(
             texts,
-            return_tensors='pt',
+            return_tensors="pt",
             padding=True,
             truncation=True,
-            max_length=self.max_length
+            max_length=self.max_length,
         )
 
         with torch.no_grad():
@@ -241,24 +240,17 @@ class OpenAIEmbedding(EmbeddingProvider):
 
     def embed_text(self, text: str) -> np.ndarray:
         """Generate embedding for a single text."""
-        response = self.client.embeddings.create(
-            model=self.model,
-            input=text
-        )
+        response = self.client.embeddings.create(model=self.model, input=text)
         embedding = np.array(response.data[0].embedding, dtype=np.float32)
         return self._normalize(embedding)
 
     def embed_batch(self, texts: List[str]) -> List[np.ndarray]:
         """Generate embeddings for a batch of texts."""
         # OpenAI API supports batching natively
-        response = self.client.embeddings.create(
-            model=self.model,
-            input=texts
-        )
+        response = self.client.embeddings.create(model=self.model, input=texts)
 
         embeddings = [
-            np.array(item.embedding, dtype=np.float32)
-            for item in response.data
+            np.array(item.embedding, dtype=np.float32) for item in response.data
         ]
 
         return [self._normalize(emb) for emb in embeddings]
@@ -292,7 +284,7 @@ class AzureOpenAIEmbedding(EmbeddingProvider):
         endpoint: str = None,
         api_key: str = None,
         deployment_name: str = None,
-        api_version: str = None
+        api_version: str = None,
     ):
         """
         Initialize Azure OpenAI embeddings.
@@ -316,30 +308,25 @@ class AzureOpenAIEmbedding(EmbeddingProvider):
         self.client = openai.AzureOpenAI(
             azure_endpoint=self.endpoint,
             api_key=self.api_key,
-            api_version=self.api_version
+            api_version=self.api_version,
         )
 
         self.dimensions = 1536  # Default for most Azure OpenAI embedding models
 
     def embed_text(self, text: str) -> np.ndarray:
         """Generate embedding for a single text."""
-        response = self.client.embeddings.create(
-            model=self.deployment_name,
-            input=text
-        )
+        response = self.client.embeddings.create(model=self.deployment_name, input=text)
         embedding = np.array(response.data[0].embedding, dtype=np.float32)
         return self._normalize(embedding)
 
     def embed_batch(self, texts: List[str]) -> List[np.ndarray]:
         """Generate embeddings for a batch of texts."""
         response = self.client.embeddings.create(
-            model=self.deployment_name,
-            input=texts
+            model=self.deployment_name, input=texts
         )
 
         embeddings = [
-            np.array(item.embedding, dtype=np.float32)
-            for item in response.data
+            np.array(item.embedding, dtype=np.float32) for item in response.data
         ]
 
         return [self._normalize(emb) for emb in embeddings]
@@ -431,7 +418,7 @@ class EmbeddingService:
         self,
         texts: List[str],
         batch_size: Optional[int] = None,
-        show_progress: bool = False
+        show_progress: bool = False,
     ) -> List[np.ndarray]:
         """
         Generate embeddings for multiple texts in batches.
@@ -453,7 +440,7 @@ class EmbeddingService:
         all_embeddings = []
 
         for i in range(0, len(texts), batch_size):
-            batch = texts[i:i + batch_size]
+            batch = texts[i : i + batch_size]
             batch_embeddings = self.provider.embed_batch(batch)
             all_embeddings.extend(batch_embeddings)
 

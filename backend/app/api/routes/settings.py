@@ -1,8 +1,7 @@
 """Settings endpoints for runtime configuration."""
 from fastapi import APIRouter, Depends, HTTPException
 
-from app.core.auth import get_current_user
-from app.core.config import settings
+from app.core.nextauth import get_current_user
 from app.services.embeddings import (
     EMBEDDING_PRESETS,
     embedding_service,

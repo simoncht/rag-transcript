@@ -1,26 +1,25 @@
-"use client";
+"use client"
 
-import { useRef } from "react";
-import { useAuth } from "@clerk/nextjs";
-
-import { setClerkTokenGetter } from "@/lib/api/client";
+import { useRef } from "react"
+import { useAuth } from "@/lib/auth"
+import { setAuthTokenGetter } from "@/lib/api/client"
 
 export function AuthInitializer() {
-  const { getToken } = useAuth();
-  const registeredRef = useRef(false);
+  const auth = useAuth()
+  const registeredRef = useRef(false)
 
   // Register a token getter used by the shared API client.
   // Do this during render so requests fired on first paint can attach a token.
   if (!registeredRef.current) {
-    setClerkTokenGetter(async () => {
+    setAuthTokenGetter(async () => {
       try {
-        return await getToken();
+        return await auth.getToken()
       } catch {
-        return null;
+        return null
       }
-    });
-    registeredRef.current = true;
+    })
+    registeredRef.current = true
   }
 
-  return null;
+  return null
 }

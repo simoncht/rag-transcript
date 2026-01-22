@@ -40,7 +40,21 @@
       "Bash(find:*)",
       "Bash(docker restart:*)",
       "Bash(timeout 10 curl:*)",
-      "Bash(timeout 8 curl:*)"
+      "Bash(timeout 8 curl:*)",
+      "mcp__MCP_DOCKER__mcp-find",
+      "Bash(docker compose:*)",
+      "Bash(npm install:*)",
+      "Bash(npm uninstall:*)",
+      "Bash(NEXT_TELEMETRY_DISABLED=1 npm run build:*)",
+      "Bash(openssl rand:*)",
+      "Bash(kill:*)",
+      "Bash(sudo rm:*)",
+      "Bash(nc -zv:*)",
+      "Bash(python -m pytest:*)",
+      "Bash(pip index versions:*)",
+      "Bash(pip install:*)",
+      "Bash(docker inspect:*)",
+      "Bash(python3:*)"
     ],
     "deny": [],
     "ask": []

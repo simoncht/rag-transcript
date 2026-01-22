@@ -6,7 +6,7 @@ from fastapi.security import HTTPAuthorizationCredentials
 from jose import jwt
 
 from app.core import auth as auth_module
-from app.core.auth import ClerkJWTVerifier, clerk_verifier
+from app.core.auth import ClerkJWTVerifier
 from app.core.config import settings
 from app.models import User
 
@@ -29,7 +29,9 @@ class FakeQuery:
 
         for cond in self.conditions:
             try:
-                left_key = cond.left.key if hasattr(cond.left, "key") else cond.left.name
+                left_key = (
+                    cond.left.key if hasattr(cond.left, "key") else cond.left.name
+                )
                 right_val = getattr(cond.right, "value", None)
             except Exception:
                 continue
@@ -148,7 +150,8 @@ def test_clerk_verifier_strict_mode_uses_jwks_and_decode(monkeypatch):
 def test_extract_email_variants():
     assert auth_module._extract_email({"email": "a@example.com"}) == "a@example.com"
     assert (
-        auth_module._extract_email({"primary_email_address": "b@example.com"}) == "b@example.com"
+        auth_module._extract_email({"primary_email_address": "b@example.com"})
+        == "b@example.com"
     )
     assert (
         auth_module._extract_email(
@@ -156,12 +159,17 @@ def test_extract_email_variants():
         )
         == "c@example.com"
     )
-    assert auth_module._extract_email({"email_addresses": ["d@example.com"]}) == "d@example.com"
+    assert (
+        auth_module._extract_email({"email_addresses": ["d@example.com"]})
+        == "d@example.com"
+    )
 
 
 def test_get_current_user_creates_user_when_missing(monkeypatch):
     claims = {"sub": "user_sub_1", "email": "new@example.com", "name": "New User"}
-    monkeypatch.setattr(auth_module.clerk_verifier, "verify_and_decode", lambda token: claims)
+    monkeypatch.setattr(
+        auth_module.clerk_verifier, "verify_and_decode", lambda token: claims
+    )
 
     creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials="fake-token")
     db = FakeSession()
@@ -176,7 +184,9 @@ def test_get_current_user_creates_user_when_missing(monkeypatch):
 
 def test_get_current_user_reuses_existing_user(monkeypatch):
     claims = {"sub": "user_sub_existing", "email": "existing@example.com"}
-    monkeypatch.setattr(auth_module.clerk_verifier, "verify_and_decode", lambda token: claims)
+    monkeypatch.setattr(
+        auth_module.clerk_verifier, "verify_and_decode", lambda token: claims
+    )
 
     existing = User(
         id=uuid.uuid4(),
@@ -195,7 +205,9 @@ def test_get_current_user_reuses_existing_user(monkeypatch):
 
 def test_get_current_user_rejects_inactive_user(monkeypatch):
     claims = {"sub": "user_inactive", "email": "inactive@example.com"}
-    monkeypatch.setattr(auth_module.clerk_verifier, "verify_and_decode", lambda token: claims)
+    monkeypatch.setattr(
+        auth_module.clerk_verifier, "verify_and_decode", lambda token: claims
+    )
 
     inactive = User(
         id=uuid.uuid4(),
@@ -214,7 +226,9 @@ def test_get_current_user_rejects_inactive_user(monkeypatch):
 
 def test_get_current_user_requires_bearer_scheme(monkeypatch):
     claims = {"sub": "user_wrong_scheme"}
-    monkeypatch.setattr(auth_module.clerk_verifier, "verify_and_decode", lambda token: claims)
+    monkeypatch.setattr(
+        auth_module.clerk_verifier, "verify_and_decode", lambda token: claims
+    )
 
     db = FakeSession()
     creds = HTTPAuthorizationCredentials(scheme="Basic", credentials="token")

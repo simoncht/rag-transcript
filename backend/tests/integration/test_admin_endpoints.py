@@ -3,18 +3,30 @@ Integration tests for admin API endpoints.
 
 Tests the full request/response cycle for admin routes.
 """
+from datetime import datetime, timedelta
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.main import app
-from app.models import User, Video, Conversation, Message, Collection
+from app.models import (
+    Chunk,
+    Collection,
+    CollectionVideo,
+    Conversation,
+    Message,
+    MessageChunkReference,
+    User,
+    Video,
+    AdminAuditLog,
+)
 from app.core.auth import get_current_user
 from app.db.base import get_db
-from datetime import datetime, timedelta
 
 
 # Test fixtures
+
 
 @pytest.fixture
 def admin_user(db: Session):
@@ -121,6 +133,7 @@ def client_with_regular_user(regular_user, db: Session):
 
 
 # Tests
+
 
 def test_get_dashboard_as_admin(client_with_admin, test_users):
     """Admin can access dashboard stats."""
@@ -237,6 +250,204 @@ def test_get_user_detail_includes_metrics(client_with_admin, regular_user, db):
     assert metrics["videos_total"] >= 1
     assert metrics["conversations_total"] >= 1
 
+
+# Helpers
+
+
+def _create_conversation_with_messages(db: Session, user: User):
+    """Helper to create a conversation with user/assistant messages and a referenced chunk."""
+    video = Video(
+        user_id=user.id,
+        youtube_id="sample123",
+        youtube_url="https://example.com/watch?v=sample123",
+        title="Sample Video",
+        status="completed",
+        duration_seconds=120,
+        progress_percent=100.0,
+        chunk_count=1,
+        audio_file_size_mb=10.0,
+        is_deleted=False,
+    )
+    db.add(video)
+    db.commit()
+    db.refresh(video)
+
+    chunk = Chunk(
+        video_id=video.id,
+        user_id=user.id,
+        chunk_index=0,
+        text="This is a sample chunk about testing admin features.",
+        token_count=30,
+        start_timestamp=0.0,
+        end_timestamp=10.0,
+        duration_seconds=10.0,
+        is_indexed=True,
+    )
+    db.add(chunk)
+    db.commit()
+    db.refresh(chunk)
+
+    conversation = Conversation(
+        user_id=user.id,
+        title="Admin visibility test",
+        selected_video_ids=[video.id],
+        message_count=2,
+        total_tokens_used=0,
+        last_message_at=datetime.utcnow(),
+    )
+    db.add(conversation)
+    db.commit()
+    db.refresh(conversation)
+
+    asked_at = datetime.utcnow()
+    answered_at = asked_at + timedelta(seconds=1)
+
+    question = Message(
+        conversation_id=conversation.id,
+        role="user",
+        content="What is in this video?",
+        created_at=asked_at,
+    )
+    db.add(question)
+    db.commit()
+    db.refresh(question)
+
+    answer = Message(
+        conversation_id=conversation.id,
+        role="assistant",
+        content="The video covers admin monitoring.",
+        created_at=answered_at,
+        input_tokens=50,
+        output_tokens=75,
+        response_time_seconds=0.5,
+    )
+    db.add(answer)
+    db.commit()
+    db.refresh(answer)
+
+    reference = MessageChunkReference(
+        message_id=answer.id,
+        chunk_id=chunk.id,
+        relevance_score=0.92,
+        rank=1,
+        was_used_in_response=True,
+    )
+    db.add(reference)
+
+    collection = Collection(
+        user_id=user.id,
+        name="Admin Test Collection",
+        description="",
+    )
+    db.add(collection)
+    db.commit()
+    db.refresh(collection)
+
+    link = CollectionVideo(collection_id=collection.id, video_id=video.id)
+    db.add(link)
+
+    conversation.collection_id = collection.id
+    conversation.message_count = 2
+    conversation.total_tokens_used = 125
+    conversation.last_message_at = answered_at
+
+    db.commit()
+
+    return conversation, question, answer
+
+
+def test_admin_qa_feed_returns_items(client_with_admin, db: Session, regular_user):
+    """QA feed returns question/answer pairs for admins."""
+    _conversation, question, answer = _create_conversation_with_messages(
+        db, regular_user
+    )
+
+    response = client_with_admin.get("/api/v1/admin/qa-feed")
+    assert response.status_code == 200
+    payload = response.json()
+
+    assert payload["total"] == 1
+    item = payload["items"][0]
+    assert item["question_id"] == str(question.id)
+    assert item["answer_id"] == str(answer.id)
+    assert item["answer"].startswith("The video covers")
+    assert item["sources"]
+    assert item["response_latency_ms"] >= 0
+
+
+def test_admin_audit_logs_endpoint(client_with_admin, db: Session, regular_user):
+    """Audit log endpoint returns chat events for admins."""
+    conversation, question, _answer = _create_conversation_with_messages(
+        db, regular_user
+    )
+
+    log = AdminAuditLog(
+        event_type="chat_message",
+        user_id=regular_user.id,
+        conversation_id=conversation.id,
+        message_id=question.id,
+        role="user",
+        content=question.content,
+        flags=["pii_detected"],
+        message_metadata={"flags": ["pii_detected"]},
+    )
+    db.add(log)
+    db.commit()
+
+    response = client_with_admin.get("/api/v1/admin/audit/messages")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total"] >= 1
+    first = payload["items"][0]
+    assert first["message_id"] == str(question.id)
+    assert "pii_detected" in first["flags"]
+
+    flagged_only = client_with_admin.get(
+        "/api/v1/admin/audit/messages?has_flags=true"
+    )
+    assert flagged_only.status_code == 200
+    flagged_payload = flagged_only.json()
+    assert flagged_payload["total"] >= 1
+
+
+def test_admin_conversation_detail(client_with_admin, db: Session, regular_user):
+    """Conversation detail returns message timeline."""
+    conversation, _question, _answer = _create_conversation_with_messages(
+        db, regular_user
+    )
+
+    response = client_with_admin.get(
+        f"/api/v1/admin/conversations/{conversation.id}"
+    )
+    assert response.status_code == 200
+    data = response.json()
+
+    assert data["id"] == str(conversation.id)
+    assert len(data["messages"]) == 2
+    roles = [m["role"] for m in data["messages"]]
+    assert roles == ["user", "assistant"]
+    assistant_msg = [m for m in data["messages"] if m["role"] == "assistant"][0]
+    assert assistant_msg["sources"]
+
+
+def test_admin_content_overview(client_with_admin, db: Session, regular_user):
+    """Content overview returns video and collection stats."""
+    _conversation, _question, _answer = _create_conversation_with_messages(
+        db, regular_user
+    )
+
+    response = client_with_admin.get("/api/v1/admin/content/overview")
+    assert response.status_code == 200
+    data = response.json()
+
+    videos = data["videos"]
+    collections = data["collections"]
+
+    assert videos["total"] >= 1
+    assert videos["recent"]
+    assert collections["total"] >= 1
+    assert collections["with_videos"] >= 1
+
     # Verify costs
     assert "costs" in data
     costs = data["costs"]
@@ -253,8 +464,7 @@ def test_update_user_subscription_tier(client_with_admin, regular_user, db):
     }
 
     response = client_with_admin.patch(
-        f"/api/v1/admin/users/{regular_user.id}",
-        json=update_data
+        f"/api/v1/admin/users/{regular_user.id}", json=update_data
     )
 
     assert response.status_code == 200
@@ -275,8 +485,7 @@ def test_update_user_active_status(client_with_admin, regular_user, db):
     }
 
     response = client_with_admin.patch(
-        f"/api/v1/admin/users/{regular_user.id}",
-        json=update_data
+        f"/api/v1/admin/users/{regular_user.id}", json=update_data
     )
 
     assert response.status_code == 200
@@ -316,8 +525,7 @@ def test_quota_override_applies_correctly(client_with_admin, regular_user, db):
     }
 
     response = client_with_admin.patch(
-        f"/api/v1/admin/users/{regular_user.id}/quota",
-        json=override_data
+        f"/api/v1/admin/users/{regular_user.id}/quota", json=override_data
     )
 
     assert response.status_code == 200
@@ -398,9 +606,9 @@ def test_user_cost_calculation_is_accurate(client_with_admin, regular_user, db):
 
     # Total cost should be sum of all costs
     expected_total = (
-        costs["transcription_cost"] +
-        costs["embedding_cost"] +
-        costs["llm_cost"] +
-        costs["storage_cost"]
+        costs["transcription_cost"]
+        + costs["embedding_cost"]
+        + costs["llm_cost"]
+        + costs["storage_cost"]
     )
     assert abs(costs["total_cost"] - expected_total) < 0.0001  # Allow for rounding

@@ -6,8 +6,10 @@ Handles background tasks for:
 - Transcription
 - Chunking and enrichment
 - Embedding and indexing
+- Scheduled cleanup
 """
 from celery import Celery
+from celery.schedules import crontab
 from celery.signals import task_prerun, task_postrun, task_failure
 
 from app.core.config import settings
@@ -19,7 +21,8 @@ celery_app = Celery(
     backend=settings.celery_result_backend,
     include=[
         "app.tasks.video_tasks",
-    ]
+        "app.tasks.cleanup_tasks",
+    ],
 )
 
 # Celery configuration
@@ -41,6 +44,19 @@ celery_app.conf.update(
 # Task routes (assign tasks to specific queues)
 celery_app.conf.task_routes = {
     "app.tasks.video_tasks.*": {"queue": "celery"},
+    "app.tasks.cleanup_tasks.*": {"queue": "celery"},
+}
+
+# Beat schedule for periodic tasks
+celery_app.conf.beat_schedule = {
+    "cleanup-stale-videos": {
+        "task": "app.tasks.cleanup_tasks.cleanup_stale_videos",
+        "schedule": crontab(minute=0),  # Every hour at :00
+    },
+    "cleanup-orphaned-files": {
+        "task": "app.tasks.cleanup_tasks.cleanup_orphaned_files",
+        "schedule": crontab(minute=30, hour="*/6"),  # Every 6 hours at :30
+    },
 }
 
 

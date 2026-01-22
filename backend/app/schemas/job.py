@@ -9,9 +9,12 @@ from pydantic import BaseModel, Field
 
 class JobStatus(BaseModel):
     """Job status response."""
+
     id: UUID
     job_type: str
-    status: str = Field(..., description="Status: pending, running, completed, failed, canceled")
+    status: str = Field(
+        ..., description="Status: pending, running, completed, failed, canceled"
+    )
     progress_percent: float = Field(..., ge=0, le=100)
     current_step: Optional[str] = None
     total_steps: Optional[int] = None
@@ -32,6 +35,7 @@ class JobStatus(BaseModel):
 
 class JobDetail(JobStatus):
     """Detailed job information."""
+
     user_id: UUID
     celery_task_id: Optional[str] = None
     retry_count: int

@@ -1,0 +1,97 @@
+{
+  "skills": [
+    {
+      "name": "test-runner",
+      "command": ".claude/skills/test-runner.sh",
+      "description": "Run pytest tests automatically after backend code changes",
+      "trigger": {
+        "proactive": true,
+        "patterns": [
+          "backend/app/**/*.py",
+          "backend/tests/**/*.py"
+        ]
+      }
+    },
+    {
+      "name": "quality-check",
+      "command": ".claude/skills/quality-check.sh",
+      "description": "Run black and ruff quality checks after backend code changes",
+      "trigger": {
+        "proactive": true,
+        "patterns": [
+          "backend/app/**/*.py"
+        ]
+      }
+    },
+    {
+      "name": "type-check",
+      "command": ".claude/skills/type-check.sh",
+      "description": "Run TypeScript type checks after frontend code changes",
+      "trigger": {
+        "proactive": true,
+        "patterns": [
+          "frontend/src/**/*.ts",
+          "frontend/src/**/*.tsx"
+        ]
+      }
+    },
+    {
+      "name": "docker-health",
+      "command": ".claude/skills/docker-health.sh",
+      "description": "Check all Docker services are running and healthy",
+      "trigger": {
+        "proactive": true,
+        "patterns": [
+          "docker-compose.yml",
+          "docker-compose.yaml",
+          "Dockerfile",
+          "backend/Dockerfile"
+        ],
+        "on_session_start": true
+      }
+    },
+    {
+      "name": "rag-smoke-test",
+      "command": ".claude/skills/rag-smoke-test.sh",
+      "description": "Test the RAG pipeline end-to-end (embedding, retrieval, LLM)",
+      "trigger": {
+        "proactive": true,
+        "patterns": [
+          "backend/app/services/chunking.py",
+          "backend/app/services/embeddings.py",
+          "backend/app/services/vector_store.py",
+          "backend/app/services/reranker.py",
+          "backend/app/services/llm_providers.py",
+          "backend/app/api/routes/conversations.py"
+        ]
+      }
+    },
+    {
+      "name": "pipeline-status",
+      "command": ".claude/skills/pipeline-status.sh",
+      "description": "Show video processing pipeline status and system diagnostics",
+      "trigger": {
+        "proactive": true,
+        "patterns": [
+          "backend/app/tasks/video_tasks.py"
+        ],
+        "manual": true
+      }
+    },
+    {
+      "name": "update-claude-md",
+      "command": ".claude/skills/update-claude-md.sh",
+      "description": "Check if CLAUDE.md needs updating based on recent code changes",
+      "trigger": {
+        "manual": true,
+        "patterns": [
+          "backend/app/services/**/*.py",
+          "backend/alembic/versions/**/*.py",
+          "backend/.env.example",
+          "docker-compose.yml",
+          "backend/app/api/routes/conversations.py"
+        ]
+      }
+    }
+  ]
+}

@@ -1,8 +1,17 @@
+/**
+ * MainLayout - Performance-Optimized Layout
+ *
+ * Performance Fix: Removed blocking auth checks (lines 72-88)
+ * Now uses non-blocking auth state with optimistic rendering
+ *
+ * Before: Every navigation waited for Clerk isLoaded (causing 5s delays)
+ * After: Renders immediately, auth resolves in parallel
+ */
+
 "use client";
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useClerk, useUser } from "@clerk/nextjs";
 import { Button } from "@/components/ui/button";
 import {
   Sheet,
@@ -11,13 +20,21 @@ import {
 } from "@/components/ui/sheet";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
-import { Folder, LogOut, Menu, MessageSquare, Video, Shield } from "lucide-react";
+import { Folder, LogOut, Menu, MessageSquare, Video, Shield, User } from "lucide-react";
 import { ThemeToggle } from "./ThemeToggle";
+import { useAuth, useAuthState } from "@/lib/auth";
+import { apiClient } from "@/lib/api/client";
+import { subscriptionsApi } from "@/lib/api/subscriptions";
+import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import type { QuotaUsage } from "@/lib/types";
+import QuotaDisplay from "../subscription/QuotaDisplay";
 
 const navigation = [
   { name: "Videos", href: "/videos", icon: Video },
   { name: "Collections", href: "/collections", icon: Folder },
   { name: "Conversations", href: "/conversations", icon: MessageSquare },
+  { name: "Account", href: "/account", icon: User },
 ];
 
 const adminNavigation = [
@@ -26,22 +43,60 @@ const adminNavigation = [
 
 export const MainLayout = ({ children }: { children: React.ReactNode }) => {
   const pathname = usePathname();
-  const { user: clerkUser, isLoaded, isSignedIn } = useUser();
-  const { signOut } = useClerk();
+  const authProvider = useAuth();
+  const { user, isAuthenticated } = useAuthState();
+  const [isAdminBackend, setIsAdminBackend] = useState<boolean | null>(null);
 
-  const displayName =
-    clerkUser?.fullName || clerkUser?.primaryEmailAddress?.emailAddress;
-  const email = clerkUser?.primaryEmailAddress?.emailAddress;
+  const displayName = user?.displayName || user?.email;
+  const email = user?.email;
 
-  // Check if user is admin (stored in Clerk public metadata)
-  const isAdmin = clerkUser?.publicMetadata?.is_superuser === true;
+  // Fetch quota for sidebar display
+  const { data: quota } = useQuery<QuotaUsage>({
+    queryKey: ["subscription-quota"],
+    queryFn: subscriptionsApi.getQuota,
+    enabled: isAuthenticated,
+    staleTime: 60 * 1000, // 60 seconds
+    refetchInterval: 120 * 1000, // Refetch every 2 minutes
+  });
 
-  const handleLogout = () => {
-    signOut({ redirectUrl: "/sign-in" });
+  // Check if user is admin (stored in auth metadata)
+  const isAdmin = user?.metadata?.is_superuser === true;
+  const hasAdminAccess = isAdmin || isAdminBackend === true;
+
+  useEffect(() => {
+    if (!user) {
+      setIsAdminBackend(false);
+      return;
+    }
+
+    let isMounted = true;
+
+    const fetchAdminStatus = async () => {
+      try {
+        const response = await apiClient.get("/auth/me");
+        if (isMounted) {
+          setIsAdminBackend(Boolean(response.data?.is_superuser));
+        }
+      } catch {
+        if (isMounted) {
+          setIsAdminBackend(false);
+        }
+      }
+    };
+
+    fetchAdminStatus();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [user?.id]);
+
+  const handleLogout = async () => {
+    await authProvider.signOut("/sign-in");
   };
 
   const renderNav = (includeAdmin = false) => {
-    const allNavigation = includeAdmin && isAdmin
+    const allNavigation = includeAdmin && hasAdminAccess
       ? [...navigation, ...adminNavigation]
       : navigation;
 
@@ -69,24 +124,8 @@ export const MainLayout = ({ children }: { children: React.ReactNode }) => {
     });
   };
 
-  if (!isLoaded) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-background text-sm text-muted-foreground">
-        Loading...
-      </div>
-    );
-  }
-
-  if (!isSignedIn) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-background">
-        <div className="flex flex-col items-center gap-3">
-          <p className="text-sm text-muted-foreground">Please sign in to continue.</p>
-          <Button onClick={() => (window.location.href = "/sign-in")}>Sign in</Button>
-        </div>
-      </div>
-    );
-  }
+  // Performance: Removed blocking auth checks - render immediately
+  // Middleware handles auth redirects, layout shows optimistically
 
   return (
     <div className="flex min-h-screen w-full bg-muted/40">
@@ -100,7 +139,29 @@ export const MainLayout = ({ children }: { children: React.ReactNode }) => {
           </Link>
         </div>
         <nav className="flex-1 space-y-1 px-4 py-6">{renderNav(true)}</nav>
-        {clerkUser && (
+
+        {/* Quota indicator */}
+        {quota && (
+          <div className="border-t px-4 py-3">
+            <p className="text-xs font-semibold text-muted-foreground mb-2">QUOTA</p>
+            <div className="space-y-1.5">
+              <QuotaDisplay
+                used={quota.videos_used}
+                limit={quota.videos_limit}
+                label="videos"
+                variant="compact"
+              />
+              <QuotaDisplay
+                used={quota.messages_used}
+                limit={quota.messages_limit}
+                label="messages/mo"
+                variant="compact"
+              />
+            </div>
+          </div>
+        )}
+
+        {user && (
           <div className="border-t px-4 py-4 text-sm text-muted-foreground">
             <p className="font-medium text-foreground">{displayName}</p>
             {email && <p>{email}</p>}
@@ -131,7 +192,7 @@ export const MainLayout = ({ children }: { children: React.ReactNode }) => {
                 <span>RAG Transcript</span>
               </div>
               <nav className="flex-1 space-y-1 py-6">{renderNav(true)}</nav>
-              {clerkUser && (
+              {user && (
                 <div className="border-t pt-4 text-sm text-muted-foreground">
                   <p className="font-medium text-foreground">{displayName}</p>
                   {email && <p>{email}</p>}
@@ -155,7 +216,7 @@ export const MainLayout = ({ children }: { children: React.ReactNode }) => {
             </div>
             <div className="flex items-center gap-2">
               <ThemeToggle />
-              {clerkUser && (
+              {user && (
                 <Button
                   variant="outline"
                   size="sm"

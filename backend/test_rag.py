@@ -3,7 +3,8 @@
 Quick test script to verify RAG pipeline components.
 """
 import sys
-sys.path.insert(0, '/app')
+
+sys.path.insert(0, "/app")
 
 import numpy as np
 from app.services.embeddings import embedding_service
@@ -26,10 +27,7 @@ print(f"   Sample values: {query_embedding[:5]}")
 
 # Step 2: Search vector store
 print("\n2. Searching vector store...")
-results = vector_store_service.search_chunks(
-    query_embedding=query_embedding,
-    top_k=3
-)
+results = vector_store_service.search_chunks(query_embedding=query_embedding, top_k=3)
 print(f"   ✓ Found {len(results)} results")
 
 # Step 3: Display results

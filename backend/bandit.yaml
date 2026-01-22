@@ -1,0 +1,23 @@
+# Bandit security linter configuration
+# https://bandit.readthedocs.io/
+
+# Skip these test IDs
+skips:
+  - B101  # assert_used - asserts are fine in test code
+  - B104  # hardcoded_bind_all_interfaces - needed for Docker
+  - B311  # random - not used for crypto
+
+# Exclude test files and scripts
+exclude_dirs:
+  - tests
+  - scripts
+  - alembic
+
+# Only run these tests (leave empty for all)
+tests: []
+
+# Confidence level (LOW, MEDIUM, HIGH)
+confidence: MEDIUM
+
+# Severity level (LOW, MEDIUM, HIGH)
+severity: MEDIUM

@@ -1,14 +1,18 @@
 services:
   # PostgreSQL database
+  # PRODUCTION: Use strong password via POSTGRES_PASSWORD env var instead of "postgres"
+  # PRODUCTION: Use managed database service (e.g., Railway, Supabase) instead of self-hosted
   postgres:
     image: pgvector/pgvector:pg15
     container_name: rag_transcript_postgres
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: rag_transcript
-    ports:
-      - "5432:5432"
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-rag_transcript}
+    # SECURITY: Ports commented out to prevent external access - only accessible via Docker internal network
+    # Uncomment for local development if you need direct database access:
+    # ports:
+    #   - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -18,23 +22,30 @@ services:
       retries: 5
 
   # Redis (Celery broker/backend)
+  # PRODUCTION: Set strong REDIS_PASSWORD env var
   redis:
-    image: redis:7-alpine
+    image: redis:7.4.7-alpine
     container_name: rag_transcript_redis
-    ports:
-      - "6379:6379"
+    command: redis-server --requirepass ${REDIS_PASSWORD:-changeme}
+    # SECURITY: Ports commented out to prevent external access - only accessible via Docker internal network
+    # Uncomment for local development if you need direct Redis access:
+    # ports:
+    #   - "6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "--no-auth-warning", "-a", "${REDIS_PASSWORD:-changeme}", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
 
   # Qdrant vector database
+  # PRODUCTION: Set strong QDRANT_API_KEY env var
   qdrant:
-    image: qdrant/qdrant:latest
+    image: qdrant/qdrant:v1.16.3
     container_name: rag_transcript_qdrant
+    environment:
+      - QDRANT__SERVICE__API_KEY=${QDRANT_API_KEY:-changeme}
     ports:
       - "6333:6333"  # HTTP API
       - "6334:6334"  # gRPC
@@ -54,6 +65,8 @@ services:
       dockerfile: Dockerfile
     container_name: rag_transcript_app
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    env_file:
+      - ./backend/.env
     volumes:
       - ./backend:/app
       - ./storage:/app/storage  # Local storage volume
@@ -62,11 +75,12 @@ services:
       - "8000:8000"
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/rag_transcript
-      - REDIS_URL=redis://redis:6379/0
-      - CELERY_BROKER_URL=redis://redis:6379/0
-      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-changeme}@redis:6379/0
+      - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD:-changeme}@redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD:-changeme}@redis:6379/0
       - QDRANT_HOST=qdrant
       - QDRANT_PORT=6333
+      - QDRANT_API_KEY=${QDRANT_API_KEY:-changeme}
       - STORAGE_BACKEND=local
       - LOCAL_STORAGE_PATH=/app/storage
       - EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
@@ -76,11 +90,7 @@ services:
       - HF_HUB_OFFLINE=0
       - TRANSFORMERS_OFFLINE=0
       - PYTHONUNBUFFERED=1
-      # SSL bypass for corporate environments
-      - HF_HUB_DISABLE_SSL_VERIFY=1
-      - CURL_CA_BUNDLE=
-      - REQUESTS_CA_BUNDLE=
-      - PYTHONHTTPSVERIFY=0
+      - ENVIRONMENT=${ENVIRONMENT:-development}
     depends_on:
       postgres:
         condition: service_healthy
@@ -96,17 +106,20 @@ services:
       dockerfile: Dockerfile
     container_name: rag_transcript_worker
     command: celery -A app.core.celery_app worker --loglevel=info --concurrency=1 --pool=solo
+    env_file:
+      - ./backend/.env
     volumes:
       - ./backend:/app
       - ./storage:/app/storage
       - ./hf_cache:/root/.cache/huggingface  # Pre-downloaded HF models
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/rag_transcript
-      - REDIS_URL=redis://redis:6379/0
-      - CELERY_BROKER_URL=redis://redis:6379/0
-      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-changeme}@redis:6379/0
+      - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD:-changeme}@redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD:-changeme}@redis:6379/0
       - QDRANT_HOST=qdrant
       - QDRANT_PORT=6333
+      - QDRANT_API_KEY=${QDRANT_API_KEY:-changeme}
       - STORAGE_BACKEND=local
       - LOCAL_STORAGE_PATH=/app/storage
       - EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
@@ -116,11 +129,7 @@ services:
       - HF_HUB_OFFLINE=0
       - TRANSFORMERS_OFFLINE=0
       - PYTHONUNBUFFERED=1
-      # SSL bypass for corporate environments
-      - HF_HUB_DISABLE_SSL_VERIFY=1
-      - CURL_CA_BUNDLE=
-      - REQUESTS_CA_BUNDLE=
-      - PYTHONHTTPSVERIFY=0
+      - ENVIRONMENT=${ENVIRONMENT:-development}
     depends_on:
       postgres:
         condition: service_healthy
@@ -136,14 +145,16 @@ services:
       dockerfile: Dockerfile
     container_name: rag_transcript_beat
     command: celery -A app.core.celery_app beat --loglevel=info
+    env_file:
+      - ./backend/.env
     volumes:
       - ./backend:/app
       - ./hf_cache:/root/.cache/huggingface  # Pre-downloaded HF models
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/rag_transcript
-      - REDIS_URL=redis://redis:6379/0
-      - CELERY_BROKER_URL=redis://redis:6379/0
-      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-changeme}@redis:6379/0
+      - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD:-changeme}@redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD:-changeme}@redis:6379/0
       - EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
       - HF_HOME=/root/.cache/huggingface
       - TRANSFORMERS_CACHE=/root/.cache/huggingface
@@ -151,11 +162,7 @@ services:
       - HF_HUB_OFFLINE=0
       - TRANSFORMERS_OFFLINE=0
       - PYTHONUNBUFFERED=1
-      # SSL bypass for corporate environments
-      - HF_HUB_DISABLE_SSL_VERIFY=1
-      - CURL_CA_BUNDLE=
-      - REQUESTS_CA_BUNDLE=
-      - PYTHONHTTPSVERIFY=0
+      - ENVIRONMENT=${ENVIRONMENT:-development}
     depends_on:
       - redis
 
@@ -166,6 +173,8 @@ services:
       dockerfile: Dockerfile
     container_name: rag_transcript_frontend
     command: npm run dev
+    env_file:
+      - ./frontend/.env
     volumes:
       - ./frontend:/app
       - /app/node_modules  # Preserve container's node_modules
@@ -175,13 +184,13 @@ services:
     environment:
       - NEXT_PUBLIC_API_URL=http://localhost:8000
       - NEXT_PUBLIC_API_V1_PREFIX=/api/v1
-      - NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_d2lzZS1jb3JhbC05Mi5jbGVyay5hY2NvdW50cy5kZXYk
-      - CLERK_SECRET_KEY=sk_test_placeholder_for_local_development
+      # SECURITY: Clerk keys should come from .env file, not hardcoded
+      - NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY}
+      - CLERK_SECRET_KEY=${CLERK_SECRET_KEY}
       - NEXT_PUBLIC_CLERK_SIGN_IN_URL=/sign-in
       - NEXT_PUBLIC_CLERK_SIGN_UP_URL=/sign-up
       - NEXT_PUBLIC_CLERK_AFTER_SIGN_IN_URL=/videos
       - NEXT_PUBLIC_CLERK_AFTER_SIGN_UP_URL=/videos
-      - NODE_TLS_REJECT_UNAUTHORIZED=0
       - WATCHPACK_POLLING=true  # Enable hot reload in Docker
     depends_on:
       - app

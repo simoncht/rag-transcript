@@ -3,7 +3,6 @@ Usage tracking models for billing and quotas.
 """
 import uuid
 from datetime import datetime
-from decimal import Decimal
 from sqlalchemy import Column, String, DateTime, ForeignKey, Integer, Numeric
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
@@ -22,7 +21,12 @@ class UsageEvent(Base):
     __tablename__ = "usage_events"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
 
     # Event classification
     event_type = Column(String(50), nullable=False, index=True)
@@ -39,11 +43,17 @@ class UsageEvent(Base):
     cost_estimate = Column(Numeric(10, 6), nullable=True)  # Estimated cost in USD
 
     # Quota tracking
-    quota_category = Column(String(50), nullable=True)  # videos, minutes, messages, storage
-    quota_amount_used = Column(Numeric(10, 2), nullable=True)  # How much quota this consumed
+    quota_category = Column(
+        String(50), nullable=True
+    )  # videos, minutes, messages, storage
+    quota_amount_used = Column(
+        Numeric(10, 2), nullable=True
+    )  # How much quota this consumed
 
     # Timestamps
-    event_timestamp = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    event_timestamp = Column(
+        DateTime, default=datetime.utcnow, nullable=False, index=True
+    )
 
     # Relationships
     user = relationship("User", back_populates="usage_events")
@@ -62,7 +72,13 @@ class UserQuota(Base):
     __tablename__ = "user_quotas"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
+    user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
 
     # Quota period
     quota_period_start = Column(DateTime, nullable=False)
@@ -90,7 +106,9 @@ class UserQuota(Base):
 
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    updated_at = Column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )
 
     # Relationships
     user = relationship("User")
@@ -126,6 +144,6 @@ class UserQuota(Base):
             return max(0, float(self.storage_mb_limit - self.storage_mb_used))
         elif quota_type == "embedding_tokens":
             if self.embedding_tokens_limit is None:
-                return float('inf')
+                return float("inf")
             return max(0, self.embedding_tokens_limit - self.embedding_tokens_used)
         return 0

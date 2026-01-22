@@ -1,10 +1,12 @@
-"use client";
+"use client"
 
-import { useState } from "react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { useState } from "react"
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
+import { SessionProvider } from "next-auth/react"
 
-import { AuthInitializer } from "@/components/auth-initializer";
-import { ThemeProvider } from "@/components/theme-provider";
+import { AuthInitializer } from "@/components/auth-initializer"
+import { ThemeProvider } from "@/components/theme-provider"
+import { AuthProvider } from "@/lib/auth"
 
 export function Providers({ children }: { children: React.ReactNode }) {
   const [queryClient] = useState(
@@ -17,7 +19,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
           },
         },
       })
-  );
+  )
 
   return (
     <ThemeProvider
@@ -26,10 +28,14 @@ export function Providers({ children }: { children: React.ReactNode }) {
       enableSystem
       disableTransitionOnChange
     >
-      <QueryClientProvider client={queryClient}>
-        <AuthInitializer />
-        {children}
-      </QueryClientProvider>
+      <SessionProvider>
+        <AuthProvider>
+          <QueryClientProvider client={queryClient}>
+            <AuthInitializer />
+            {children}
+          </QueryClientProvider>
+        </AuthProvider>
+      </SessionProvider>
     </ThemeProvider>
-  );
+  )
 }

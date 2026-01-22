@@ -8,7 +8,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app.core.auth import get_current_user
+from app.core.nextauth import get_current_user
 from app.db.base import get_db
 from app.models import Job, User
 from app.schemas import JobDetail
@@ -20,7 +20,7 @@ router = APIRouter()
 async def get_job_status(
     job_id: uuid.UUID,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
     """
     Get job status and progress.
@@ -33,10 +33,7 @@ async def get_job_status(
     Returns:
         JobDetail with current status and progress
     """
-    job = db.query(Job).filter(
-        Job.id == job_id,
-        Job.user_id == current_user.id
-    ).first()
+    job = db.query(Job).filter(Job.id == job_id, Job.user_id == current_user.id).first()
 
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")

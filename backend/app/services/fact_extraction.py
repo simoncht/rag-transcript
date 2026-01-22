@@ -6,14 +6,13 @@ Enables the system to remember important information from early turns.
 """
 import json
 import logging
-from typing import List, Dict, Optional
+from typing import List, Dict
 from sqlalchemy.orm import Session
 
 from app.models.conversation_fact import ConversationFact
 from app.models.message import Message
 from app.models.conversation import Conversation
 from app.services.llm_providers import Message as LLMMessage, LLMService
-from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -51,11 +50,7 @@ class FactExtractionService:
         self.max_tokens = 500  # Enough for JSON response
 
     def extract_facts(
-        self,
-        db: Session,
-        message: Message,
-        conversation: Conversation,
-        user_query: str
+        self, db: Session, message: Message, conversation: Conversation, user_query: str
     ) -> List[ConversationFact]:
         """
         Extract facts from assistant message.
@@ -114,9 +109,7 @@ class FactExtractionService:
             return []
 
     def _build_extraction_prompt(
-        self,
-        user_query: str,
-        assistant_response: str
+        self, user_query: str, assistant_response: str
     ) -> List[LLMMessage]:
         """Create prompt for fact extraction."""
         # Truncate very long responses to save tokens
@@ -124,8 +117,7 @@ class FactExtractionService:
             assistant_response = assistant_response[:2000] + "..."
 
         prompt_content = FACT_EXTRACTION_PROMPT.format(
-            user_query=user_query,
-            assistant_response=assistant_response
+            user_query=user_query, assistant_response=assistant_response
         )
 
         return [
@@ -185,10 +177,7 @@ class FactExtractionService:
             return []
 
     def _deduplicate_facts(
-        self,
-        db: Session,
-        conversation_id: str,
-        new_facts: List[ConversationFact]
+        self, db: Session, conversation_id: str, new_facts: List[ConversationFact]
     ) -> List[ConversationFact]:
         """
         Deduplicate facts against existing conversation facts.
@@ -204,6 +193,19 @@ class FactExtractionService:
         Returns:
             List of facts to actually add (deduplicated)
         """
+        # First, deduplicate within new_facts (keep first occurrence of each key)
+        seen_keys = set()
+        deduplicated_new = []
+        for fact in new_facts:
+            if fact.fact_key not in seen_keys:
+                deduplicated_new.append(fact)
+                seen_keys.add(fact.fact_key)
+            else:
+                logger.debug(
+                    f"Skipping duplicate fact key within new facts: {fact.fact_key} "
+                    f"(value: {fact.fact_value})"
+                )
+
         # Get existing fact keys for this conversation
         existing_facts = (
             db.query(ConversationFact)
@@ -213,9 +215,9 @@ class FactExtractionService:
 
         existing_keys = {fact.fact_key: fact for fact in existing_facts}
 
-        # Filter out duplicates (keep new facts only if key doesn't exist)
+        # Filter out duplicates against existing facts
         deduplicated = []
-        for fact in new_facts:
+        for fact in deduplicated_new:
             if fact.fact_key not in existing_keys:
                 deduplicated.append(fact)
             else:

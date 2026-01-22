@@ -535,7 +535,11 @@ class ConversationInsightsService:
 
             for i, c in enumerate(chunks):
                 candidate = indexed_vectors.get((c.video_id, int(c.chunk_index)))
-                if candidate is not None and dimensions and candidate.shape[-1] == dimensions:
+                if (
+                    candidate is not None
+                    and dimensions
+                    and candidate.shape[-1] == dimensions
+                ):
                     chunk_vecs[i] = normalize(candidate)
                     reused_vectors += 1
                     continue
@@ -1269,7 +1273,7 @@ class ConversationInsightsService:
             .filter(
                 Video.id.in_(canonical_video_ids),
                 Video.user_id == user_id,
-                Video.is_deleted == False,  # noqa: E712
+                Video.is_deleted.is_(False),  # noqa: E712
                 Video.status == "completed",
             )
             .all()
@@ -1373,7 +1377,9 @@ class ConversationInsightsService:
             chunk_embeddings,
             assignment_meta,
             topic_total_counts,
-        ) = self._map_topics_to_chunks(topics, all_chunks, videos_by_id, user_id=user_id)
+        ) = self._map_topics_to_chunks(
+            topics, all_chunks, videos_by_id, user_id=user_id
+        )
         nodes, edges, expanded_chunks = self._build_graph_structure(
             root_label=root_label,
             topics=topics,

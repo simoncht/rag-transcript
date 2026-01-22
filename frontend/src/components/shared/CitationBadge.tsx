@@ -67,6 +67,29 @@ export default function CitationBadge({
               <p className="text-xs text-text-secondary">
                 Citation {index}
               </p>
+              {/* Phase 1: Contextual metadata */}
+              {(citation.channel_name || citation.chapter_title || (citation.speakers && citation.speakers.length > 0)) && (
+                <div className="mt-1 flex flex-col gap-0.5 text-[10px] text-text-muted">
+                  {citation.channel_name && (
+                    <span className="flex items-center gap-1">
+                      <span className="opacity-60">📺</span>
+                      {citation.channel_name}
+                    </span>
+                  )}
+                  {citation.chapter_title && (
+                    <span className="flex items-center gap-1">
+                      <span className="opacity-60">📖</span>
+                      {citation.chapter_title}
+                    </span>
+                  )}
+                  {citation.speakers && citation.speakers.length > 0 && (
+                    <span className="flex items-center gap-1">
+                      <span className="opacity-60">🎤</span>
+                      {citation.speakers.join(', ')}
+                    </span>
+                  )}
+                </div>
+              )}
             </div>
             <button
               onClick={() => setIsExpanded(false)}
@@ -83,24 +106,34 @@ export default function CitationBadge({
 
           {/* Timestamp */}
           <div className="mb-3 pb-3 border-b border-border-default">
-            <button
-              onClick={() => {
-                onTimestampClick?.(timestamp);
-                setIsExpanded(false);
-              }}
-              className="
-                inline-flex items-center gap-2
-                text-sm text-primary hover:text-primary-light
-                transition-colors duration-200
-                font-medium
-              "
-            >
-              <span className="text-lg">⏱</span>
-              <span className="font-mono">{timestamp}</span>
-              <span className="text-text-muted">→</span>
-            </button>
+            {citation.jump_url ? (
+              <a
+                href={citation.jump_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={() => {
+                  onTimestampClick?.(timestamp);
+                  setIsExpanded(false);
+                }}
+                className="
+                  inline-flex items-center gap-2
+                  text-sm text-primary hover:text-primary-light
+                  transition-colors duration-200
+                  font-medium
+                "
+              >
+                <span className="text-lg">⏱</span>
+                <span className="font-mono">{timestamp}</span>
+                <span className="text-text-muted">→</span>
+              </a>
+            ) : (
+              <div className="inline-flex items-center gap-2 text-sm text-text-muted">
+                <span className="text-lg">⏱</span>
+                <span className="font-mono">{timestamp}</span>
+              </div>
+            )}
             <p className="text-xs text-text-muted mt-1">
-              Click to jump to timestamp
+              {citation.jump_url ? 'Click to jump to video timestamp' : 'Video link unavailable'}
             </p>
           </div>
 

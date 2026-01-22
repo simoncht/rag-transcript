@@ -3,7 +3,17 @@ Chunk model for storing transcript chunks with contextual enrichment.
 """
 import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, DateTime, Integer, Boolean, ForeignKey, Text, Float, Index
+from sqlalchemy import (
+    Column,
+    String,
+    DateTime,
+    Integer,
+    Boolean,
+    ForeignKey,
+    Text,
+    Float,
+    Index,
+)
 from sqlalchemy.dialects.postgresql import UUID, ARRAY
 from sqlalchemy.orm import relationship
 
@@ -21,8 +31,18 @@ class Chunk(Base):
     __tablename__ = "chunks"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    video_id = Column(UUID(as_uuid=True), ForeignKey("videos.id", ondelete="CASCADE"), nullable=False, index=True)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    video_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("videos.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
 
     # Chunk ordering and position
     chunk_index = Column(Integer, nullable=False)  # 0-indexed position in video
@@ -49,18 +69,26 @@ class Chunk(Base):
     keywords = Column(ARRAY(String), nullable=True)  # Key topics/entities
 
     # Embedding information
-    embedding_text = Column(Text, nullable=True)  # Combined text used for embedding: f"{title}. {summary}\n\n{text}"
-    is_indexed = Column(Boolean, nullable=False, default=False)  # Whether chunk is in vector DB
+    embedding_text = Column(
+        Text, nullable=True
+    )  # Combined text used for embedding: f"{title}. {summary}\n\n{text}"
+    is_indexed = Column(
+        Boolean, nullable=False, default=False
+    )  # Whether chunk is in vector DB
     indexed_at = Column(DateTime, nullable=True)
 
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    enriched_at = Column(DateTime, nullable=True)  # When contextual enrichment was completed
+    enriched_at = Column(
+        DateTime, nullable=True
+    )  # When contextual enrichment was completed
 
     # Relationships
     video = relationship("Video", back_populates="chunks")
     user = relationship("User")
-    message_references = relationship("MessageChunkReference", back_populates="chunk", cascade="all, delete-orphan")
+    message_references = relationship(
+        "MessageChunkReference", back_populates="chunk", cascade="all, delete-orphan"
+    )
 
     # Indexes for efficient querying
     __table_args__ = (

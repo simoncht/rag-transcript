@@ -8,26 +8,117 @@ Tasks:
 - embed_and_index: Generate embeddings and index in vector store
 - process_video_pipeline: Orchestrate full pipeline
 """
+import threading
+import time
+import logging
 from uuid import UUID
 from pathlib import Path
 from datetime import datetime
 from sqlalchemy.orm import Session
 
+logger = logging.getLogger(__name__)
+
 from app.core.celery_app import celery_app
 from app.db.base import SessionLocal
 from app.models import Video, Transcript, Chunk, Job
 from app.services.youtube import youtube_service, YouTubeDownloadError
-from app.services.transcription import TranscriptionService, transcription_service
+from app.services.transcription import TranscriptionService
 from app.services.chunking import TranscriptChunker, TranscriptSegment
 from app.services.enrichment import ContextualEnricher
-from app.services.embeddings import embedding_service, resolve_collection_name, set_active_embedding_model
+from app.services.embeddings import (
+    embedding_service,
+    resolve_collection_name,
+    set_active_embedding_model,
+)
 from app.services.vector_store import vector_store_service
 from app.services.storage import storage_service
 from app.services.usage_tracker import UsageTracker, QuotaExceededError
 from app.core.config import settings
+from app.services.job_cancellation import check_if_canceled
 
 
-def update_video_status(db: Session, video_id: UUID, status: str, progress: float, error: str = None):
+def _create_transcript_from_captions(video_id: str, caption_data: dict):
+    """
+    Create transcript record from extracted YouTube captions.
+
+    This is the fast path - no audio download or Whisper transcription needed.
+    Typically completes in 1-4 seconds vs 15-90 seconds for Whisper.
+
+    Args:
+        video_id: Video UUID string
+        caption_data: Caption data from youtube_service.get_captions()
+
+    Returns:
+        Dict with transcript_id and metadata
+    """
+    db = SessionLocal()
+    video_uuid = UUID(video_id)
+
+    try:
+        logger.info(f"[Pipeline] Creating transcript from captions for video={video_id}")
+        update_video_status(db, video_uuid, "transcribing", 50.0)
+
+        video = db.query(Video).filter(Video.id == video_uuid).first()
+
+        # Create transcript record
+        transcript = Transcript(
+            video_id=video_uuid,
+            full_text=caption_data["full_text"],
+            segments=caption_data["segments"],
+            language=caption_data["language"],
+            word_count=caption_data["word_count"],
+            duration_seconds=int(caption_data["duration_seconds"]),
+            has_speaker_labels=False,  # Captions typically don't have speaker labels
+        )
+        db.add(transcript)
+
+        # Update video with transcript source
+        video.transcription_language = caption_data["language"]
+        video.transcript_source = "captions"
+        video.status = "transcribed"
+        video.progress_percent = 100.0
+        db.commit()
+
+        # Save transcript to storage
+        transcript_data = {
+            "full_text": caption_data["full_text"],
+            "segments": caption_data["segments"],
+            "language": caption_data["language"],
+            "duration_seconds": caption_data["duration_seconds"],
+            "word_count": caption_data["word_count"],
+            "source": "captions",
+        }
+        transcript_path = storage_service.save_transcript(
+            video.user_id, video_uuid, transcript_data
+        )
+        video.transcript_file_path = transcript_path
+        db.commit()
+
+        logger.info(
+            f"[Pipeline] Caption-based transcript created for video={video_id}, "
+            f"segments={len(caption_data['segments'])}, words={caption_data['word_count']}"
+        )
+
+        return {
+            "transcript_id": str(transcript.id),
+            "language": caption_data["language"],
+            "word_count": caption_data["word_count"],
+            "segment_count": len(caption_data["segments"]),
+            "source": "captions",
+        }
+
+    except Exception as e:
+        update_video_status(
+            db, video_uuid, "failed", 0.0, f"Caption processing failed: {str(e)}"
+        )
+        raise
+    finally:
+        db.close()
+
+
+def update_video_status(
+    db: Session, video_id: UUID, status: str, progress: float, error: str = None
+):
     """Helper to update video processing status."""
     video = db.query(Video).filter(Video.id == video_id).first()
     if video:
@@ -40,7 +131,14 @@ def update_video_status(db: Session, video_id: UUID, status: str, progress: floa
         db.commit()
 
 
-def update_job_status(db: Session, job_id: UUID, status: str, progress: float, current_step: str = None, error: str = None):
+def update_job_status(
+    db: Session,
+    job_id: UUID,
+    status: str,
+    progress: float,
+    current_step: str = None,
+    error: str = None,
+):
     """Helper to update job status."""
     job = db.query(Job).filter(Job.id == job_id).first()
     if job:
@@ -79,7 +177,7 @@ def _download_youtube_audio(video_id: str, youtube_url: str, user_id: str):
             url=youtube_url,
             user_id=user_uuid,
             video_id=video_uuid,
-            progress_callback=progress_callback
+            progress_callback=progress_callback,
         )
 
         video = db.query(Video).filter(Video.id == video_uuid).first()
@@ -106,13 +204,14 @@ def _download_youtube_audio(video_id: str, youtube_url: str, user_id: str):
         except Exception as e:
             print(f"[usage] Failed to track ingestion for video={video_id}: {e}")
 
-        print(f"[pipeline] Download complete for video={video_id}, size_mb={file_size_mb}")
-        return {
-            "audio_path": audio_path,
-            "file_size_mb": file_size_mb
-        }
+        print(
+            f"[pipeline] Download complete for video={video_id}, size_mb={file_size_mb}"
+        )
+        return {"audio_path": audio_path, "file_size_mb": file_size_mb}
     except QuotaExceededError as e:
-        update_video_status(db, video_uuid, "failed", 0.0, f"Storage quota exceeded: {str(e)}")
+        update_video_status(
+            db, video_uuid, "failed", 0.0, f"Storage quota exceeded: {str(e)}"
+        )
         try:
             storage_service.delete_audio(user_uuid, video_uuid)
         except Exception:
@@ -135,7 +234,9 @@ def _transcribe_audio(video_id: str, audio_path: str):
     usage_tracker = UsageTracker(db)
 
     try:
-        print(f"[pipeline] Transcription start for video={video_id}, audio={audio_path}")
+        print(
+            f"[pipeline] Transcription start for video={video_id}, audio={audio_path}"
+        )
         update_video_status(db, video_uuid, "transcribing", 10.0)
 
         video = db.query(Video).filter(Video.id == video_uuid).first()
@@ -147,12 +248,51 @@ def _transcribe_audio(video_id: str, audio_path: str):
             elif status == "processing":
                 update_video_status(db, video_uuid, "transcribing", 80.0, None)
 
-        # Create a fresh transcription service per process to avoid fork-safety issues
-        local_transcription_service = TranscriptionService()
-        result = local_transcription_service.transcribe_file(
-            audio_path=audio_path,
-            progress_callback=progress_callback
-        )
+        # Start heartbeat thread to update updated_at and simulate progress every 30 seconds
+        # This signals to the frontend that the process is still alive
+        heartbeat_active = threading.Event()
+        heartbeat_active.set()
+        heartbeat_start_time = datetime.utcnow()
+        # Estimate: transcription takes ~2x video duration on CPU
+        estimated_total_seconds = (video.duration_seconds or 3600) * 2
+
+        def heartbeat_worker():
+            """Update timestamp and simulate progress every 30 seconds."""
+            while heartbeat_active.is_set():
+                try:
+                    db_heartbeat = SessionLocal()
+                    v = db_heartbeat.query(Video).filter(Video.id == video_uuid).first()
+                    if v and v.status == "transcribing":
+                        v.updated_at = datetime.utcnow()
+                        # Simulate progress: 10% to 85% based on elapsed time
+                        elapsed = (datetime.utcnow() - heartbeat_start_time).total_seconds()
+                        simulated_progress = min(85, 10 + (elapsed / estimated_total_seconds) * 75)
+                        v.progress_percent = simulated_progress
+                        db_heartbeat.commit()
+                        logger.info(f"[heartbeat] video={video_id} progress={simulated_progress:.1f}%")
+                    db_heartbeat.close()
+                except Exception as e:
+                    logger.warning(f"[heartbeat] Error: {e}")
+                # Sleep in small increments to allow quick shutdown
+                for _ in range(30):
+                    if not heartbeat_active.is_set():
+                        break
+                    time.sleep(1)
+
+        heartbeat_thread = threading.Thread(target=heartbeat_worker, daemon=True)
+        heartbeat_thread.start()
+
+        try:
+            # Create a fresh transcription service per process to avoid fork-safety issues
+            local_transcription_service = TranscriptionService()
+            result = local_transcription_service.transcribe_file(
+                audio_path=audio_path, progress_callback=progress_callback
+            )
+        finally:
+            # Stop heartbeat thread
+            heartbeat_active.clear()
+            heartbeat_thread.join(timeout=5)
+            logger.info(f"[heartbeat] Stopped for video={video_id}")
 
         transcript = Transcript(
             video_id=video_uuid,
@@ -162,18 +302,19 @@ def _transcribe_audio(video_id: str, audio_path: str):
                     "text": seg.text,
                     "start": seg.start,
                     "end": seg.end,
-                    "speaker": seg.speaker
+                    "speaker": seg.speaker,
                 }
                 for seg in result.segments
             ],
             language=result.language,
             word_count=result.word_count,
             duration_seconds=int(result.duration_seconds),
-            has_speaker_labels=any(seg.speaker for seg in result.segments)
+            has_speaker_labels=any(seg.speaker for seg in result.segments),
         )
         db.add(transcript)
 
         video.transcription_language = result.language
+        video.transcript_source = "whisper"
         video.status = "transcribed"
         video.progress_percent = 100.0
         db.commit()
@@ -185,15 +326,17 @@ def _transcribe_audio(video_id: str, audio_path: str):
                     "text": seg.text,
                     "start": seg.start,
                     "end": seg.end,
-                    "speaker": seg.speaker
+                    "speaker": seg.speaker,
                 }
                 for seg in result.segments
             ],
             "language": result.language,
             "duration_seconds": result.duration_seconds,
-            "word_count": result.word_count
+            "word_count": result.word_count,
         }
-        transcript_path = storage_service.save_transcript(video.user_id, video_uuid, transcript_data)
+        transcript_path = storage_service.save_transcript(
+            video.user_id, video_uuid, transcript_data
+        )
         video.transcript_file_path = transcript_path
         db.commit()
 
@@ -208,7 +351,9 @@ def _transcribe_audio(video_id: str, audio_path: str):
                 extra_metadata={"segments": len(result.segments)},
             )
         except Exception as e:
-            print(f"[usage] Failed to track transcript storage for video={video_id}: {e}")
+            print(
+                f"[usage] Failed to track transcript storage for video={video_id}: {e}"
+            )
 
         if settings.cleanup_audio_after_transcription:
             audio_removed = storage_service.delete_audio(video.user_id, video_uuid)
@@ -221,7 +366,9 @@ def _transcribe_audio(video_id: str, audio_path: str):
                         video_id=video_uuid,
                     )
             except Exception as e:
-                print(f"[usage] Failed to track audio cleanup for video={video_id}: {e}")
+                print(
+                    f"[usage] Failed to track audio cleanup for video={video_id}: {e}"
+                )
 
         try:
             usage_tracker.track_transcription(
@@ -232,7 +379,9 @@ def _transcribe_audio(video_id: str, audio_path: str):
                 getattr(result, "model", None) or "whisper",
             )
         except Exception as e:
-            print(f"[usage] Failed to track transcription event for video={video_id}: {e}")
+            print(
+                f"[usage] Failed to track transcription event for video={video_id}: {e}"
+            )
 
         print(f"[pipeline] Transcription complete for video={video_id}")
 
@@ -240,10 +389,12 @@ def _transcribe_audio(video_id: str, audio_path: str):
             "transcript_id": str(transcript.id),
             "language": result.language,
             "word_count": result.word_count,
-            "segment_count": len(result.segments)
+            "segment_count": len(result.segments),
         }
     except Exception as e:
-        update_video_status(db, video_uuid, "failed", 0.0, f"Transcription failed: {str(e)}")
+        update_video_status(
+            db, video_uuid, "failed", 0.0, f"Transcription failed: {str(e)}"
+        )
         raise
     finally:
         db.close()
@@ -260,14 +411,16 @@ def _chunk_and_enrich(video_id: str, transcript_id: str):
         update_video_status(db, video_uuid, "chunking", 10.0)
 
         video = db.query(Video).filter(Video.id == video_uuid).first()
-        transcript = db.query(Transcript).filter(Transcript.id == transcript_uuid).first()
+        transcript = (
+            db.query(Transcript).filter(Transcript.id == transcript_uuid).first()
+        )
 
         segments = [
             TranscriptSegment(
                 text=seg["text"],
                 start=seg["start"],
                 end=seg["end"],
-                speaker=seg.get("speaker")
+                speaker=seg.get("speaker"),
             )
             for seg in transcript.segments
         ]
@@ -309,7 +462,7 @@ def _chunk_and_enrich(video_id: str, transcript_id: str):
                 chunk_title=enriched_chunk.title,
                 keywords=enriched_chunk.keywords,
                 embedding_text=enriched_chunk.embedding_text,
-                enriched_at=datetime.utcnow()
+                enriched_at=datetime.utcnow(),
             )
             db.add(db_chunk)
 
@@ -318,10 +471,10 @@ def _chunk_and_enrich(video_id: str, transcript_id: str):
         video.progress_percent = 90.0
         db.commit()
 
-        print(f"[pipeline] Chunk/enrich complete for video={video_id}, chunks={len(enriched_chunks)}")
-        return {
-            "chunk_count": len(enriched_chunks)
-        }
+        print(
+            f"[pipeline] Chunk/enrich complete for video={video_id}, chunks={len(enriched_chunks)}"
+        )
+        return {"chunk_count": len(enriched_chunks)}
     except Exception as e:
         update_video_status(db, video_uuid, "failed", 0.0, f"Chunking failed: {str(e)}")
         raise
@@ -342,7 +495,7 @@ def _embed_and_index(video_id: str, user_id: str, force_reindex: bool = False):
 
         query = db.query(Chunk).filter(Chunk.video_id == video_uuid)
         if not force_reindex:
-            query = query.filter(Chunk.is_indexed == False)
+            query = query.filter(Chunk.is_indexed.is_(False))
         chunks = query.order_by(Chunk.chunk_index).all()
 
         if not chunks:
@@ -367,14 +520,14 @@ def _embed_and_index(video_id: str, user_id: str, force_reindex: bool = False):
                 speakers=db_chunk.speakers,
                 chapter_title=db_chunk.chapter_title,
                 chapter_index=db_chunk.chapter_index,
-                chunk_index=db_chunk.chunk_index
+                chunk_index=db_chunk.chunk_index,
             )
 
             enriched = EnrichedChunk(
                 chunk=chunk_data,
                 summary=db_chunk.chunk_summary,
                 title=db_chunk.chunk_title,
-                keywords=db_chunk.keywords
+                keywords=db_chunk.keywords,
             )
             enriched_chunks.append(enriched)
 
@@ -389,7 +542,7 @@ def _embed_and_index(video_id: str, user_id: str, force_reindex: bool = False):
             enriched_chunks=enriched_chunks,
             embeddings=embeddings,
             user_id=user_uuid,
-            video_id=video_uuid
+            video_id=video_uuid,
         )
 
         for chunk in chunks:
@@ -412,7 +565,9 @@ def _embed_and_index(video_id: str, user_id: str, force_reindex: bool = False):
         except Exception as e:
             print(f"[usage] Failed to track embedding event for video={video_id}: {e}")
 
-        print(f"[pipeline] Embed/index complete for video={video_id}, indexed={len(chunks)}")
+        print(
+            f"[pipeline] Embed/index complete for video={video_id}, indexed={len(chunks)}"
+        )
         return {"indexed_count": len(chunks)}
     except Exception as e:
         update_video_status(db, video_uuid, "failed", 0.0, f"Indexing failed: {str(e)}")
@@ -441,7 +596,7 @@ def download_youtube_audio(self, video_id: str, youtube_url: str, user_id: str):
         # Bubble up quota failures without retries
         raise e
 
-    except YouTubeDownloadError as e:
+    except YouTubeDownloadError:
         raise
 
     except Exception as e:
@@ -514,25 +669,51 @@ def reembed_all_videos(self, model_key: str):
     db = SessionLocal()
     try:
         set_active_embedding_model(model_key)
-        videos = db.query(Video).filter(Video.is_deleted == False).all()
+        videos = db.query(Video).filter(Video.is_deleted.is_(False)).all()
         for video in videos:
             _embed_and_index(str(video.id), str(video.user_id), force_reindex=True)
-        return {"status": "completed", "video_count": len(videos), "model_key": model_key}
+        return {
+            "status": "completed",
+            "video_count": len(videos),
+            "model_key": model_key,
+        }
     except Exception as e:
         raise self.retry(exc=e, countdown=60)
     finally:
         db.close()
+
+
+class VideoCanceledException(Exception):
+    """Raised when video processing is canceled."""
+
+    pass
+
+
+def _check_canceled_or_raise(db: Session, video_id: str, job_id: str, step_name: str):
+    """
+    Check if video is canceled and raise exception if so.
+
+    This is called at checkpoints between pipeline stages to allow
+    graceful abort when user requests cancellation.
+    """
+    video_uuid = UUID(video_id)
+    if check_if_canceled(db, video_uuid):
+        print(f"[pipeline] Canceled at checkpoint: {step_name} job={job_id}")
+        raise VideoCanceledException(f"Video processing canceled at {step_name}")
+
 
 @celery_app.task
 def process_video_pipeline(video_id: str, youtube_url: str, user_id: str, job_id: str):
     """
     Orchestrate the full video processing pipeline.
 
-    Pipeline:
-    1. Download audio
-    2. Transcribe
-    3. Chunk and enrich
-    4. Embed and index
+    Pipeline (with caption-first optimization):
+    1. Try: Extract YouTube captions (fast path: 1-4s)
+       OR Fallback: Download audio + Whisper transcription (15-90s)
+    2. Chunk and enrich
+    3. Embed and index
+
+    Includes cancellation checkpoints between stages for graceful abort.
 
     Args:
         video_id: Video UUID
@@ -546,17 +727,49 @@ def process_video_pipeline(video_id: str, youtube_url: str, user_id: str, job_id
         # Update job
         update_job_status(db, UUID(job_id), "running", 0.0, "Starting pipeline")
 
-        # Step 1: Download audio
-        print(f"[pipeline] Step 1: download start job={job_id}")
-        update_job_status(db, UUID(job_id), "running", 10.0, "Downloading audio")
-        download_result = _download_youtube_audio(video_id, youtube_url, user_id)
-        print(f"[pipeline] Step 1: download done job={job_id}")
+        # Checkpoint: before transcription
+        _check_canceled_or_raise(db, video_id, job_id, "before_transcription")
 
-        # Step 2: Transcribe
-        print(f"[pipeline] Step 2: transcribe start job={job_id}")
-        update_job_status(db, UUID(job_id), "running", 30.0, "Transcribing audio")
-        transcribe_result = _transcribe_audio(video_id, download_result["audio_path"])
-        print(f"[pipeline] Step 2: transcribe done job={job_id}")
+        # Get video info to extract youtube_id
+        video = db.query(Video).filter(Video.id == UUID(video_id)).first()
+        youtube_id = video.youtube_id if video else youtube_service.extract_video_id(youtube_url)
+
+        # Step 1: Try caption extraction first (fast path)
+        logger.info(f"[Pipeline] Attempting caption extraction for video={video_id}")
+        update_job_status(db, UUID(job_id), "running", 5.0, "Checking for captions")
+
+        caption_data = youtube_service.get_captions(youtube_id)
+
+        if caption_data:
+            # Fast path: Use captions directly (no audio download needed)
+            logger.info(f"[Pipeline] Using YouTube captions for video={video_id} (fast path)")
+            update_job_status(db, UUID(job_id), "running", 10.0, "Processing captions")
+            transcribe_result = _create_transcript_from_captions(video_id, caption_data)
+            logger.info(f"[Pipeline] Caption-based transcription complete for video={video_id}")
+        else:
+            # Fallback: Download audio and transcribe with Whisper
+            logger.info(f"[Pipeline] No captions available, falling back to Whisper for video={video_id}")
+
+            # Step 1a: Download audio
+            logger.info(f"[Pipeline] Step 1a: download start job={job_id}")
+            update_job_status(db, UUID(job_id), "running", 10.0, "Downloading audio")
+            download_result = _download_youtube_audio(video_id, youtube_url, user_id)
+            logger.info(f"[Pipeline] Step 1a: download done job={job_id}")
+
+            # Checkpoint: after download
+            _check_canceled_or_raise(db, video_id, job_id, "after_download")
+
+            # Step 1b: Transcribe with Whisper
+            logger.info(f"[Pipeline] Step 1b: transcribe start job={job_id}")
+            update_job_status(db, UUID(job_id), "running", 30.0, "Transcribing audio")
+            transcribe_result = _transcribe_audio(video_id, download_result["audio_path"])
+            logger.info(f"[Pipeline] Step 1b: transcribe done job={job_id}")
+
+        # Checkpoint: after transcription
+        _check_canceled_or_raise(db, video_id, job_id, "after_transcribe")
+
+        # Checkpoint: after transcribe
+        _check_canceled_or_raise(db, video_id, job_id, "after_transcribe")
 
         # Step 3: Chunk and enrich
         print(f"[pipeline] Step 3: chunk/enrich start job={job_id}")
@@ -564,9 +777,14 @@ def process_video_pipeline(video_id: str, youtube_url: str, user_id: str, job_id
         chunk_result = _chunk_and_enrich(video_id, transcribe_result["transcript_id"])
         print(f"[pipeline] Step 3: chunk/enrich done job={job_id}")
 
+        # Checkpoint: after chunk/enrich
+        _check_canceled_or_raise(db, video_id, job_id, "after_chunk_enrich")
+
         # Step 4: Embed and index
         print(f"[pipeline] Step 4: embed/index start job={job_id}")
-        update_job_status(db, UUID(job_id), "running", 90.0, "Generating embeddings and indexing")
+        update_job_status(
+            db, UUID(job_id), "running", 90.0, "Generating embeddings and indexing"
+        )
         index_result = _embed_and_index(video_id, user_id)
         print(f"[pipeline] Step 4: embed/index done job={job_id}")
 
@@ -576,7 +794,15 @@ def process_video_pipeline(video_id: str, youtube_url: str, user_id: str, job_id
         return {
             "status": "completed",
             "chunk_count": chunk_result["chunk_count"],
-            "indexed_count": index_result["indexed_count"]
+            "indexed_count": index_result["indexed_count"],
+        }
+
+    except VideoCanceledException:
+        # Graceful cancellation - don't mark as failed
+        update_job_status(db, UUID(job_id), "canceled", 0.0, "Processing canceled")
+        return {
+            "status": "canceled",
+            "message": "Video processing was canceled by user",
         }
 
     except Exception as e:

@@ -15,6 +15,8 @@ from app.models.message import Message, MessageChunkReference
 from app.models.collection import Collection, CollectionVideo, CollectionMember
 from app.models.usage import UsageEvent, UserQuota
 from app.models.job import Job
+from app.models.admin_audit_log import AdminAuditLog
+from app.models.subscription import Subscription
 
 __all__ = [
     "User",
@@ -33,4 +35,6 @@ __all__ = [
     "UsageEvent",
     "UserQuota",
     "Job",
+    "AdminAuditLog",
+    "Subscription",
 ]

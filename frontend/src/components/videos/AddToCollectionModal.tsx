@@ -2,9 +2,15 @@
 
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { X, Check, Folder, Plus, Minus } from "lucide-react";
-import { getCollections, addVideosToCollection, removeVideoFromCollection } from "@/lib/api/collections";
+import { X, Folder, Plus, Minus, FolderPlus } from "lucide-react";
+import {
+  getCollections,
+  addVideosToCollection,
+  removeVideoFromCollection,
+  createCollection,
+} from "@/lib/api/collections";
 import { videosApi } from "@/lib/api/videos";
+import type { Collection } from "@/lib/types";
 
 interface AddToCollectionModalProps {
   videoIds: string[];
@@ -28,8 +34,14 @@ export function AddToCollectionModal({
   const [error, setError] = useState<string>("");
   const [videoCollections, setVideoCollections] = useState<Set<string>>(new Set());
   const [actionLog, setActionLog] = useState<ActionLogEntry[]>([]);
+  const [showCreateForm, setShowCreateForm] = useState(false);
+  const [newCollectionName, setNewCollectionName] = useState("");
+  const [newCollectionDescription, setNewCollectionDescription] = useState("");
   const videoCount = videoIds.length;
   const isSingleVideo = videoCount === 1;
+
+  type AddMutationVariables = { collectionId: string; videoIds: string[]; collectionName?: string };
+  type RemoveMutationVariables = { collectionId: string; videoId: string; collectionName?: string };
 
   // Fetch collections
   const { data: collectionsData, isLoading } = useQuery({
@@ -50,7 +62,7 @@ export function AddToCollectionModal({
 
   // Add video to collection mutation
   const addMutation = useMutation({
-    mutationFn: ({ collectionId, videoIds }: { collectionId: string; videoIds: string[] }) =>
+    mutationFn: ({ collectionId, videoIds }: AddMutationVariables) =>
       addVideosToCollection(collectionId, { video_ids: videoIds }),
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ["collections"] });
@@ -65,7 +77,7 @@ export function AddToCollectionModal({
       // Add to action log
       const collectionName =
         collectionsData?.collections.find((collection) => collection.id === variables.collectionId)
-          ?.name ?? "collection";
+          ?.name ?? variables.collectionName ?? "collection";
 
       setActionLog(prev => [
         {
@@ -80,14 +92,14 @@ export function AddToCollectionModal({
     onError: (error: any, variables) => {
       const collectionName =
         collectionsData?.collections.find((collection) => collection.id === variables.collectionId)
-          ?.name ?? "collection";
+          ?.name ?? variables.collectionName ?? "collection";
       setError(`Failed to add to ${collectionName}: ${error.response?.data?.detail || "Unknown error"}`);
     },
   });
 
   // Remove video from collection mutation
   const removeMutation = useMutation({
-    mutationFn: ({ collectionId, videoId }: { collectionId: string; videoId: string }) =>
+    mutationFn: ({ collectionId, videoId }: RemoveMutationVariables) =>
       removeVideoFromCollection(collectionId, videoId),
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ["collections"] });
@@ -106,7 +118,7 @@ export function AddToCollectionModal({
       // Add to action log
       const collectionName =
         collectionsData?.collections.find((collection) => collection.id === variables.collectionId)
-          ?.name ?? "collection";
+          ?.name ?? variables.collectionName ?? "collection";
 
       setActionLog(prev => [
         {
@@ -121,26 +133,79 @@ export function AddToCollectionModal({
     onError: (error: any, variables) => {
       const collectionName =
         collectionsData?.collections.find((collection) => collection.id === variables.collectionId)
-          ?.name ?? "collection";
+          ?.name ?? variables.collectionName ?? "collection";
       setError(`Failed to remove from ${collectionName}: ${error.response?.data?.detail || "Unknown error"}`);
     },
   });
 
-  const handleCheckboxChange = async (collectionId: string, isChecked: boolean) => {
+  const createMutation = useMutation({
+    mutationFn: createCollection,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["collections"] });
+      setError("");
+    },
+    onError: (error: any) => {
+      setError(error.response?.data?.detail || "Failed to create collection");
+    },
+  });
+
+  const resetCreateForm = () => {
+    setShowCreateForm(false);
+    setNewCollectionName("");
+    setNewCollectionDescription("");
+  };
+
+  const handleCreateCollection = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError("");
+
+    const trimmedName = newCollectionName.trim();
+    const trimmedDescription = newCollectionDescription.trim();
+
+    if (!trimmedName) {
+      setError("Collection name is required");
+      return;
+    }
+
+    try {
+      const newCollection = await createMutation.mutateAsync({
+        name: trimmedName,
+        description: trimmedDescription || undefined,
+        metadata: {},
+      });
+
+      resetCreateForm();
+
+      await addMutation.mutateAsync({
+        collectionId: newCollection.id,
+        collectionName: newCollection.name,
+        videoIds,
+      });
+    } catch (err) {
+      console.error("Failed to create collection:", err);
+      if (!createMutation.isError) {
+        setError("Failed to create collection. Please try again.");
+      }
+    }
+  };
+
+  const handleCheckboxChange = async (collection: Collection, isChecked: boolean) => {
     setError("");
 
     if (isChecked) {
       // Add to collection
       await addMutation.mutateAsync({
-        collectionId,
+        collectionId: collection.id,
+        collectionName: collection.name,
         videoIds,
       });
     } else {
       // Remove from collection (single video only)
       if (isSingleVideo) {
         await removeMutation.mutateAsync({
-          collectionId,
+          collectionId: collection.id,
           videoId: videoIds[0],
+          collectionName: collection.name,
         });
       }
     }
@@ -214,7 +279,8 @@ export function AddToCollectionModal({
               <div className="space-y-2 max-h-64 overflow-y-auto">
                 {collectionsData.collections.map((collection) => {
                   const isInCollection = isSingleVideo && videoCollections.has(collection.id);
-                  const isDisabled = addMutation.isPending || removeMutation.isPending;
+                  const isDisabled =
+                    addMutation.isPending || removeMutation.isPending || createMutation.isPending;
 
                   return (
                     <label
@@ -229,7 +295,7 @@ export function AddToCollectionModal({
                         type="checkbox"
                         checked={isInCollection}
                         disabled={isDisabled}
-                        onChange={(e) => handleCheckboxChange(collection.id, e.target.checked)}
+                        onChange={(e) => handleCheckboxChange(collection, e.target.checked)}
                         className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
                       />
                       <Folder
@@ -251,8 +317,75 @@ export function AddToCollectionModal({
                 })}
               </div>
             ) : (
-              <div className="text-center py-4 text-gray-500">
-                No collections available. Create one first.
+              <div className="text-center py-6 text-gray-600 border border-dashed border-gray-200 rounded-lg">
+                <FolderPlus className="w-8 h-8 mx-auto text-gray-400" />
+                <p className="mt-3 text-base font-semibold text-gray-900">
+                  No collections available
+                </p>
+                <p className="mt-1 text-sm text-gray-600">
+                  Create a collection to organize this video.
+                </p>
+
+                {!showCreateForm ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowCreateForm(true);
+                      setError("");
+                    }}
+                    className="mt-4 inline-flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
+                    disabled={createMutation.isPending}
+                  >
+                    <Plus className="w-4 h-4" />
+                    Create collection
+                  </button>
+                ) : (
+                  <form onSubmit={handleCreateCollection} className="mt-4 text-left space-y-3 px-2">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Collection name <span className="text-red-500">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={newCollectionName}
+                        onChange={(e) => setNewCollectionName(e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        placeholder="e.g., Course playlist"
+                        disabled={createMutation.isPending}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Description (optional)
+                      </label>
+                      <input
+                        type="text"
+                        value={newCollectionDescription}
+                        onChange={(e) => setNewCollectionDescription(e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        placeholder="What is this collection for?"
+                        disabled={createMutation.isPending}
+                      />
+                    </div>
+                    <div className="flex justify-end gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={resetCreateForm}
+                        className="px-4 py-2 text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors disabled:opacity-50"
+                        disabled={createMutation.isPending}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="submit"
+                        className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
+                        disabled={createMutation.isPending}
+                      >
+                        {createMutation.isPending ? "Creating..." : "Create & add video"}
+                      </button>
+                    </div>
+                  </form>
+                )}
               </div>
             )}
           </div>
@@ -269,7 +402,7 @@ export function AddToCollectionModal({
               type="button"
               onClick={onClose}
               className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-              disabled={addMutation.isPending || removeMutation.isPending}
+              disabled={addMutation.isPending || removeMutation.isPending || createMutation.isPending}
             >
               Done
             </button>

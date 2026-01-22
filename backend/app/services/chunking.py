@@ -27,6 +27,7 @@ class TranscriptSegment:
         end: End timestamp in seconds
         speaker: Optional speaker ID (if diarization is available)
     """
+
     text: str
     start: float
     end: float
@@ -36,6 +37,7 @@ class TranscriptSegment:
 @dataclass
 class ChunkConfig:
     """Configuration for chunking behavior."""
+
     target_tokens: int = settings.chunk_target_tokens
     min_tokens: int = settings.chunk_min_tokens
     max_tokens: int = settings.chunk_max_tokens
@@ -58,6 +60,7 @@ class Chunk:
         chapter_index: Chapter index if applicable
         chunk_index: Position in the sequence of chunks
     """
+
     text: str
     start_timestamp: float
     end_timestamp: float
@@ -135,7 +138,7 @@ class TranscriptChunker:
         """
         # Pattern for sentence boundaries
         # Matches . ! ? followed by space and capital letter, or end of string
-        pattern = r'(?<=[.!?])\s+(?=[A-Z])|(?<=[.!?])$'
+        pattern = r"(?<=[.!?])\s+(?=[A-Z])|(?<=[.!?])$"
 
         sentences = re.split(pattern, text)
 
@@ -145,9 +148,7 @@ class TranscriptChunker:
         return sentences if sentences else [text]
 
     def group_segments_by_chapter(
-        self,
-        segments: List[TranscriptSegment],
-        chapters: Optional[List[Dict]] = None
+        self, segments: List[TranscriptSegment], chapters: Optional[List[Dict]] = None
     ) -> List[List[TranscriptSegment]]:
         """
         Group transcript segments by YouTube chapter.
@@ -164,13 +165,12 @@ class TranscriptChunker:
 
         grouped = []
         for i, chapter in enumerate(chapters):
-            chapter_start = chapter['start_time']
-            chapter_end = chapter.get('end_time', float('inf'))
+            chapter_start = chapter["start_time"]
+            chapter_end = chapter.get("end_time", float("inf"))
 
             # Find segments in this chapter
             chapter_segments = [
-                seg for seg in segments
-                if chapter_start <= seg.start < chapter_end
+                seg for seg in segments if chapter_start <= seg.start < chapter_end
             ]
 
             if chapter_segments:
@@ -184,7 +184,7 @@ class TranscriptChunker:
         segments: List[TranscriptSegment],
         chunk_index: int,
         chapter_title: Optional[str] = None,
-        chapter_index: Optional[int] = None
+        chapter_index: Optional[int] = None,
     ) -> Chunk:
         """
         Create a Chunk object from a list of segments.
@@ -217,13 +217,11 @@ class TranscriptChunker:
             speakers=speakers if speakers else None,
             chapter_title=chapter_title,
             chapter_index=chapter_index,
-            chunk_index=chunk_index
+            chunk_index=chunk_index,
         )
 
     def chunk_transcript(
-        self,
-        segments: List[TranscriptSegment],
-        chapters: Optional[List[Dict]] = None
+        self, segments: List[TranscriptSegment], chapters: Optional[List[Dict]] = None
     ) -> List[Chunk]:
         """
         Chunk transcript segments into semantic units.
@@ -243,7 +241,13 @@ class TranscriptChunker:
 
         Returns:
             List of Chunk objects
+
+        Raises:
+            ValueError: If segments is not a list or contains invalid items
         """
+        if not isinstance(segments, list):
+            raise ValueError("segments must be a list of TranscriptSegment objects")
+
         if not segments:
             return []
 
@@ -258,7 +262,7 @@ class TranscriptChunker:
             chapter_title = None
             chapter_index = None
             if chapters and group_idx < len(chapters):
-                chapter_title = chapters[group_idx].get('title')
+                chapter_title = chapters[group_idx].get("title")
                 chapter_index = group_idx
 
             # Chunk this group
@@ -266,7 +270,7 @@ class TranscriptChunker:
                 segment_group,
                 start_chunk_index=chunk_index,
                 chapter_title=chapter_title,
-                chapter_index=chapter_index
+                chapter_index=chapter_index,
             )
 
             all_chunks.extend(chunks)
@@ -282,7 +286,7 @@ class TranscriptChunker:
         segments: List[TranscriptSegment],
         start_chunk_index: int = 0,
         chapter_title: Optional[str] = None,
-        chapter_index: Optional[int] = None
+        chapter_index: Optional[int] = None,
     ) -> List[Chunk]:
         """
         Chunk a group of segments (e.g., one chapter).
@@ -306,7 +310,9 @@ class TranscriptChunker:
             segment_tokens = self.count_tokens(segment_text)
 
             # Check if adding this segment would exceed max tokens or max duration
-            would_exceed_tokens = current_token_count + segment_tokens > self.config.max_tokens
+            would_exceed_tokens = (
+                current_token_count + segment_tokens > self.config.max_tokens
+            )
 
             current_duration = 0
             if current_segments:
@@ -333,10 +339,7 @@ class TranscriptChunker:
                 # Create chunk from accumulated segments
                 if current_token_count >= self.config.min_tokens:
                     chunk = self.create_chunk_from_segments(
-                        current_segments,
-                        chunk_idx,
-                        chapter_title,
-                        chapter_index
+                        current_segments, chunk_idx, chapter_title, chapter_index
                     )
                     chunks.append(chunk)
                     chunk_idx += 1
@@ -350,15 +353,14 @@ class TranscriptChunker:
         # Create final chunk if there are remaining segments
         if current_segments and current_token_count >= self.config.min_tokens:
             chunk = self.create_chunk_from_segments(
-                current_segments,
-                chunk_idx,
-                chapter_title,
-                chapter_index
+                current_segments, chunk_idx, chapter_title, chapter_index
             )
             chunks.append(chunk)
         elif current_segments and chunks:
             # Merge small final chunk with previous chunk
-            chunks = self._merge_small_final_chunk(chunks, current_segments, chapter_title, chapter_index)
+            chunks = self._merge_small_final_chunk(
+                chunks, current_segments, chapter_title, chapter_index
+            )
 
         return chunks
 
@@ -372,14 +374,14 @@ class TranscriptChunker:
         Returns:
             True if text ends with sentence-ending punctuation
         """
-        return bool(re.search(r'[.!?]\s*$', text))
+        return bool(re.search(r"[.!?]\s*$", text))
 
     def _merge_small_final_chunk(
         self,
         chunks: List[Chunk],
         remaining_segments: List[TranscriptSegment],
         chapter_title: Optional[str],
-        chapter_index: Optional[int]
+        chapter_index: Optional[int],
     ) -> List[Chunk]:
         """
         Merge small final segment group with the last chunk.
@@ -404,7 +406,9 @@ class TranscriptChunker:
         combined_tokens = self.count_tokens(combined_text)
 
         # Collect speakers
-        remaining_speakers = list(set(seg.speaker for seg in remaining_segments if seg.speaker))
+        remaining_speakers = list(
+            set(seg.speaker for seg in remaining_segments if seg.speaker)
+        )
         all_speakers = list(set((last_chunk.speakers or []) + remaining_speakers))
 
         # Create merged chunk
@@ -416,7 +420,7 @@ class TranscriptChunker:
             speakers=all_speakers if all_speakers else None,
             chapter_title=chapter_title,
             chapter_index=chapter_index,
-            chunk_index=last_chunk.chunk_index
+            chunk_index=last_chunk.chunk_index,
         )
 
         # Replace last chunk with merged chunk
@@ -424,9 +428,7 @@ class TranscriptChunker:
         return chunks
 
     def _add_overlap(
-        self,
-        chunks: List[Chunk],
-        segments: List[TranscriptSegment]
+        self, chunks: List[Chunk], segments: List[TranscriptSegment]
     ) -> List[Chunk]:
         """
         Add overlap between consecutive chunks.
@@ -451,12 +453,15 @@ class TranscriptChunker:
 
             # Get overlap text from previous chunk (last N tokens)
             overlap_text = self._extract_overlap_text(
-                previous_chunk.text,
-                self.config.overlap_tokens
+                previous_chunk.text, self.config.overlap_tokens
             )
 
             # Prepend overlap to current chunk
-            new_text = overlap_text + " " + current_chunk.text if overlap_text else current_chunk.text
+            new_text = (
+                overlap_text + " " + current_chunk.text
+                if overlap_text
+                else current_chunk.text
+            )
             new_token_count = self.count_tokens(new_text)
 
             overlapped_chunk = Chunk(
@@ -467,7 +472,7 @@ class TranscriptChunker:
                 speakers=current_chunk.speakers,
                 chapter_title=current_chunk.chapter_title,
                 chapter_index=current_chunk.chapter_index,
-                chunk_index=current_chunk.chunk_index
+                chunk_index=current_chunk.chunk_index,
             )
 
             overlapped_chunks.append(overlapped_chunk)

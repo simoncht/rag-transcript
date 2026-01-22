@@ -2,7 +2,9 @@
 YouTube video downloader service using yt-dlp.
 
 Handles downloading audio from YouTube videos and extracting metadata.
+Supports caption extraction for faster transcription when available.
 """
+import logging
 import tempfile
 from datetime import datetime
 from pathlib import Path
@@ -12,10 +14,18 @@ import yt_dlp
 
 from app.core.config import settings
 from app.services.storage import storage_service
+from app.services.caption_parser import (
+    parse_vtt_to_segments,
+    segments_to_full_text,
+    get_transcript_stats,
+)
+
+logger = logging.getLogger(__name__)
 
 
 class YouTubeDownloadError(Exception):
     """Exception raised when YouTube download fails."""
+
     pass
 
 
@@ -24,7 +34,9 @@ class YouTubeService:
 
     def __init__(self):
         self.max_duration = settings.max_video_duration_seconds
-        self.max_file_size = settings.max_video_file_size_mb * 1024 * 1024  # Convert to bytes
+        self.max_file_size = (
+            settings.max_video_file_size_mb * 1024 * 1024
+        )  # Convert to bytes
         self._default_headers = {
             # Modern desktop UA helps avoid 403s on some videos
             "User-Agent": (
@@ -44,11 +56,15 @@ class YouTubeService:
         video_id = self.extract_video_id(url)
         return f"https://www.youtube.com/watch?v={video_id}"
 
-    def _common_yt_opts(self, player_client: Optional[str] = None, referer: Optional[str] = None) -> Dict:
+    def _common_yt_opts(
+        self, player_client: Optional[str] = None, referer: Optional[str] = None
+    ) -> Dict:
         """
         Shared yt-dlp options to reduce 403/availability issues.
         """
-        client_profiles: List[str] = [player_client] if player_client else ["android", "web", "ios"]
+        client_profiles: List[str] = (
+            [player_client] if player_client else ["android", "web", "ios"]
+        )
         headers = dict(self._default_headers)
         if referer:
             headers["Referer"] = referer
@@ -129,37 +145,37 @@ class YouTubeService:
 
                 # Extract chapter information if available
                 chapters = None
-                if info.get('chapters'):
+                if info.get("chapters"):
                     chapters = [
                         {
-                            'title': chapter.get('title', f'Chapter {i+1}'),
-                            'start_time': chapter.get('start_time', 0),
-                            'end_time': chapter.get('end_time', 0),
+                            "title": chapter.get("title", f"Chapter {i+1}"),
+                            "start_time": chapter.get("start_time", 0),
+                            "end_time": chapter.get("end_time", 0),
                         }
-                        for i, chapter in enumerate(info['chapters'])
+                        for i, chapter in enumerate(info["chapters"])
                     ]
 
                 # Parse upload date
                 upload_date = None
-                if info.get('upload_date'):
+                if info.get("upload_date"):
                     try:
-                        upload_date = datetime.strptime(info['upload_date'], '%Y%m%d')
+                        upload_date = datetime.strptime(info["upload_date"], "%Y%m%d")
                     except ValueError:
                         pass
 
                 metadata = {
-                    'youtube_id': info.get('id'),
-                    'title': info.get('title'),
-                    'description': info.get('description'),
-                    'channel_name': info.get('uploader') or info.get('channel'),
-                    'channel_id': info.get('channel_id'),
-                    'thumbnail_url': info.get('thumbnail'),
-                    'duration_seconds': info.get('duration'),
-                    'upload_date': upload_date,
-                    'view_count': info.get('view_count'),
-                    'like_count': info.get('like_count'),
-                    'language': info.get('language'),
-                    'chapters': chapters,
+                    "youtube_id": info.get("id"),
+                    "title": info.get("title"),
+                    "description": info.get("description"),
+                    "channel_name": info.get("uploader") or info.get("channel"),
+                    "channel_id": info.get("channel_id"),
+                    "thumbnail_url": info.get("thumbnail"),
+                    "duration_seconds": info.get("duration"),
+                    "upload_date": upload_date,
+                    "view_count": info.get("view_count"),
+                    "like_count": info.get("like_count"),
+                    "language": info.get("language"),
+                    "chapters": chapters,
                 }
 
                 return metadata
@@ -167,7 +183,9 @@ class YouTubeService:
         except yt_dlp.utils.DownloadError as e:
             raise YouTubeDownloadError(f"Failed to extract video info: {str(e)}")
         except Exception as e:
-            raise YouTubeDownloadError(f"Unexpected error extracting video info: {str(e)}")
+            raise YouTubeDownloadError(
+                f"Unexpected error extracting video info: {str(e)}"
+            )
 
     def validate_video(self, metadata: Dict) -> Tuple[bool, Optional[str]]:
         """
@@ -180,13 +198,16 @@ class YouTubeService:
             Tuple of (is_valid, error_message)
         """
         # Check duration
-        duration = metadata.get('duration_seconds')
+        duration = metadata.get("duration_seconds")
         if duration and duration > self.max_duration:
             max_hours = self.max_duration / 3600
-            return False, f"Video is too long ({duration/3600:.1f} hours). Maximum duration is {max_hours} hours."
+            return (
+                False,
+                f"Video is too long ({duration/3600:.1f} hours). Maximum duration is {max_hours} hours.",
+            )
 
         # Check if video is available
-        if not metadata.get('youtube_id'):
+        if not metadata.get("youtube_id"):
             return False, "Video is not available or URL is invalid."
 
         return True, None
@@ -196,7 +217,7 @@ class YouTubeService:
         url: str,
         user_id: UUID,
         video_id: UUID,
-        progress_callback: Optional[callable] = None
+        progress_callback: Optional[callable] = None,
     ) -> Tuple[str, float]:
         """
         Download audio from YouTube video.
@@ -233,32 +254,39 @@ class YouTubeService:
                 "noplaylist": True,
                 "retries": 3,
                 "fragment_retries": 3,
-                "http_chunk_size": 10 * 1024 * 1024,  # 10MB chunks to avoid huge range requests
+                "http_chunk_size": 10
+                * 1024
+                * 1024,  # 10MB chunks to avoid huge range requests
                 "concurrent_fragment_downloads": 3,
                 "quiet": False,
                 "no_warnings": False,
                 "extract_flat": False,
-                **self._common_yt_opts(player_client=player_client, referer=normalized_url),
+                **self._common_yt_opts(
+                    player_client=player_client, referer=normalized_url
+                ),
             }
 
             # Add progress hook if provided
             if progress_callback:
-                def progress_hook(d):
-                    if d['status'] == 'downloading':
-                        progress_callback({
-                            'status': 'downloading',
-                            'downloaded_bytes': d.get('downloaded_bytes', 0),
-                            'total_bytes': d.get('total_bytes') or d.get('total_bytes_estimate', 0),
-                            'speed': d.get('speed', 0),
-                            'eta': d.get('eta', 0),
-                        })
-                    elif d['status'] == 'finished':
-                        progress_callback({
-                            'status': 'processing',
-                            'message': 'Converting to MP3...'
-                        })
 
-                opts['progress_hooks'] = [progress_hook]
+                def progress_hook(d):
+                    if d["status"] == "downloading":
+                        progress_callback(
+                            {
+                                "status": "downloading",
+                                "downloaded_bytes": d.get("downloaded_bytes", 0),
+                                "total_bytes": d.get("total_bytes")
+                                or d.get("total_bytes_estimate", 0),
+                                "speed": d.get("speed", 0),
+                                "eta": d.get("eta", 0),
+                            }
+                        )
+                    elif d["status"] == "finished":
+                        progress_callback(
+                            {"status": "processing", "message": "Converting to MP3..."}
+                        )
+
+                opts["progress_hooks"] = [progress_hook]
             return opts
 
         try:
@@ -299,7 +327,7 @@ class YouTubeService:
 
             # Find downloaded file
             audio_file = None
-            for ext in ['mp3', 'm4a', 'webm', 'opus']:
+            for ext in ["mp3", "m4a", "webm", "opus"]:
                 potential_file = temp_dir / f"audio.{ext}"
                 if potential_file.exists():
                     audio_file = potential_file
@@ -317,12 +345,12 @@ class YouTubeService:
                 )
 
             # Upload to storage
-            with open(audio_file, 'rb') as f:
+            with open(audio_file, "rb") as f:
                 storage_path = storage_service.upload_audio(
                     user_id=user_id,
                     video_id=video_id,
                     file_stream=f,
-                    filename=audio_file.name
+                    filename=audio_file.name,
                 )
 
             # Calculate file size in MB
@@ -330,6 +358,7 @@ class YouTubeService:
 
             # Clean up temp directory
             import shutil
+
             shutil.rmtree(temp_dir, ignore_errors=True)
 
             return storage_path, file_size_mb
@@ -341,8 +370,146 @@ class YouTubeService:
         finally:
             # Ensure cleanup
             import shutil
+
             if temp_dir.exists():
                 shutil.rmtree(temp_dir, ignore_errors=True)
+
+    def get_captions(
+        self,
+        video_id: str,
+        preferred_langs: Optional[List[str]] = None,
+    ) -> Optional[Dict]:
+        """
+        Extract YouTube auto-captions without downloading video.
+
+        This is significantly faster than downloading and transcribing with Whisper
+        (1-4 seconds vs 15-90 seconds) for videos that have captions available.
+
+        Args:
+            video_id: YouTube video ID (not full URL)
+            preferred_langs: List of preferred language codes (default: ["en", "en-US", "en-GB"])
+
+        Returns:
+            Dictionary matching Whisper output format if captions available:
+            {
+                "full_text": "Complete transcript...",
+                "segments": [{"start": 0.0, "end": 2.5, "text": "Hello", "speaker": None}, ...],
+                "language": "en",
+                "word_count": 1234,
+                "duration_seconds": 600.0,
+            }
+            Returns None if captions are unavailable.
+        """
+        if not settings.enable_caption_extraction:
+            logger.info(f"[Captions] Caption extraction disabled, skipping for {video_id}")
+            return None
+
+        if preferred_langs is None:
+            preferred_langs = [settings.caption_preferred_language, "en", "en-US", "en-GB"]
+
+        url = f"https://www.youtube.com/watch?v={video_id}"
+
+        ydl_opts = {
+            "writeautomaticsub": True,
+            "writesubtitles": True,
+            "subtitleslangs": preferred_langs,
+            "subtitlesformat": "vtt",
+            "skip_download": True,
+            "quiet": True,
+            "no_warnings": True,
+            **self._common_yt_opts(),
+        }
+
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+
+                # Check for available subtitles
+                subtitles = info.get("subtitles", {})
+                automatic_captions = info.get("automatic_captions", {})
+
+                # Try manual subtitles first (usually higher quality)
+                vtt_content = None
+                detected_lang = None
+
+                for lang in preferred_langs:
+                    # Check manual subtitles
+                    if lang in subtitles:
+                        for sub_info in subtitles[lang]:
+                            if sub_info.get("ext") == "vtt":
+                                vtt_url = sub_info.get("url")
+                                if vtt_url:
+                                    vtt_content = self._download_vtt(vtt_url)
+                                    detected_lang = lang
+                                    logger.info(f"[Captions] Found manual subtitles for {video_id} in {lang}")
+                                    break
+                        if vtt_content:
+                            break
+
+                    # Check automatic captions
+                    if not vtt_content and lang in automatic_captions:
+                        for sub_info in automatic_captions[lang]:
+                            if sub_info.get("ext") == "vtt":
+                                vtt_url = sub_info.get("url")
+                                if vtt_url:
+                                    vtt_content = self._download_vtt(vtt_url)
+                                    detected_lang = lang
+                                    logger.info(f"[Captions] Found auto-captions for {video_id} in {lang}")
+                                    break
+                        if vtt_content:
+                            break
+
+                if not vtt_content:
+                    logger.info(f"[Captions] No captions available for {video_id}")
+                    return None
+
+                # Parse VTT content
+                segments = parse_vtt_to_segments(vtt_content)
+
+                if not segments:
+                    logger.warning(f"[Captions] Parsed VTT but got no segments for {video_id}")
+                    return None
+
+                full_text = segments_to_full_text(segments)
+                stats = get_transcript_stats(segments)
+
+                logger.info(
+                    f"[Captions] Successfully extracted {len(segments)} segments, "
+                    f"{stats['word_count']} words for {video_id}"
+                )
+
+                return {
+                    "full_text": full_text,
+                    "segments": segments,
+                    "language": detected_lang or "en",
+                    "word_count": stats["word_count"],
+                    "duration_seconds": stats["duration_seconds"],
+                }
+
+        except Exception as e:
+            logger.warning(f"[Captions] Caption extraction failed for {video_id}: {e}")
+            return None
+
+    def _download_vtt(self, url: str) -> Optional[str]:
+        """
+        Download VTT content from URL.
+
+        Args:
+            url: URL to VTT file
+
+        Returns:
+            VTT content as string, or None on failure
+        """
+        import urllib.request
+        import urllib.error
+
+        try:
+            req = urllib.request.Request(url, headers=self._default_headers)
+            with urllib.request.urlopen(req, timeout=30) as response:
+                return response.read().decode("utf-8")
+        except (urllib.error.URLError, Exception) as e:
+            logger.warning(f"[Captions] Failed to download VTT: {e}")
+            return None
 
 
 # Global YouTube service instance

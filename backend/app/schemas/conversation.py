@@ -10,9 +10,20 @@ from pydantic import BaseModel, Field
 # Request schemas
 class ConversationCreateRequest(BaseModel):
     """Request to create a new conversation."""
-    title: Optional[str] = Field(None, max_length=255, description="Conversation title (auto-generated if not provided)")
-    collection_id: Optional[UUID] = Field(None, description="Collection ID (use all videos from collection)")
-    selected_video_ids: Optional[List[UUID]] = Field(None, min_items=1, description="List of video IDs to include in conversation scope")
+
+    title: Optional[str] = Field(
+        None,
+        max_length=255,
+        description="Conversation title (auto-generated if not provided)",
+    )
+    collection_id: Optional[UUID] = Field(
+        None, description="Collection ID (use all videos from collection)"
+    )
+    selected_video_ids: Optional[List[UUID]] = Field(
+        None,
+        min_items=1,
+        description="List of video IDs to include in conversation scope",
+    )
     # Optional: set true to auto-select new collection videos (default behaviour)
     auto_sync_collection: bool | None = Field(
         None,
@@ -23,13 +34,14 @@ class ConversationCreateRequest(BaseModel):
         json_schema_extra = {
             "example": {
                 "title": "Discussion about React hooks",
-                "collection_id": "770e8400-e29b-41d4-a716-446655440000"
+                "collection_id": "770e8400-e29b-41d4-a716-446655440000",
             }
         }
 
 
 class ConversationUpdateRequest(BaseModel):
     """Request to update conversation."""
+
     title: Optional[str] = Field(None, max_length=255)
     selected_video_ids: Optional[List[UUID]] = None
     add_video_ids: Optional[List[UUID]] = None  # Optional manual additions
@@ -37,7 +49,10 @@ class ConversationUpdateRequest(BaseModel):
 
 class MessageSendRequest(BaseModel):
     """Request to send a message in a conversation."""
-    message: str = Field(..., min_length=1, max_length=10000, description="User message")
+
+    message: str = Field(
+        ..., min_length=1, max_length=10000, description="User message"
+    )
     stream: bool = Field(False, description="Whether to stream the response")
     mode: Literal[
         "summarize",
@@ -61,25 +76,54 @@ class MessageSendRequest(BaseModel):
     class Config:
         json_schema_extra = {
             "example": {
-          "message": "What are the main benefits of using React hooks?",
-          "stream": False,
-          "mode": "summarize"
+                "message": "What are the main benefits of using React hooks?",
+                "stream": False,
+                "mode": "summarize",
+            }
         }
-      }
 
 
 # Response schemas
 class ChunkReference(BaseModel):
     """Reference to a source chunk used in response."""
+
     chunk_id: UUID
     video_id: UUID
     video_title: str
+    youtube_id: Optional[str] = Field(
+        None, description="YouTube video identifier for building jump links"
+    )
+    video_url: Optional[str] = Field(
+        None, description="Canonical YouTube URL for this source"
+    )
+    jump_url: Optional[str] = Field(
+        None,
+        description="YouTube URL with timestamp for jumping directly to the cited moment",
+    )
+    transcript_url: Optional[str] = Field(
+        None, description="Optional link to view the transcript for this source"
+    )
     start_timestamp: float
     end_timestamp: float
     text_snippet: str = Field(..., max_length=500, description="Excerpt from the chunk")
     relevance_score: float = Field(..., ge=0, le=1, description="Relevance score (0-1)")
-    timestamp_display: str = Field(..., description="Human-readable timestamp (MM:SS or HH:MM:SS)")
-    rank: int = Field(..., description="Rank/order used when labeling sources (Source 1, Source 2, etc.)")
+    timestamp_display: str = Field(
+        ..., description="Human-readable timestamp (MM:SS or HH:MM:SS)"
+    )
+    rank: int = Field(
+        ...,
+        description="Rank/order used when labeling sources (Source 1, Source 2, etc.)",
+    )
+    # Phase 1 enhancement: contextual metadata
+    speakers: Optional[List[str]] = Field(
+        None, description="List of speaker IDs present in this chunk (if available)"
+    )
+    chapter_title: Optional[str] = Field(
+        None, description="YouTube chapter title (if video has chapters)"
+    )
+    channel_name: Optional[str] = Field(
+        None, description="YouTube channel name for the source video"
+    )
 
     class Config:
         json_schema_extra = {
@@ -87,18 +131,26 @@ class ChunkReference(BaseModel):
                 "chunk_id": "660e8400-e29b-41d4-a716-446655440000",
                 "video_id": "550e8400-e29b-41d4-a716-446655440000",
                 "video_title": "React Hooks Explained",
-            "start_timestamp": 125.5,
-            "end_timestamp": 180.2,
-            "text_snippet": "React hooks allow you to use state and other React features without writing a class...",
-            "relevance_score": 0.92,
-            "timestamp_display": "02:05 - 03:00",
-            "rank": 1,
+                "youtube_id": "abcd123",
+                "video_url": "https://youtu.be/abcd123",
+                "jump_url": "https://youtu.be/abcd123?t=125",
+                "transcript_url": "/videos/550e8400-e29b-41d4-a716-446655440000/transcript?ts=125",
+                "start_timestamp": 125.5,
+                "end_timestamp": 180.2,
+                "text_snippet": "React hooks allow you to use state and other React features without writing a class...",
+                "relevance_score": 0.92,
+                "timestamp_display": "02:05 - 03:00",
+                "rank": 1,
+                "speakers": ["Speaker 1", "Speaker 2"],
+                "chapter_title": "Introduction to Hooks",
+                "channel_name": "React Tutorial Channel",
             }
         }
 
 
 class Message(BaseModel):
     """Chat message."""
+
     id: UUID
     role: str = Field(..., description="Message role: user or assistant")
     content: str
@@ -115,11 +167,13 @@ class Message(BaseModel):
 
 class MessageWithReferences(Message):
     """Message with source chunk references."""
+
     chunk_references: List[ChunkReference] = Field(default_factory=list)
 
 
 class ConversationDetail(BaseModel):
     """Detailed conversation information."""
+
     id: UUID
     user_id: UUID
     title: Optional[str] = None
@@ -137,11 +191,13 @@ class ConversationDetail(BaseModel):
 
 class ConversationWithMessages(ConversationDetail):
     """Conversation with message history."""
+
     messages: List[MessageWithReferences]
 
 
 class ConversationList(BaseModel):
     """List of conversations."""
+
     total: int
     conversations: List[ConversationDetail]
 
@@ -199,6 +255,7 @@ class ConversationSourcesUpdateRequest(BaseModel):
 
 class MessageResponse(BaseModel):
     """Response after sending a message."""
+
     message_id: UUID
     conversation_id: UUID
     role: str
@@ -220,6 +277,6 @@ class MessageResponse(BaseModel):
                 "content": "React hooks provide several key benefits: 1) They allow you to use state...",
                 "chunk_references": [],
                 "token_count": 150,
-                "response_time_seconds": 2.5
+                "response_time_seconds": 2.5,
             }
         }

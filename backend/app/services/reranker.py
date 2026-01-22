@@ -20,7 +20,8 @@ logger = logging.getLogger(__name__)
 
 
 class _CrossEncoder(Protocol):
-    def predict(self, sentences: Sequence[Tuple[str, str]]) -> Any: ...
+    def predict(self, sentences: Sequence[Tuple[str, str]]) -> Any:
+        ...
 
 
 def _coerce_scores(scores: Any) -> List[float]:

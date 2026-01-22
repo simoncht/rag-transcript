@@ -5,6 +5,12 @@ import type {
   UserDetail,
   UserUpdateRequest,
   QuotaOverrideRequest,
+  QAFeedResponse,
+  AdminConversationListResponse,
+  AdminConversationDetail,
+  ContentOverviewResponse,
+  AbuseAlertResponse,
+  AuditLogResponse,
 } from "../types";
 
 export const adminApi = {
@@ -60,6 +66,84 @@ export const adminApi = {
       `/admin/users/${userId}/quota`,
       data
     );
+    return response.data;
+  },
+
+  /**
+   * Fetch paginated question/answer feed for monitoring
+   */
+  async getQAFeed(params?: {
+    page?: number;
+    page_size?: number;
+    user_id?: string;
+    conversation_id?: string;
+    collection_id?: string;
+    search?: string;
+    start?: string;
+    end?: string;
+  }): Promise<QAFeedResponse> {
+    const response = await apiClient.get("/admin/qa-feed", { params });
+    return response.data;
+  },
+
+  /**
+   * Fetch admin audit log entries (chat monitoring)
+   */
+  async getAuditLogs(params?: {
+    page?: number;
+    page_size?: number;
+    event_type?: string;
+    user_id?: string;
+    conversation_id?: string;
+    role?: string;
+    has_flags?: boolean;
+    search?: string;
+    start?: string;
+    end?: string;
+  }): Promise<AuditLogResponse> {
+    const response = await apiClient.get("/admin/audit/messages", { params });
+    return response.data;
+  },
+
+  /**
+   * List conversations for admin oversight
+   */
+  async listConversations(params?: {
+    page?: number;
+    page_size?: number;
+    user_id?: string;
+    collection_id?: string;
+    search?: string;
+  }): Promise<AdminConversationListResponse> {
+    const response = await apiClient.get("/admin/conversations", { params });
+    return response.data;
+  },
+
+  /**
+   * Get a single conversation timeline
+   */
+  async getConversationDetail(
+    conversationId: string
+  ): Promise<AdminConversationDetail> {
+    const response = await apiClient.get(
+      `/admin/conversations/${conversationId}`
+    );
+    return response.data;
+  },
+
+  /**
+   * Get combined content overview (videos + collections)
+   */
+  async getContentOverview(): Promise<ContentOverviewResponse> {
+    const response = await apiClient.get("/admin/content/overview");
+    return response.data;
+  },
+
+  /**
+   * Get admin alerts (placeholder)
+   */
+  async getAlerts(): Promise<AbuseAlertResponse> {
+    const response = await apiClient.get("/admin/alerts");
     return response.data;
   },
 };

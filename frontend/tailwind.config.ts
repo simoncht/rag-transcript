@@ -130,6 +130,15 @@ const config: Config = {
   		},
   		transitionTimingFunction: {
   			smooth: 'cubic-bezier(0.4, 0, 0.2, 1)'
+  		},
+  		animation: {
+  			shimmer: 'shimmer 2s ease-in-out infinite',
+  		},
+  		keyframes: {
+  			shimmer: {
+  				'0%': { backgroundPosition: '-200% 0' },
+  				'100%': { backgroundPosition: '200% 0' },
+  			},
   		}
   	}
   },

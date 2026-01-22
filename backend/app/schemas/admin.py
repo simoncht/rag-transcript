@@ -5,7 +5,7 @@ These schemas are used exclusively for admin endpoints and include
 system-wide metrics, user management, and cost tracking data.
 """
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -13,13 +13,15 @@ from pydantic import BaseModel, Field
 
 # User Management Schemas
 
+
 class UserSummary(BaseModel):
     """Summary information for a user in admin list view."""
 
     id: UUID
     email: str
     full_name: Optional[str] = None
-    clerk_user_id: Optional[str] = None
+    oauth_provider: Optional[str] = None
+    oauth_provider_id: Optional[str] = None
     subscription_tier: str
     subscription_status: str
     is_active: bool
@@ -128,7 +130,8 @@ class UserDetail(BaseModel):
     id: UUID
     email: str
     full_name: Optional[str] = None
-    clerk_user_id: Optional[str] = None
+    oauth_provider: Optional[str] = None
+    oauth_provider_id: Optional[str] = None
 
     # Account status
     subscription_tier: str
@@ -158,10 +161,18 @@ class UserDetail(BaseModel):
 class UserUpdateRequest(BaseModel):
     """Request to update user account settings (admin only)."""
 
-    subscription_tier: Optional[str] = Field(None, description="Update subscription tier")
-    subscription_status: Optional[str] = Field(None, description="Update subscription status")
-    is_active: Optional[bool] = Field(None, description="Activate or deactivate account")
-    is_superuser: Optional[bool] = Field(None, description="Grant or revoke admin privileges")
+    subscription_tier: Optional[str] = Field(
+        None, description="Update subscription tier"
+    )
+    subscription_status: Optional[str] = Field(
+        None, description="Update subscription status"
+    )
+    is_active: Optional[bool] = Field(
+        None, description="Activate or deactivate account"
+    )
+    is_superuser: Optional[bool] = Field(
+        None, description="Grant or revoke admin privileges"
+    )
 
 
 class QuotaOverrideRequest(BaseModel):
@@ -195,14 +206,17 @@ class AdminNote(BaseModel):
 
 # Dashboard Schemas
 
+
 class SystemStats(BaseModel):
     """System-wide statistics for admin dashboard."""
 
     # User stats
     total_users: int = 0
     active_users: int = 0
+    inactive_users: int = 0
     new_users_this_month: int = 0
     churned_users_this_month: int = 0
+    users_by_tier: dict = Field(default_factory=dict)
 
     # Subscription breakdown
     users_free: int = 0
@@ -213,6 +227,9 @@ class SystemStats(BaseModel):
 
     # Content stats
     total_videos: int = 0
+    videos_completed: int = 0
+    videos_processing: int = 0
+    videos_failed: int = 0
     total_videos_completed: int = 0
     total_videos_processing: int = 0
     total_videos_failed: int = 0
@@ -251,6 +268,7 @@ class DashboardResponse(BaseModel):
 
 # Activity Log Schemas
 
+
 class UserActivityLog(BaseModel):
     """User activity log entry."""
 
@@ -273,6 +291,7 @@ class UserActivityResponse(BaseModel):
 
 # Error Log Schemas
 
+
 class UserErrorLog(BaseModel):
     """Error log for a user."""
 
@@ -292,6 +311,7 @@ class UserErrorResponse(BaseModel):
 
 # Abuse Detection Schemas
 
+
 class AbuseAlert(BaseModel):
     """Abuse detection alert."""
 
@@ -309,3 +329,177 @@ class AbuseAlertResponse(BaseModel):
 
     total: int
     alerts: List[AbuseAlert]
+
+
+# Q&A Monitoring Schemas
+
+
+class QASource(BaseModel):
+    """Source chunk used to answer a question."""
+
+    chunk_id: UUID
+    video_id: UUID
+    video_title: Optional[str] = None
+    score: Optional[float] = None
+    snippet: Optional[str] = None
+    start_timestamp: Optional[float] = None
+    end_timestamp: Optional[float] = None
+
+
+class QAFeedItem(BaseModel):
+    """Question/answer pair for monitoring."""
+
+    qa_id: UUID
+    question_id: UUID
+    answer_id: Optional[UUID] = None
+    user_id: UUID
+    user_email: Optional[str] = None
+    conversation_id: UUID
+    collection_id: Optional[UUID] = None
+    question: str
+    answer: Optional[str] = None
+    asked_at: datetime
+    answered_at: Optional[datetime] = None
+    response_latency_ms: Optional[float] = None
+    input_tokens: Optional[int] = None
+    output_tokens: Optional[int] = None
+    cost_usd: Optional[float] = None
+    flags: List[str] = Field(default_factory=list)
+    sources: List[QASource] = Field(default_factory=list)
+
+
+class QAFeedResponse(BaseModel):
+    """Paginated response for question/answer monitoring feed."""
+
+    total: int
+    page: int
+    page_size: int
+    items: List[QAFeedItem]
+
+
+class AuditLogItem(BaseModel):
+    """Admin audit log entry for chat monitoring."""
+
+    id: UUID
+    event_type: str
+    user_id: Optional[UUID] = None
+    user_email: Optional[str] = None
+    conversation_id: Optional[UUID] = None
+    message_id: Optional[UUID] = None
+    role: Optional[str] = None
+    content: Optional[str] = None
+    token_count: Optional[int] = None
+    input_tokens: Optional[int] = None
+    output_tokens: Optional[int] = None
+    flags: List[str] = Field(default_factory=list)
+    created_at: datetime
+    ip_hash: Optional[str] = None
+    user_agent: Optional[str] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class AuditLogResponse(BaseModel):
+    """Paginated audit log entries."""
+
+    total: int
+    page: int
+    page_size: int
+    items: List[AuditLogItem]
+
+
+# Conversation Monitoring Schemas
+
+
+class ConversationMessage(BaseModel):
+    """Message within a conversation timeline."""
+
+    id: UUID
+    role: str
+    content: str
+    created_at: datetime
+    input_tokens: Optional[int] = None
+    output_tokens: Optional[int] = None
+    response_time_seconds: Optional[float] = None
+    sources: List[QASource] = Field(default_factory=list)
+
+
+class ConversationSummary(BaseModel):
+    """Summary of a conversation for list view."""
+
+    id: UUID
+    user_id: UUID
+    user_email: Optional[str] = None
+    title: Optional[str] = None
+    collection_id: Optional[UUID] = None
+    message_count: int = 0
+    total_tokens: int = 0
+    started_at: datetime
+    last_message_at: Optional[datetime] = None
+
+
+class ConversationListResponse(BaseModel):
+    """Paginated conversations for admin view."""
+
+    total: int
+    page: int
+    page_size: int
+    conversations: List[ConversationSummary]
+
+
+class ConversationDetailResponse(BaseModel):
+    """Full conversation timeline for admin review."""
+
+    id: UUID
+    user_id: UUID
+    user_email: Optional[str] = None
+    title: Optional[str] = None
+    collection_id: Optional[UUID] = None
+    message_count: int
+    total_tokens: int
+    created_at: datetime
+    updated_at: datetime
+    last_message_at: Optional[datetime] = None
+    messages: List[ConversationMessage]
+
+
+# Content Overview Schemas
+
+
+class AdminVideoItem(BaseModel):
+    """Minimal video ingestion row."""
+
+    id: UUID
+    title: str
+    user_email: Optional[str] = None
+    status: str
+    progress_percent: float = 0.0
+    error_message: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class AdminVideoOverview(BaseModel):
+    """Video processing overview."""
+
+    total: int
+    completed: int
+    processing: int
+    failed: int
+    queued: int
+    recent: List[AdminVideoItem] = Field(default_factory=list)
+
+
+class AdminCollectionOverview(BaseModel):
+    """Collection inventory overview."""
+
+    total: int
+    with_videos: int
+    empty: int
+    recent_created: List[UUID] = Field(default_factory=list)
+
+
+class ContentOverviewResponse(BaseModel):
+    """Combined overview for videos and collections."""
+
+    videos: AdminVideoOverview
+    collections: AdminCollectionOverview

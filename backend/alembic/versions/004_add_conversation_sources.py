@@ -42,7 +42,9 @@ def upgrade():
     # Conversation sources table
     op.create_table(
         "conversation_sources",
-        sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True, nullable=False),
+        sa.Column(
+            "id", postgresql.UUID(as_uuid=True), primary_key=True, nullable=False
+        ),
         sa.Column(
             "conversation_id",
             postgresql.UUID(as_uuid=True),

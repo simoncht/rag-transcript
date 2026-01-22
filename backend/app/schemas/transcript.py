@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 class TranscriptSegment(BaseModel):
     """Single transcript segment with timing."""
+
     text: str
     start: float = Field(..., description="Segment start time in seconds")
     end: float = Field(..., description="Segment end time in seconds")
@@ -17,6 +18,7 @@ class TranscriptSegment(BaseModel):
 
 class TranscriptDetail(BaseModel):
     """Full transcript for a video."""
+
     video_id: UUID
     full_text: str
     language: Optional[str] = None

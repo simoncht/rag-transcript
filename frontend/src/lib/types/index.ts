@@ -14,7 +14,8 @@ export interface Video {
     | "enriching"
     | "indexing"
     | "completed"
-    | "failed";
+    | "failed"
+    | "canceled";
   progress_percent?: number;
   error_message?: string;
   tags: string[];
@@ -23,6 +24,49 @@ export interface Video {
   storage_total_mb?: number;
   created_at: string;
   updated_at: string;
+}
+
+// Cancel types
+export type CleanupOption = "keep_video" | "full_delete";
+
+export interface VideoCancelRequest {
+  cleanup_option: CleanupOption;
+}
+
+export interface CleanupSummary {
+  transcript_deleted: boolean;
+  chunks_deleted: number;
+  audio_file_deleted: boolean;
+  transcript_file_deleted: boolean;
+  vectors_deleted: boolean;
+}
+
+export interface VideoCancelResponse {
+  video_id: string;
+  previous_status: string;
+  new_status: string;
+  celery_task_revoked: boolean;
+  cleanup_summary: CleanupSummary;
+}
+
+export interface BulkCancelRequest {
+  video_ids: string[];
+  cleanup_option: CleanupOption;
+}
+
+export interface BulkCancelResultItem {
+  video_id: string;
+  success: boolean;
+  previous_status?: string;
+  new_status?: string;
+  error?: string;
+}
+
+export interface BulkCancelResponse {
+  total: number;
+  canceled: number;
+  skipped: number;
+  results: BulkCancelResultItem[];
 }
 
 export interface TranscriptSegment {
@@ -96,12 +140,20 @@ export interface ChunkReference {
   chunk_id: string;
   video_id: string;
   video_title: string;
+  youtube_id?: string | null;
+  video_url?: string | null;
+  jump_url?: string | null;
+  transcript_url?: string | null;
   start_timestamp: number;
   end_timestamp: number;
   text_snippet: string;
   relevance_score: number;
   timestamp_display: string;
   rank: number;
+  // Phase 1 enhancement: contextual metadata
+  speakers?: string[] | null;
+  chapter_title?: string | null;
+  channel_name?: string | null;
 }
 
 export interface MessageResponse {
@@ -379,7 +431,8 @@ export interface UserSummary {
   id: string;
   email: string;
   full_name?: string;
-  clerk_user_id?: string;
+  oauth_provider?: string;
+  oauth_provider_id?: string;
   subscription_tier: string;
   subscription_status: string;
   is_active: boolean;
@@ -446,7 +499,8 @@ export interface UserDetail {
   id: string;
   email: string;
   full_name?: string;
-  clerk_user_id?: string;
+  oauth_provider?: string;
+  oauth_provider_id?: string;
   subscription_tier: string;
   subscription_status: string;
   is_active: boolean;
@@ -470,4 +524,227 @@ export interface QuotaOverrideRequest {
   minutes_limit?: number;
   messages_limit?: number;
   storage_mb_limit?: number;
+}
+
+export interface QASource {
+  chunk_id: string;
+  video_id: string;
+  video_title?: string;
+  score?: number;
+  snippet?: string;
+  start_timestamp?: number;
+  end_timestamp?: number;
+}
+
+export interface QAFeedItem {
+  qa_id: string;
+  question_id: string;
+  answer_id?: string;
+  user_id: string;
+  user_email?: string;
+  conversation_id: string;
+  collection_id?: string;
+  question: string;
+  answer?: string;
+  asked_at: string;
+  answered_at?: string;
+  response_latency_ms?: number;
+  input_tokens?: number;
+  output_tokens?: number;
+  cost_usd?: number;
+  flags: string[];
+  sources: QASource[];
+}
+
+export interface QAFeedResponse {
+  total: number;
+  page: number;
+  page_size: number;
+  items: QAFeedItem[];
+}
+
+export interface AuditLogItem {
+  id: string;
+  event_type: string;
+  user_id?: string | null;
+  user_email?: string | null;
+  conversation_id?: string | null;
+  message_id?: string | null;
+  role?: string | null;
+  content?: string | null;
+  token_count?: number | null;
+  input_tokens?: number | null;
+  output_tokens?: number | null;
+  flags: string[];
+  created_at: string;
+  ip_hash?: string | null;
+  user_agent?: string | null;
+  metadata?: Record<string, any>;
+}
+
+export interface AuditLogResponse {
+  total: number;
+  page: number;
+  page_size: number;
+  items: AuditLogItem[];
+}
+
+export interface AdminConversationSummary {
+  id: string;
+  user_id: string;
+  user_email?: string;
+  title?: string;
+  collection_id?: string;
+  message_count: number;
+  total_tokens: number;
+  started_at: string;
+  last_message_at?: string;
+}
+
+export interface AdminConversationListResponse {
+  total: number;
+  page: number;
+  page_size: number;
+  conversations: AdminConversationSummary[];
+}
+
+export interface AdminConversationMessage {
+  id: string;
+  role: string;
+  content: string;
+  created_at: string;
+  input_tokens?: number;
+  output_tokens?: number;
+  response_time_seconds?: number;
+  sources: QASource[];
+}
+
+export interface AdminConversationDetail {
+  id: string;
+  user_id: string;
+  user_email?: string;
+  title?: string;
+  collection_id?: string;
+  message_count: number;
+  total_tokens: number;
+  created_at: string;
+  updated_at: string;
+  last_message_at?: string;
+  messages: AdminConversationMessage[];
+}
+
+export interface AdminVideoItem {
+  id: string;
+  title: string;
+  user_email?: string;
+  status: string;
+  progress_percent: number;
+  error_message?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AdminVideoOverview {
+  total: number;
+  completed: number;
+  processing: number;
+  failed: number;
+  queued: number;
+  recent: AdminVideoItem[];
+}
+
+export interface AdminCollectionOverview {
+  total: number;
+  with_videos: number;
+  empty: number;
+  recent_created: string[];
+}
+
+export interface ContentOverviewResponse {
+  videos: AdminVideoOverview;
+  collections: AdminCollectionOverview;
+}
+
+export interface AbuseAlert {
+  user_id: string;
+  user_email: string;
+  alert_type: string;
+  severity: string;
+  description: string;
+  detected_at: string;
+  is_resolved: boolean;
+}
+
+export interface AbuseAlertResponse {
+  total: number;
+  alerts: AbuseAlert[];
+}
+
+// Subscription types
+export type SubscriptionTier = "free" | "pro" | "enterprise";
+export type SubscriptionStatus = "active" | "canceled" | "past_due" | "trialing" | "incomplete";
+
+export interface SubscriptionDetail {
+  id: string;
+  user_id: string;
+  tier: SubscriptionTier;
+  status: SubscriptionStatus;
+  stripe_subscription_id?: string | null;
+  stripe_customer_id: string;
+  stripe_price_id: string;
+  current_period_start?: string | null;
+  current_period_end?: string | null;
+  cancel_at_period_end: boolean;
+  canceled_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface QuotaUsage {
+  tier: SubscriptionTier;
+  videos_used: number;
+  videos_limit: number;
+  videos_remaining: number;
+  messages_used: number;
+  messages_limit: number;
+  messages_remaining: number;
+  storage_used_mb: number;
+  storage_limit_mb: number;
+  storage_remaining_mb: number;
+  minutes_used: number;
+  minutes_limit: number;
+  minutes_remaining: number;
+}
+
+export interface PricingTier {
+  tier: SubscriptionTier;
+  name: string;
+  price_monthly: number; // in cents
+  price_yearly: number; // in cents
+  stripe_price_id_monthly?: string | null;
+  stripe_price_id_yearly?: string | null;
+  features: string[];
+  video_limit: number;
+  message_limit: number;
+  storage_limit_mb: number;
+  minutes_limit: number;
+}
+
+export interface CheckoutSessionRequest {
+  tier: SubscriptionTier;
+  success_url: string;
+  cancel_url: string;
+}
+
+export interface CheckoutSessionResponse {
+  checkout_url: string;
+  session_id: string;
+}
+
+export interface CustomerPortalRequest {
+  return_url: string;
+}
+
+export interface CustomerPortalResponse {
+  portal_url: string;
 }

@@ -1,44 +1,59 @@
-import type { Metadata } from "next";
-import { Inter } from "next/font/google";
-import "./globals.css";
-import { Providers } from "./providers";
-import { cn } from "@/lib/utils";
-import { ClerkProvider } from "@clerk/nextjs";
-import { Toaster } from "@/components/ui/toaster";
+import type { Metadata } from "next"
+import { Inter } from "next/font/google"
+import "./globals.css"
+import { Providers } from "./providers"
+import { cn } from "@/lib/utils"
+import { Toaster } from "@/components/ui/toaster"
+import { PerformanceLogger } from "@/components/PerformanceLogger"
 
-const inter = Inter({ subsets: ["latin"] });
+const inter = Inter({ subsets: ["latin"] })
 
 export const metadata: Metadata = {
-  title: "RAG Transcript System",
-  description: "AI-powered video transcript chat application",
-};
-
-// Check if Clerk is configured with valid keys
-const isClerkConfigured = () => {
-  const publishableKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
-  return publishableKey &&
-         publishableKey.startsWith('pk_') &&
-         !publishableKey.includes('xxxx');
-};
+  title: {
+    default: "RAG Transcript - AI-Powered Video Knowledge Base",
+    template: "%s | RAG Transcript",
+  },
+  description:
+    "Transform YouTube videos into searchable knowledge with AI-powered transcription and semantic search. Chat with your videos and get precise, cited answers.",
+  keywords: [
+    "video transcription",
+    "AI transcription",
+    "semantic search",
+    "YouTube transcription",
+    "video knowledge base",
+    "RAG",
+    "Whisper AI",
+  ],
+  authors: [{ name: "RAG Transcript" }],
+  openGraph: {
+    type: "website",
+    title: "RAG Transcript - AI-Powered Video Knowledge Base",
+    description:
+      "Transform YouTube videos into searchable knowledge with AI-powered transcription and semantic search.",
+    siteName: "RAG Transcript",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "RAG Transcript - AI-Powered Video Knowledge Base",
+    description:
+      "Transform YouTube videos into searchable knowledge with AI-powered transcription and semantic search.",
+  },
+}
 
 export default function RootLayout({
   children,
 }: Readonly<{
-  children: React.ReactNode;
+  children: React.ReactNode
 }>) {
-  const content = (
+  return (
     <html lang="en" suppressHydrationWarning>
       <body className={cn("min-h-screen bg-background font-sans antialiased", inter.className)}>
-        <Providers>{children}</Providers>
+        <Providers>
+          <PerformanceLogger />
+          {children}
+        </Providers>
         <Toaster />
       </body>
     </html>
-  );
-
-  // Only use ClerkProvider if valid keys are configured
-  if (isClerkConfigured()) {
-    return <ClerkProvider>{content}</ClerkProvider>;
-  }
-
-  return content;
+  )
 }

@@ -3,7 +3,16 @@ Video model for storing YouTube video metadata and processing status.
 """
 import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, DateTime, Integer, Boolean, Text, ForeignKey, Float
+from sqlalchemy import (
+    Column,
+    String,
+    DateTime,
+    Integer,
+    Boolean,
+    Text,
+    ForeignKey,
+    Float,
+)
 from sqlalchemy.dialects.postgresql import UUID, JSONB, ARRAY
 from sqlalchemy.orm import relationship
 
@@ -16,7 +25,12 @@ class Video(Base):
     __tablename__ = "videos"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
 
     # YouTube metadata
     youtube_id = Column(String(50), nullable=False, index=True)
@@ -33,10 +47,14 @@ class Video(Base):
     language = Column(String(10), nullable=True)  # ISO language code (e.g., 'en', 'es')
 
     # YouTube chapters (if available)
-    chapters = Column(JSONB, nullable=True)  # [{"title": "Intro", "start_time": 0, "end_time": 120}, ...]
+    chapters = Column(
+        JSONB, nullable=True
+    )  # [{"title": "Intro", "start_time": 0, "end_time": 120}, ...]
 
     # Tags for organization
-    tags = Column(ARRAY(Text), default=[], nullable=False)  # ["midterm-prep", "advanced", etc.]
+    tags = Column(
+        ARRAY(Text), default=[], nullable=False
+    )  # ["midterm-prep", "advanced", etc.]
 
     # Processing status
     status = Column(String(50), default="pending", nullable=False, index=True)
@@ -51,8 +69,15 @@ class Video(Base):
 
     # Processing metadata
     transcription_model = Column(String(50), nullable=True)  # e.g., "whisper-base"
-    transcription_language = Column(String(10), nullable=True)  # Detected language from Whisper
-    transcription_duration_seconds = Column(Integer, nullable=True)  # How long transcription took
+    transcription_language = Column(
+        String(10), nullable=True
+    )  # Detected language from Whisper
+    transcription_duration_seconds = Column(
+        Integer, nullable=True
+    )  # How long transcription took
+    transcript_source = Column(
+        String(50), nullable=True
+    )  # Source of transcript: "captions" or "whisper"
     chunk_count = Column(Integer, default=0, nullable=False)  # Number of chunks created
 
     # Soft delete
@@ -61,14 +86,23 @@ class Video(Base):
 
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    updated_at = Column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )
     completed_at = Column(DateTime, nullable=True)  # When processing completed
 
     # Relationships
     user = relationship("User", back_populates="videos")
-    transcript = relationship("Transcript", back_populates="video", uselist=False, cascade="all, delete-orphan")
+    transcript = relationship(
+        "Transcript",
+        back_populates="video",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
     chunks = relationship("Chunk", back_populates="video", cascade="all, delete-orphan")
-    collection_videos = relationship("CollectionVideo", back_populates="video", cascade="all, delete-orphan")
+    collection_videos = relationship(
+        "CollectionVideo", back_populates="video", cascade="all, delete-orphan"
+    )
 
     def __repr__(self):
         return f"<Video(id={self.id}, title={self.title[:30]}, status={self.status})>"

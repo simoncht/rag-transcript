@@ -1,26 +1,31 @@
-import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
+import { NextResponse } from "next/server"
+import type { NextRequest } from "next/server"
 
-// For local development: make all routes public since we're using test Clerk keys
-const isLocalDevelopment = process.env.NODE_ENV === 'development';
+export function middleware(req: NextRequest) {
+  const path = req.nextUrl.pathname
+  console.log(`[Middleware] Request to ${path}`)
 
-const isPublicRoute = createRouteMatcher([
-  "/",
-  "/login",
-  "/sign-in(.*)",
-  "/sign-up(.*)",
-  // Add all routes as public in development
-  ...(isLocalDevelopment ? ["/videos(.*)", "/conversations(.*)", "/collections(.*)", "/admin(.*)"] : []),
-]);
+  // Public routes - no auth check needed
+  const publicRoutes = [
+    "/",
+    "/pricing",
+    "/login",
+    "/sign-in",
+    "/checkout",
+    "/api",  // API routes handle their own auth
+  ]
 
-export default clerkMiddleware((auth, req) => {
-  if (!isPublicRoute(req)) {
-    auth().protect();
+  if (publicRoutes.some(route => path.startsWith(route))) {
+    return NextResponse.next()
   }
-});
+
+  // For protected routes, NextAuth session will be checked by the SessionProvider
+  // The middleware just logs the request
+  return NextResponse.next()
+}
 
 export const config = {
   matcher: [
-    // Skip Next.js internals and static assets
     "/((?!_next/static|_next/image|favicon.ico|.*\\..*).*)",
   ],
-};
+}

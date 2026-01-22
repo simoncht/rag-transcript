@@ -1,10 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { formatDistanceToNow } from "date-fns";
-import { useAuth } from "@clerk/nextjs";
+import { useAuthState } from "@/lib/auth";
 import { MainLayout } from "@/components/layout/MainLayout";
 import { conversationsApi } from "@/lib/api/conversations";
 import { videosApi } from "@/lib/api/videos";
@@ -22,12 +22,13 @@ import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import Link from "next/link";
 
 type SelectionMode = "collection" | "custom";
 
 export default function ConversationsPage() {
-  const { isLoaded, isSignedIn } = useAuth();
-  const canFetch = isLoaded && isSignedIn;
+  const authState = useAuthState();
+  const canFetch = authState.isAuthenticated;
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [title, setTitle] = useState("");
   const [selectionMode, setSelectionMode] = useState<SelectionMode>("collection");
@@ -49,11 +50,18 @@ export default function ConversationsPage() {
     enabled: canFetch && showCreateForm && selectionMode === "custom",
   });
 
-  const { data: collectionsData } = useQuery({
+  const { data: collectionsData, isLoading: collectionsLoading } = useQuery({
     queryKey: ["collections"],
     queryFn: getCollections,
-    enabled: canFetch && showCreateForm && selectionMode === "collection",
+    enabled: canFetch && showCreateForm,
   });
+
+  // Auto-switch to custom mode if no collections exist
+  useEffect(() => {
+    if (showCreateForm && collectionsData && collectionsData.collections.length === 0) {
+      setSelectionMode("custom");
+    }
+  }, [showCreateForm, collectionsData]);
 
   const createMutation = useMutation({
     mutationFn: ({
@@ -111,6 +119,29 @@ export default function ConversationsPage() {
     setSelectedCollectionId("");
     setSelectionMode("collection");
   };
+
+  if (!canFetch) {
+    return (
+      <MainLayout>
+        <Card>
+          <CardHeader className="text-center">
+            <CardTitle>Sign in to view conversations</CardTitle>
+            <CardDescription>Access your chats and start new conversations after signing in.</CardDescription>
+          </CardHeader>
+          <CardContent className="flex justify-center pb-8">
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <Button asChild>
+                <Link href="/sign-up">Create account</Link>
+              </Button>
+              <Button asChild variant="outline">
+                <Link href="/login">Sign in</Link>
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      </MainLayout>
+    );
+  }
 
   return (
     <MainLayout>
@@ -192,19 +223,31 @@ export default function ConversationsPage() {
                           <Label htmlFor="collection" className="text-xs">
                             Collection
                           </Label>
-                          <select
-                            id="collection"
-                            className="mt-1 w-full rounded-md border bg-background px-3 py-2 text-sm"
-                            value={selectedCollectionId}
-                            onChange={(e) => setSelectedCollectionId(e.target.value)}
-                          >
-                            <option value="">Select a collection</option>
-                            {collectionsData?.collections.map((collection) => (
-                              <option key={collection.id} value={collection.id}>
-                                {collection.name} ({collection.video_count} videos)
-                              </option>
-                            ))}
-                          </select>
+                          {collectionsLoading ? (
+                            <p className="mt-1 text-xs text-muted-foreground">Loading collections...</p>
+                          ) : collectionsData?.collections.length === 0 ? (
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              No collections yet.{" "}
+                              <Link href="/collections" className="text-primary hover:underline">
+                                Create one
+                              </Link>{" "}
+                              to organize related videos, or switch to Custom selection below.
+                            </p>
+                          ) : (
+                            <select
+                              id="collection"
+                              className="mt-1 w-full rounded-md border bg-background px-3 py-2 text-sm"
+                              value={selectedCollectionId}
+                              onChange={(e) => setSelectedCollectionId(e.target.value)}
+                            >
+                              <option value="">Select a collection</option>
+                              {collectionsData?.collections.map((collection) => (
+                                <option key={collection.id} value={collection.id}>
+                                  {collection.name} ({collection.video_count} videos)
+                                </option>
+                              ))}
+                            </select>
+                          )}
                         </div>
                       </label>
 
@@ -239,7 +282,11 @@ export default function ConversationsPage() {
                         <div className="mt-2 max-h-48 space-y-2 overflow-y-auto rounded-md border bg-muted/40 p-2">
                           {completedVideos.length === 0 ? (
                             <p className="px-1 py-2 text-xs text-muted-foreground">
-                              No completed videos yet. Ingest and process videos on the Videos page first.
+                              No completed videos yet.{" "}
+                              <Link href="/videos" className="text-primary hover:underline">
+                                Add a video
+                              </Link>{" "}
+                              to get started.
                             </p>
                           ) : (
                             completedVideos.map((video) => (

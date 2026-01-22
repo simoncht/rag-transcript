@@ -35,4 +35,3 @@ def downgrade() -> None:
     """Remove clerk_user_id column and index."""
     op.drop_index("ix_users_clerk_user_id", table_name="users")
     op.drop_column("users", "clerk_user_id")
-

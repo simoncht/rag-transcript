@@ -12,7 +12,14 @@ import uuid
 import numpy as np
 
 from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, VectorParams, PointStruct, Filter, FieldCondition, MatchValue
+from qdrant_client.models import (
+    Distance,
+    VectorParams,
+    PointStruct,
+    Filter,
+    FieldCondition,
+    MatchValue,
+)
 
 from app.core.config import settings
 from app.services.enrichment import EnrichedChunk
@@ -37,6 +44,7 @@ class ScoredChunk:
         chapter_title: Chapter title (if available)
         speakers: List of speakers in the chunk (if available)
     """
+
     chunk_id: Optional[UUID]
     video_id: UUID
     user_id: UUID
@@ -61,7 +69,13 @@ class VectorStore(ABC):
         pass
 
     @abstractmethod
-    def index_chunks(self, enriched_chunks: List[EnrichedChunk], embeddings: List[np.ndarray], user_id: UUID, video_id: UUID):
+    def index_chunks(
+        self,
+        enriched_chunks: List[EnrichedChunk],
+        embeddings: List[np.ndarray],
+        user_id: UUID,
+        video_id: UUID,
+    ):
         """Index chunks with embeddings."""
         pass
 
@@ -72,7 +86,7 @@ class VectorStore(ABC):
         user_id: Optional[UUID] = None,
         video_ids: Optional[List[UUID]] = None,
         top_k: int = 10,
-        filters: Optional[Dict] = None
+        filters: Optional[Dict] = None,
     ) -> List[ScoredChunk]:
         """Search for similar chunks."""
         pass
@@ -95,12 +109,7 @@ class QdrantVectorStore(VectorStore):
     Uses Qdrant for efficient similarity search with filtering.
     """
 
-    def __init__(
-        self,
-        host: str = None,
-        port: int = None,
-        collection_name: str = None
-    ):
+    def __init__(self, host: str = None, port: int = None, collection_name: str = None):
         """
         Initialize Qdrant vector store.
 
@@ -114,7 +123,23 @@ class QdrantVectorStore(VectorStore):
         self.collection_name = collection_name or settings.qdrant_collection_name
 
         # Initialize Qdrant client
-        self.client = QdrantClient(host=self.host, port=self.port)
+        # Use API key if configured for authentication
+        # prefer_grpc=False and https=False for local development without TLS
+        if settings.qdrant_api_key:
+            self.client = QdrantClient(
+                host=self.host,
+                port=self.port,
+                api_key=settings.qdrant_api_key,
+                prefer_grpc=False,
+                https=False,
+            )
+        else:
+            self.client = QdrantClient(
+                host=self.host,
+                port=self.port,
+                prefer_grpc=False,
+                https=False,
+            )
 
     def create_collection(self, dimensions: int):
         """
@@ -130,9 +155,8 @@ class QdrantVectorStore(VectorStore):
             self.client.create_collection(
                 collection_name=self.collection_name,
                 vectors_config=VectorParams(
-                    size=dimensions,
-                    distance=Distance.COSINE  # Cosine similarity
-                )
+                    size=dimensions, distance=Distance.COSINE  # Cosine similarity
+                ),
             )
             print(f"Created Qdrant collection: {self.collection_name}")
         else:
@@ -143,7 +167,7 @@ class QdrantVectorStore(VectorStore):
         enriched_chunks: List[EnrichedChunk],
         embeddings: List[np.ndarray],
         user_id: UUID,
-        video_id: UUID
+        video_id: UUID,
     ):
         """
         Index enriched chunks with their embeddings.
@@ -164,7 +188,9 @@ class QdrantVectorStore(VectorStore):
 
             # Prepare payload (metadata)
             payload = {
-                "chunk_id": str(chunk.chunk_index),  # Use chunk_index as unique id within video
+                "chunk_id": str(
+                    chunk.chunk_index
+                ),  # Use chunk_index as unique id within video
                 "video_id": str(video_id),
                 "user_id": str(user_id),
                 "text": chunk.text,
@@ -192,19 +218,12 @@ class QdrantVectorStore(VectorStore):
             # Create point with unique ID (video_id + chunk_index)
             point_id = str(uuid.uuid5(video_id, str(chunk.chunk_index)))
 
-            point = PointStruct(
-                id=point_id,
-                vector=embedding.tolist(),
-                payload=payload
-            )
+            point = PointStruct(id=point_id, vector=embedding.tolist(), payload=payload)
 
             points.append(point)
 
         # Upsert points to Qdrant
-        self.client.upsert(
-            collection_name=self.collection_name,
-            points=points
-        )
+        self.client.upsert(collection_name=self.collection_name, points=points)
 
         print(f"Indexed {len(points)} chunks for video {video_id}")
 
@@ -214,7 +233,7 @@ class QdrantVectorStore(VectorStore):
         user_id: Optional[UUID] = None,
         video_ids: Optional[List[UUID]] = None,
         top_k: int = 10,
-        filters: Optional[Dict] = None
+        filters: Optional[Dict] = None,
     ) -> List[ScoredChunk]:
         """
         Search for similar chunks.
@@ -235,10 +254,7 @@ class QdrantVectorStore(VectorStore):
 
         if user_id:
             must_conditions.append(
-                FieldCondition(
-                    key="user_id",
-                    match=MatchValue(value=str(user_id))
-                )
+                FieldCondition(key="user_id", match=MatchValue(value=str(user_id)))
             )
 
         if video_ids:
@@ -246,8 +262,7 @@ class QdrantVectorStore(VectorStore):
             for video_id in video_ids:
                 should_conditions.append(
                     FieldCondition(
-                        key="video_id",
-                        match=MatchValue(value=str(video_id))
+                        key="video_id", match=MatchValue(value=str(video_id))
                     )
                 )
 
@@ -255,10 +270,7 @@ class QdrantVectorStore(VectorStore):
         if filters:
             for key, value in filters.items():
                 must_conditions.append(
-                    FieldCondition(
-                        key=key,
-                        match=MatchValue(value=value)
-                    )
+                    FieldCondition(key=key, match=MatchValue(value=value))
                 )
 
         # Build Qdrant filter
@@ -266,7 +278,7 @@ class QdrantVectorStore(VectorStore):
         if must_conditions or should_conditions:
             query_filter = Filter(
                 must=must_conditions if must_conditions else None,
-                should=should_conditions if should_conditions else None
+                should=should_conditions if should_conditions else None,
             )
 
         # Perform search
@@ -274,7 +286,7 @@ class QdrantVectorStore(VectorStore):
             collection_name=self.collection_name,
             query_vector=query_embedding.tolist(),
             query_filter=query_filter,
-            limit=top_k
+            limit=top_k,
         )
 
         # Convert results to ScoredChunk objects
@@ -313,7 +325,7 @@ class QdrantVectorStore(VectorStore):
                 summary=payload.get("summary"),
                 keywords=payload.get("keywords"),
                 chapter_title=payload.get("chapter_title"),
-                speakers=payload.get("speakers")
+                speakers=payload.get("speakers"),
             )
 
             scored_chunks.append(scored_chunk)
@@ -412,11 +424,10 @@ class QdrantVectorStore(VectorStore):
             points_selector=Filter(
                 must=[
                     FieldCondition(
-                        key="video_id",
-                        match=MatchValue(value=str(video_id))
+                        key="video_id", match=MatchValue(value=str(video_id))
                     )
                 ]
-            )
+            ),
         )
 
         print(f"Deleted chunks for video {video_id}")
@@ -474,7 +485,7 @@ class VectorStoreService:
         enriched_chunks: List[EnrichedChunk],
         embeddings: List[np.ndarray],
         user_id: UUID,
-        video_id: UUID
+        video_id: UUID,
     ):
         """
         Index all chunks for a video.

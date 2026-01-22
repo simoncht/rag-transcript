@@ -9,7 +9,16 @@ from early turns that are outside the working memory window.
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Column, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    Column,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
@@ -48,7 +57,9 @@ class ConversationFact(Base):
     user = relationship("User")
 
     __table_args__ = (
-        UniqueConstraint("conversation_id", "fact_key", name="unique_conversation_fact_key"),
+        UniqueConstraint(
+            "conversation_id", "fact_key", name="unique_conversation_fact_key"
+        ),
     )
 
     def __repr__(self) -> str:

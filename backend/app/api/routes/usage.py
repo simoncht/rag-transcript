@@ -11,10 +11,16 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.core.auth import get_current_user
+from app.core.nextauth import get_current_user
 from app.db.base import get_db
 from app.models import Video, Transcript, Chunk, User
-from app.schemas import UsageSummary, StorageBreakdown, UsageCounts, VectorStoreStat, QuotaStat
+from app.schemas import (
+    UsageSummary,
+    StorageBreakdown,
+    UsageCounts,
+    VectorStoreStat,
+    QuotaStat,
+)
 from app.services.storage import storage_service
 from app.services.usage_tracker import UsageTracker
 from app.services.vector_store import vector_store_service
@@ -35,12 +41,16 @@ async def get_usage_summary(
 
     # Base video query (non-deleted, current user)
     video_query = db.query(Video).filter(
-        Video.user_id == current_user.id,
-        Video.is_deleted == False  # noqa: E712
+        Video.user_id == current_user.id, Video.is_deleted.is_(False)  # noqa: E712
     )
 
     # Audio storage from DB (MB)
-    audio_mb = video_query.with_entities(func.coalesce(func.sum(Video.audio_file_size_mb), 0.0)).scalar() or 0.0
+    audio_mb = (
+        video_query.with_entities(
+            func.coalesce(func.sum(Video.audio_file_size_mb), 0.0)
+        ).scalar()
+        or 0.0
+    )
 
     # Transcript counts and estimated size (MB) based on text length
     transcript_query = (
@@ -48,7 +58,7 @@ async def get_usage_summary(
         .join(Video, Video.id == Transcript.video_id)
         .filter(
             Video.user_id == current_user.id,
-            Video.is_deleted == False,  # noqa: E712
+            Video.is_deleted.is_(False),  # noqa: E712
         )
     )
     transcripts = transcript_query.all()
@@ -60,7 +70,9 @@ async def get_usage_summary(
     )
     transcript_file_mb = 0.0
     # Prefer on-disk transcript file sizes when available
-    videos_with_transcripts = video_query.filter(Video.transcript_file_path.isnot(None)).all()
+    videos_with_transcripts = video_query.filter(
+        Video.transcript_file_path.isnot(None)
+    ).all()
     for video in videos_with_transcripts:
         path = video.transcript_file_path
         if not path:
@@ -70,19 +82,25 @@ async def get_usage_summary(
         except Exception:
             # Fallback to DB-based estimate if file missing
             continue
-    transcript_mb = transcript_file_mb if transcript_file_mb > 0 else transcript_mb_estimate
+    transcript_mb = (
+        transcript_file_mb if transcript_file_mb > 0 else transcript_mb_estimate
+    )
 
     # Chunk counts for the user
-    chunk_count = db.query(func.count(Chunk.id)).filter(Chunk.user_id == current_user.id).scalar() or 0
+    chunk_count = (
+        db.query(func.count(Chunk.id)).filter(Chunk.user_id == current_user.id).scalar()
+        or 0
+    )
 
     # Video counts by status
     video_query = db.query(Video).filter(
-        Video.user_id == current_user.id,
-        Video.is_deleted == False  # noqa: E712
+        Video.user_id == current_user.id, Video.is_deleted.is_(False)  # noqa: E712
     )
     videos_total = video_query.count()
     videos_completed = video_query.filter(Video.status == "completed").count()
-    videos_processing = video_query.filter(Video.status.notin_(["completed", "failed"])).count()
+    videos_processing = video_query.filter(
+        Video.status.notin_(["completed", "failed"])
+    ).count()
     videos_failed = video_query.filter(Video.status == "failed").count()
 
     # Disk usage from storage service (audio + transcript files on disk)

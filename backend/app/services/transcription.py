@@ -11,7 +11,6 @@ import os
 from typing import List, Dict, Optional, Callable
 from dataclasses import dataclass
 import whisper
-import torch
 
 from app.core.config import settings
 from app.services.chunking import TranscriptSegment
@@ -29,6 +28,7 @@ class TranscriptResult:
         duration_seconds: Audio duration
         word_count: Total word count
     """
+
     full_text: str
     segments: List[TranscriptSegment]
     language: str
@@ -43,11 +43,7 @@ class WhisperTranscriptionService:
     Uses OpenAI's Whisper model for speech-to-text with high accuracy.
     """
 
-    def __init__(
-        self,
-        model_name: str = None,
-        device: str = None
-    ):
+    def __init__(self, model_name: str = None, device: str = None):
         """
         Initialize Whisper transcription service.
 
@@ -67,7 +63,7 @@ class WhisperTranscriptionService:
         self,
         audio_path: str,
         language: Optional[str] = None,
-        progress_callback: Optional[Callable] = None
+        progress_callback: Optional[Callable] = None,
     ) -> TranscriptResult:
         """
         Transcribe audio file.
@@ -101,12 +97,16 @@ class WhisperTranscriptionService:
                 transcribe_options["language"] = language
 
             if progress_callback:
-                progress_callback({"status": "transcribing", "message": "Transcribing audio..."})
+                progress_callback(
+                    {"status": "transcribing", "message": "Transcribing audio..."}
+                )
 
             result = self.model.transcribe(audio_path, **transcribe_options)
 
             if progress_callback:
-                progress_callback({"status": "processing", "message": "Processing transcript..."})
+                progress_callback(
+                    {"status": "processing", "message": "Processing transcript..."}
+                )
 
             # Extract segments
             segments = self._extract_segments(result["segments"])
@@ -124,22 +124,28 @@ class WhisperTranscriptionService:
             detected_language = result.get("language", "unknown")
 
             if progress_callback:
-                progress_callback({"status": "completed", "message": "Transcription completed"})
+                progress_callback(
+                    {"status": "completed", "message": "Transcription completed"}
+                )
 
             return TranscriptResult(
                 full_text=full_text,
                 segments=segments,
                 language=detected_language,
                 duration_seconds=duration_seconds,
-                word_count=word_count
+                word_count=word_count,
             )
 
         except Exception as e:
             if progress_callback:
-                progress_callback({"status": "failed", "message": f"Transcription failed: {str(e)}"})
+                progress_callback(
+                    {"status": "failed", "message": f"Transcription failed: {str(e)}"}
+                )
             raise Exception(f"Transcription failed: {str(e)}")
 
-    def _extract_segments(self, whisper_segments: List[Dict]) -> List[TranscriptSegment]:
+    def _extract_segments(
+        self, whisper_segments: List[Dict]
+    ) -> List[TranscriptSegment]:
         """
         Convert Whisper segments to TranscriptSegment objects.
 
@@ -163,10 +169,7 @@ class WhisperTranscriptionService:
             speaker = None
 
             segment = TranscriptSegment(
-                text=text,
-                start=start,
-                end=end,
-                speaker=speaker
+                text=text, start=start, end=end, speaker=speaker
             )
 
             segments.append(segment)
@@ -178,7 +181,8 @@ class WhisperTranscriptionService:
         return {
             "model": self.model_name,
             "device": self.device,
-            "multilingual": self.model_name not in ["tiny.en", "base.en", "small.en", "medium.en"]
+            "multilingual": self.model_name
+            not in ["tiny.en", "base.en", "small.en", "medium.en"],
         }
 
 
@@ -207,7 +211,7 @@ class TranscriptionService:
         self,
         audio_path: str,
         language: Optional[str] = None,
-        progress_callback: Optional[Callable] = None
+        progress_callback: Optional[Callable] = None,
     ) -> TranscriptResult:
         """
         Transcribe audio file.

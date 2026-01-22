@@ -11,7 +11,7 @@ Tests cover:
 """
 import json
 import pytest
-from unittest.mock import Mock, MagicMock, patch
+from unittest.mock import Mock, patch
 from sqlalchemy.orm import Session
 
 from app.services.fact_extraction import FactExtractionService, FACT_EXTRACTION_PROMPT
@@ -60,15 +60,19 @@ class TestFactExtractionService:
 
     # ==================== Test: Successful Extraction ====================
 
-    def test_extract_facts_success(self, service, mock_db, test_conversation, test_message):
+    def test_extract_facts_success(
+        self, service, mock_db, test_conversation, test_message
+    ):
         """Test successful fact extraction from message."""
         # Mock LLM response
         llm_response = LLMResponse(
-            content=json.dumps([
-                {"key": "instructor", "value": "Dr. Andrew Ng"},
-                {"key": "topic", "value": "machine learning"},
-                {"key": "framework", "value": "TensorFlow"}
-            ]),
+            content=json.dumps(
+                [
+                    {"key": "instructor", "value": "Dr. Andrew Ng"},
+                    {"key": "topic", "value": "machine learning"},
+                    {"key": "framework", "value": "TensorFlow"},
+                ]
+            ),
             model="test-model",
             provider="test",
         )
@@ -76,12 +80,12 @@ class TestFactExtractionService:
         # Mock existing facts query (no duplicates)
         mock_db.query.return_value.filter.return_value.all.return_value = []
 
-        with patch.object(service.llm_service, 'complete', return_value=llm_response):
+        with patch.object(service.llm_service, "complete", return_value=llm_response):
             facts = service.extract_facts(
                 db=mock_db,
                 message=test_message,
                 conversation=test_conversation,
-                user_query="Who is the instructor?"
+                user_query="Who is the instructor?",
             )
 
         # Assertions
@@ -92,7 +96,9 @@ class TestFactExtractionService:
         assert facts[0].user_id == "test-user-id"
         assert facts[0].confidence_score == 1.0
 
-    def test_extract_facts_with_markdown_code_blocks(self, service, mock_db, test_conversation, test_message):
+    def test_extract_facts_with_markdown_code_blocks(
+        self, service, mock_db, test_conversation, test_message
+    ):
         """Test extraction handles markdown code blocks in LLM response."""
         # Mock LLM response with markdown
         llm_response = LLMResponse(
@@ -108,37 +114,41 @@ class TestFactExtractionService:
 
         mock_db.query.return_value.filter.return_value.all.return_value = []
 
-        with patch.object(service.llm_service, 'complete', return_value=llm_response):
+        with patch.object(service.llm_service, "complete", return_value=llm_response):
             facts = service.extract_facts(
                 db=mock_db,
                 message=test_message,
                 conversation=test_conversation,
-                user_query="Test query"
+                user_query="Test query",
             )
 
         assert len(facts) == 2
         assert facts[0].fact_key == "instructor"
         assert facts[1].fact_key == "topic"
 
-    def test_extract_facts_normalizes_keys(self, service, mock_db, test_conversation, test_message):
+    def test_extract_facts_normalizes_keys(
+        self, service, mock_db, test_conversation, test_message
+    ):
         """Test that fact keys are normalized (lowercase, underscores)."""
         llm_response = LLMResponse(
-            content=json.dumps([
-                {"key": "Course Instructor", "value": "Dr. Smith"},
-                {"key": "Main-Topic", "value": "AI"}
-            ]),
+            content=json.dumps(
+                [
+                    {"key": "Course Instructor", "value": "Dr. Smith"},
+                    {"key": "Main-Topic", "value": "AI"},
+                ]
+            ),
             model="test",
             provider="test",
         )
 
         mock_db.query.return_value.filter.return_value.all.return_value = []
 
-        with patch.object(service.llm_service, 'complete', return_value=llm_response):
+        with patch.object(service.llm_service, "complete", return_value=llm_response):
             facts = service.extract_facts(
                 db=mock_db,
                 message=test_message,
                 conversation=test_conversation,
-                user_query="Test"
+                user_query="Test",
             )
 
         assert facts[0].fact_key == "course_instructor"
@@ -146,7 +156,9 @@ class TestFactExtractionService:
 
     # ==================== Test: Deduplication ====================
 
-    def test_deduplication_skips_existing_keys(self, service, mock_db, test_conversation, test_message):
+    def test_deduplication_skips_existing_keys(
+        self, service, mock_db, test_conversation, test_message
+    ):
         """Test that facts with existing keys are skipped."""
         # Mock existing facts
         existing_fact = ConversationFact(
@@ -158,24 +170,28 @@ class TestFactExtractionService:
             source_turn=1,
             confidence_score=1.0,
         )
-        mock_db.query.return_value.filter.return_value.all.return_value = [existing_fact]
+        mock_db.query.return_value.filter.return_value.all.return_value = [
+            existing_fact
+        ]
 
         # Mock LLM response with duplicate key
         llm_response = LLMResponse(
-            content=json.dumps([
-                {"key": "instructor", "value": "Dr. New"},  # Duplicate
-                {"key": "topic", "value": "ML"}  # New
-            ]),
+            content=json.dumps(
+                [
+                    {"key": "instructor", "value": "Dr. New"},  # Duplicate
+                    {"key": "topic", "value": "ML"},  # New
+                ]
+            ),
             model="test",
             provider="test",
         )
 
-        with patch.object(service.llm_service, 'complete', return_value=llm_response):
+        with patch.object(service.llm_service, "complete", return_value=llm_response):
             facts = service.extract_facts(
                 db=mock_db,
                 message=test_message,
                 conversation=test_conversation,
-                user_query="Test"
+                user_query="Test",
             )
 
         # Should only return the new fact
@@ -185,7 +201,9 @@ class TestFactExtractionService:
 
     # ==================== Test: Edge Cases ====================
 
-    def test_extract_facts_empty_response(self, service, mock_db, test_conversation, test_message):
+    def test_extract_facts_empty_response(
+        self, service, mock_db, test_conversation, test_message
+    ):
         """Test extraction handles empty fact array."""
         llm_response = LLMResponse(
             content="[]",
@@ -195,17 +213,19 @@ class TestFactExtractionService:
 
         mock_db.query.return_value.filter.return_value.all.return_value = []
 
-        with patch.object(service.llm_service, 'complete', return_value=llm_response):
+        with patch.object(service.llm_service, "complete", return_value=llm_response):
             facts = service.extract_facts(
                 db=mock_db,
                 message=test_message,
                 conversation=test_conversation,
-                user_query="Test"
+                user_query="Test",
             )
 
         assert len(facts) == 0
 
-    def test_extract_facts_invalid_json(self, service, mock_db, test_conversation, test_message):
+    def test_extract_facts_invalid_json(
+        self, service, mock_db, test_conversation, test_message
+    ):
         """Test extraction handles invalid JSON gracefully."""
         llm_response = LLMResponse(
             content="This is not valid JSON",
@@ -215,55 +235,63 @@ class TestFactExtractionService:
 
         mock_db.query.return_value.filter.return_value.all.return_value = []
 
-        with patch.object(service.llm_service, 'complete', return_value=llm_response):
+        with patch.object(service.llm_service, "complete", return_value=llm_response):
             facts = service.extract_facts(
                 db=mock_db,
                 message=test_message,
                 conversation=test_conversation,
-                user_query="Test"
+                user_query="Test",
             )
 
         # Should return empty list on parse failure
         assert len(facts) == 0
 
-    def test_extract_facts_malformed_structure(self, service, mock_db, test_conversation, test_message):
+    def test_extract_facts_malformed_structure(
+        self, service, mock_db, test_conversation, test_message
+    ):
         """Test extraction handles malformed fact structure."""
         llm_response = LLMResponse(
-            content=json.dumps([
-                {"key": "instructor"},  # Missing value
-                {"value": "ML"},  # Missing key
-                {"key": "", "value": "Test"},  # Empty key
-                {"key": "topic", "value": ""},  # Empty value
-                {"key": "valid", "value": "Valid Fact"}  # Valid
-            ]),
+            content=json.dumps(
+                [
+                    {"key": "instructor"},  # Missing value
+                    {"value": "ML"},  # Missing key
+                    {"key": "", "value": "Test"},  # Empty key
+                    {"key": "topic", "value": ""},  # Empty value
+                    {"key": "valid", "value": "Valid Fact"},  # Valid
+                ]
+            ),
             model="test",
             provider="test",
         )
 
         mock_db.query.return_value.filter.return_value.all.return_value = []
 
-        with patch.object(service.llm_service, 'complete', return_value=llm_response):
+        with patch.object(service.llm_service, "complete", return_value=llm_response):
             facts = service.extract_facts(
                 db=mock_db,
                 message=test_message,
                 conversation=test_conversation,
-                user_query="Test"
+                user_query="Test",
             )
 
         # Should only extract valid fact
         assert len(facts) == 1
         assert facts[0].fact_key == "valid"
 
-    def test_extract_facts_llm_failure(self, service, mock_db, test_conversation, test_message):
+    def test_extract_facts_llm_failure(
+        self, service, mock_db, test_conversation, test_message
+    ):
         """Test extraction handles LLM failures gracefully."""
         mock_db.query.return_value.filter.return_value.all.return_value = []
 
-        with patch.object(service.llm_service, 'complete', side_effect=Exception("LLM error")):
+        with patch.object(
+            service.llm_service, "complete", side_effect=Exception("LLM error")
+        ):
             facts = service.extract_facts(
                 db=mock_db,
                 message=test_message,
                 conversation=test_conversation,
-                user_query="Test"
+                user_query="Test",
             )
 
         # Should return empty list on LLM failure
@@ -300,9 +328,7 @@ class TestFactExtractionService:
 
     def test_parse_facts_response_valid_json(self, service):
         """Test parsing valid JSON response."""
-        response = json.dumps([
-            {"key": "test_key", "value": "test_value"}
-        ])
+        response = json.dumps([{"key": "test_key", "value": "test_value"}])
 
         facts = service._parse_facts_response(response)
 
@@ -329,12 +355,9 @@ class TestFactExtractionService:
 
     def test_parse_facts_response_invalid_item_type(self, service):
         """Test parsing skips non-dict items."""
-        response = json.dumps([
-            {"key": "valid", "value": "fact"},
-            "not a dict",
-            123,
-            None
-        ])
+        response = json.dumps(
+            [{"key": "valid", "value": "fact"}, "not a dict", 123, None]
+        )
 
         facts = service._parse_facts_response(response)
 
@@ -360,12 +383,12 @@ class TestFactExtractionService:
 
         mock_db.query.return_value.filter.return_value.all.return_value = []
 
-        with patch.object(service.llm_service, 'complete', return_value=llm_response):
+        with patch.object(service.llm_service, "complete", return_value=llm_response):
             facts = service.extract_facts(
                 db=mock_db,
                 message=test_message,
                 conversation=conversation,
-                user_query="Test"
+                user_query="Test",
             )
 
         # Turn number should be (26 + 1) // 2 = 13 (current turn)
@@ -407,11 +430,13 @@ class TestFactExtractionService:
         )
 
         llm_response = LLMResponse(
-            content=json.dumps([
-                {"key": "instructor", "value": "Dr. Jane Doe"},
-                {"key": "topic", "value": "deep learning"},
-                {"key": "framework", "value": "PyTorch"}
-            ]),
+            content=json.dumps(
+                [
+                    {"key": "instructor", "value": "Dr. Jane Doe"},
+                    {"key": "topic", "value": "deep learning"},
+                    {"key": "framework", "value": "PyTorch"},
+                ]
+            ),
             model="test",
             provider="test",
         )
@@ -419,12 +444,12 @@ class TestFactExtractionService:
         mock_db.query.return_value.filter.return_value.all.return_value = []
 
         # Execute
-        with patch.object(service.llm_service, 'complete', return_value=llm_response):
+        with patch.object(service.llm_service, "complete", return_value=llm_response):
             facts = service.extract_facts(
                 db=mock_db,
                 message=message,
                 conversation=conversation,
-                user_query="Who is the instructor and what do they teach?"
+                user_query="Who is the instructor and what do they teach?",
             )
 
         # Verify
@@ -505,7 +530,9 @@ class TestFactExtractionPrompt:
         """Test prompt shows correct JSON format example."""
         # Should show the double-brace format for JSON
         assert '"key":' in FACT_EXTRACTION_PROMPT or '"key"' in FACT_EXTRACTION_PROMPT
-        assert '"value":' in FACT_EXTRACTION_PROMPT or '"value"' in FACT_EXTRACTION_PROMPT
+        assert (
+            '"value":' in FACT_EXTRACTION_PROMPT or '"value"' in FACT_EXTRACTION_PROMPT
+        )
 
 
 class TestFactDeduplication:
@@ -615,6 +642,7 @@ class TestFactDeduplication:
 
 # ==================== Integration Tests ====================
 
+
 class TestFactExtractionIntegration:
     """Integration tests for fact extraction with database."""
 
@@ -626,6 +654,7 @@ class TestFactExtractionIntegration:
 
 
 # ==================== Performance Tests ====================
+
 
 class TestFactExtractionPerformance:
     """Performance tests for fact extraction."""
@@ -647,14 +676,12 @@ class TestFactExtractionPerformance:
 
     def test_fact_key_normalization_performance(self):
         """Test key normalization is efficient."""
-        service = FactExtractionService()
-
         test_keys = [
             "Course Instructor",
             "Main-Topic",
             "Framework_Used",
             "Date Of Event",
-            "number-of-participants"
+            "number-of-participants",
         ]
 
         for key in test_keys:

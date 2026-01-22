@@ -16,7 +16,13 @@ class Transcript(Base):
     __tablename__ = "transcripts"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    video_id = Column(UUID(as_uuid=True), ForeignKey("videos.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
+    video_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("videos.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
 
     # Full transcript text
     full_text = Column(Text, nullable=False)

@@ -4,7 +4,6 @@ Storage service abstraction for local and cloud storage.
 Provides a unified interface for file storage operations that can be backed by
 either local filesystem or Azure Blob Storage.
 """
-import os
 import shutil
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -18,7 +17,9 @@ class StorageService(ABC):
     """Abstract base class for storage operations."""
 
     @abstractmethod
-    def upload_audio(self, user_id: UUID, video_id: UUID, file_stream: BinaryIO, filename: str) -> str:
+    def upload_audio(
+        self, user_id: UUID, video_id: UUID, file_stream: BinaryIO, filename: str
+    ) -> str:
         """
         Upload audio file to storage.
 
@@ -62,7 +63,9 @@ class StorageService(ABC):
         pass
 
     @abstractmethod
-    def save_transcript(self, user_id: UUID, video_id: UUID, transcript_data: dict) -> str:
+    def save_transcript(
+        self, user_id: UUID, video_id: UUID, transcript_data: dict
+    ) -> str:
         """
         Save transcript JSON to storage.
 
@@ -151,7 +154,9 @@ class LocalStorageService(StorageService):
         """Get transcript directory path for a video."""
         return self.transcript_path / str(user_id) / str(video_id)
 
-    def upload_audio(self, user_id: UUID, video_id: UUID, file_stream: BinaryIO, filename: str) -> str:
+    def upload_audio(
+        self, user_id: UUID, video_id: UUID, file_stream: BinaryIO, filename: str
+    ) -> str:
         """Upload audio file to local storage."""
         # Determine file extension
         ext = Path(filename).suffix or ".mp3"
@@ -188,7 +193,9 @@ class LocalStorageService(StorageService):
 
         return False
 
-    def save_transcript(self, user_id: UUID, video_id: UUID, transcript_data: dict) -> str:
+    def save_transcript(
+        self, user_id: UUID, video_id: UUID, transcript_data: dict
+    ) -> str:
         """Save transcript JSON to local storage."""
         import json
 
@@ -253,9 +260,13 @@ class AzureBlobStorageService(StorageService):
         # self.blob_service_client = BlobServiceClient.from_connection_string(
         #     settings.azure_storage_connection_string
         # )
-        raise NotImplementedError("Azure Blob Storage not yet implemented. Use local storage for now.")
+        raise NotImplementedError(
+            "Azure Blob Storage not yet implemented. Use local storage for now."
+        )
 
-    def upload_audio(self, user_id: UUID, video_id: UUID, file_stream: BinaryIO, filename: str) -> str:
+    def upload_audio(
+        self, user_id: UUID, video_id: UUID, file_stream: BinaryIO, filename: str
+    ) -> str:
         raise NotImplementedError()
 
     def download_audio(self, user_id: UUID, video_id: UUID) -> BinaryIO:
@@ -264,7 +275,9 @@ class AzureBlobStorageService(StorageService):
     def delete_audio(self, user_id: UUID, video_id: UUID) -> bool:
         raise NotImplementedError()
 
-    def save_transcript(self, user_id: UUID, video_id: UUID, transcript_data: dict) -> str:
+    def save_transcript(
+        self, user_id: UUID, video_id: UUID, transcript_data: dict
+    ) -> str:
         raise NotImplementedError()
 
     def load_transcript(self, user_id: UUID, video_id: UUID) -> Optional[dict]:

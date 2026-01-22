@@ -13,11 +13,11 @@ import textwrap
 import uuid
 from typing import Any, Optional, List, Dict, Set, Sequence
 from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.core.auth import get_current_user
+from app.core.nextauth import get_current_user
 from app.db.base import get_db
 from app.models import (
     Conversation,
@@ -43,10 +43,17 @@ from app.schemas import (
     ChunkReference,
     Message as MessageSchema,
 )
+from app.services.query_expansion import get_query_expansion_service
+from app.services.audit_logger import log_chat_message
+from app.core.rate_limit import limiter
 
 router = APIRouter()
 
 SYSTEM_ROLE = "system"
+MAX_CHUNK_REFERENCES = 4
+CONTEXT_CHUNK_LIMIT = MAX_CHUNK_REFERENCES
+SNIPPET_PREVIEW_MAX_CHARS = 240
+REFERENCE_DEDUP_BUCKET_SECONDS = 30
 
 
 def _format_timestamp_display(start: float, end: float) -> str:
@@ -66,6 +73,35 @@ def _format_list_preview(items: Sequence[str], *, limit: int = 3) -> str:
         return ", ".join(items)
     remaining = len(items) - limit
     return f"{', '.join(items[:limit])} (+{remaining} more)"
+
+
+def _truncate_snippet(text: str, *, limit: int = SNIPPET_PREVIEW_MAX_CHARS) -> str:
+    """Trim long snippets while keeping citations compact."""
+    if len(text) <= limit:
+        return text
+    trimmed = text[: limit - 3].rstrip()
+    return f"{trimmed}..."
+
+
+def _build_video_url(video: Video | None) -> str | None:
+    """Prefer stored YouTube URL, otherwise derive from youtube_id."""
+    if not video:
+        return None
+    if video.youtube_url:
+        return video.youtube_url
+    if video.youtube_id:
+        return f"https://youtu.be/{video.youtube_id}"
+    return None
+
+
+def _build_youtube_jump_url(video: Video | None, start_seconds: float) -> str | None:
+    """Create a timestamped YouTube link for jump actions."""
+    base_url = _build_video_url(video)
+    if not base_url:
+        return None
+    start_int = max(0, int(start_seconds))
+    separator = "&" if "?" in base_url else "?"
+    return f"{base_url}{separator}t={start_int}"
 
 
 def _create_system_message(
@@ -164,7 +200,7 @@ def _sync_collection_sources(
             .filter(
                 CollectionVideo.collection_id == conversation.collection_id,
                 Video.user_id == current_user.id,
-                Video.is_deleted == False,  # noqa: E712
+                Video.is_deleted.is_(False),  # noqa: E712
                 func.lower(func.trim(Video.status)) == "completed",
             )
         )
@@ -331,7 +367,7 @@ async def create_conversation(
             .filter(
                 CollectionVideo.collection_id == request.collection_id,
                 Video.user_id == current_user.id,
-                Video.is_deleted == False,  # noqa: E712
+                Video.is_deleted.is_(False),  # noqa: E712
                 func.lower(func.trim(Video.status)) == "completed",
             )
             .all()
@@ -467,15 +503,23 @@ async def get_conversation(
                     chunk_id=chunk.id,
                     video_id=chunk.video_id,
                     video_title=video.title if video else "Unknown",
+                    youtube_id=video.youtube_id if video else None,
+                    video_url=_build_video_url(video),
+                    jump_url=_build_youtube_jump_url(video, chunk.start_timestamp),
                     start_timestamp=chunk.start_timestamp,
                     end_timestamp=chunk.end_timestamp,
-                    text_snippet=chunk.text[:200]
-                    + ("..." if len(chunk.text) > 200 else ""),
+                    text_snippet=_truncate_snippet(
+                        chunk.text, limit=SNIPPET_PREVIEW_MAX_CHARS
+                    ),
                     relevance_score=ref.relevance_score,
                     timestamp_display=_format_timestamp_display(
                         chunk.start_timestamp, chunk.end_timestamp
                     ),
                     rank=ref.rank,
+                    # Phase 1 enhancement: contextual metadata
+                    speakers=chunk.speakers if chunk.speakers else None,
+                    chapter_title=chunk.chapter_title if chunk.chapter_title else None,
+                    channel_name=video.channel_name if video and video.channel_name else None,
                 )
             )
 
@@ -743,9 +787,11 @@ async def update_conversation_sources(
 
 
 @router.post("/{conversation_id}/messages", response_model=MessageResponse)
+@limiter.limit("50/hour")
 async def send_message(
     conversation_id: uuid.UUID,
-    request: MessageSendRequest,
+    request: Request,
+    message_request: MessageSendRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -776,6 +822,10 @@ async def send_message(
     from app.core.config import settings
 
     start_time = time.time()
+
+    # Check message quota
+    from app.core.quota import check_message_quota
+    await check_message_quota(current_user, db)
 
     # 1. Verify conversation exists and belongs to user
     conversation = _ensure_conversation_owned(db, conversation_id, current_user)
@@ -815,21 +865,21 @@ async def send_message(
         previous_mode = previous_user_message.message_metadata.get("mode")
         previous_model = previous_user_message.message_metadata.get("model")
 
-    if previous_mode is not None and previous_mode != request.mode:
+    if previous_mode is not None and previous_mode != message_request.mode:
         db.add(
             _create_system_message(
                 conversation_id=conversation_id,
-                content=f"FYI: Mode changed to {_mode_label(request.mode)}",
+                content=f"FYI: Mode changed to {_mode_label(message_request.mode)}",
                 metadata={
                     "event": "mode_changed",
                     "previous": previous_mode,
-                    "next": request.mode,
+                    "next": message_request.mode,
                 },
             )
         )
 
-    if previous_model is not None and previous_model != request.model:
-        next_model = request.model or "default"
+    if previous_model is not None and previous_model != message_request.model:
+        next_model = message_request.model or "default"
         db.add(
             _create_system_message(
                 conversation_id=conversation_id,
@@ -837,7 +887,7 @@ async def send_message(
                 metadata={
                     "event": "model_changed",
                     "previous": previous_model,
-                    "next": request.model,
+                    "next": message_request.model,
                 },
             )
         )
@@ -847,54 +897,125 @@ async def send_message(
         id=uuid.uuid4(),
         conversation_id=conversation_id,
         role="user",
-        content=request.message,
-        token_count=len(request.message.split()),  # Simple approximation
+        content=message_request.message,
+        token_count=len(message_request.message.split()),  # Simple approximation
         message_metadata={
-            "mode": request.mode,
-            "model": request.model,
+            "mode": message_request.mode,
+            "model": message_request.model,
         },
     )
     db.add(user_message)
+    log_chat_message(
+        db,
+        request=request,
+        user_id=current_user.id,
+        conversation_id=conversation_id,
+        message=user_message,
+        event_type="chat_message",
+        extra_metadata={"path": str(request.url.path)},
+    )
     db.commit()
 
-    # 3. Embed user query
-    query_embedding = embedding_service.embed_text(request.message)
-    if isinstance(query_embedding, tuple):
-        query_embedding = np.array(query_embedding, dtype=np.float32)
-
-    # 4. Retrieve relevant chunks from vector store (filtered by conversation's videos)
-    scored_chunks = vector_store_service.search_chunks(
-        query_embedding=query_embedding,
-        user_id=current_user.id,
-        video_ids=selected_video_ids,
-        top_k=settings.retrieval_top_k,
-    )
-
-    # 4a. Re-rank chunks if enabled (Phase 2 improvement)
+    # 3. Query Expansion: Generate query variants for improved recall
     import logging
+    import time
 
     logger = logging.getLogger(__name__)
 
+    query_expansion_service = get_query_expansion_service()
+
+    logger.info(f"[RAG Pipeline] Starting retrieval for query: '{message_request.message[:100]}...'")
+    logger.info(f"[RAG Config] retrieval_top_k={settings.retrieval_top_k}, reranking_enabled={settings.enable_reranking}, reranking_top_k={settings.reranking_top_k}")
+    logger.info(f"[RAG Config] min_relevance_score={settings.min_relevance_score}, query_expansion_enabled={settings.enable_query_expansion}")
+
+    expansion_start = time.time()
+    query_variants = query_expansion_service.expand_query(message_request.message)
+    expansion_time = time.time() - expansion_start
+
+    logger.info(f"[Query Expansion] Generated {len(query_variants)} query variants in {expansion_time:.3f}s")
+    for idx, variant in enumerate(query_variants):
+        logger.debug(f"[Query Expansion] Variant {idx}: '{variant[:100]}...'")
+
+    # 4. Multi-Query Retrieval: Embed and search with each query variant
+    embedding_start = time.time()
+    all_scored_chunks: Dict[uuid.UUID, Any] = {}  # chunk_id -> best ScoredChunk
+
+    for idx, query_text in enumerate(query_variants):
+        variant_embed_start = time.time()
+        query_embedding = embedding_service.embed_text(query_text)
+        if isinstance(query_embedding, tuple):
+            query_embedding = np.array(query_embedding, dtype=np.float32)
+        variant_embed_time = time.time() - variant_embed_start
+
+        logger.debug(f"[Embedding] Query variant {idx} embedded in {variant_embed_time:.3f}s")
+
+        # Search with this query variant
+        variant_search_start = time.time()
+        variant_chunks = vector_store_service.search_chunks(
+            query_embedding=query_embedding,
+            user_id=current_user.id,
+            video_ids=selected_video_ids,
+            top_k=settings.retrieval_top_k,
+        )
+        variant_search_time = time.time() - variant_search_start
+
+        logger.info(f"[Vector Search] Query variant {idx} retrieved {len(variant_chunks)} chunks in {variant_search_time:.3f}s")
+        logger.debug(f"[Vector Search] Query variant {idx} score range: {variant_chunks[0].score:.4f} to {variant_chunks[-1].score:.4f}" if variant_chunks else "No chunks")
+
+        # Merge results: Keep highest score for each chunk
+        for chunk in variant_chunks:
+            chunk_id = chunk.chunk_id
+            if chunk_id is None:
+                # Skip chunks without IDs (shouldn't happen in normal operation)
+                logger.warning(f"[Vector Search] Found chunk without ID, skipping: video_id={chunk.video_id}, timestamp={chunk.start_timestamp}")
+                continue
+
+            if chunk_id not in all_scored_chunks or chunk.score > all_scored_chunks[chunk_id].score:
+                all_scored_chunks[chunk_id] = chunk
+
+    embedding_time = time.time() - embedding_start
+
+    # Convert merged results back to list, sorted by score
+    scored_chunks = sorted(all_scored_chunks.values(), key=lambda c: c.score, reverse=True)
+
+    logger.info(f"[Multi-Query Retrieval] Total embedding + search time: {embedding_time:.3f}s")
+    logger.info(f"[Multi-Query Retrieval] Merged results: {len(scored_chunks)} unique chunks from {len(query_variants)} queries")
+    if scored_chunks:
+        logger.info(f"[Multi-Query Retrieval] Score range: {scored_chunks[0].score:.4f} to {scored_chunks[-1].score:.4f}")
+
+    # 4a. Re-rank chunks if enabled (Phase 2 improvement)
     if settings.enable_reranking and scored_chunks:
         from app.services.reranker import reranker_service
 
-        logger.info(f"Re-ranking: enabled, processing {len(scored_chunks)} chunks")
+        rerank_start = time.time()
+        logger.info(f"[Reranking] Starting reranking of {len(scored_chunks)} chunks (top_k={settings.reranking_top_k})")
+        logger.debug(f"[Reranking] Pre-rerank score range: {scored_chunks[0].score:.4f} to {scored_chunks[-1].score:.4f}")
+
         reranked_chunks = reranker_service.rerank_chunks(
-            query=request.message, chunks=scored_chunks, top_k=settings.reranking_top_k
+            query=message_request.message, chunks=scored_chunks, top_k=settings.reranking_top_k
         )
-        logger.info(f"Re-ranking: returned {len(reranked_chunks)} chunks")
+        rerank_time = time.time() - rerank_start
+
+        logger.info(f"[Reranking] Completed in {rerank_time:.3f}s, returned {len(reranked_chunks)} chunks")
+        if reranked_chunks:
+            logger.debug(f"[Reranking] Post-rerank score range: {reranked_chunks[0].score:.4f} to {reranked_chunks[-1].score:.4f}")
         scored_chunks = reranked_chunks
     else:
-        logger.info("Re-ranking: disabled or no chunks to rank")
+        logger.info("[Reranking] Disabled or no chunks to rank")
 
     # 4b. Apply relevance threshold filtering (Phase 1 improvement)
+    filter_start = time.time()
     high_quality_chunks = [
         c for c in scored_chunks if c.score >= settings.min_relevance_score
     ]
+    filter_time = time.time() - filter_start
 
-    # Log filtering statistics
     logger.info(
-        f"Retrieval: {len(scored_chunks)} total chunks, {len(high_quality_chunks)} above threshold ({settings.min_relevance_score})"
+        f"[Relevance Filter] Processed {len(scored_chunks)} chunks in {filter_time:.3f}s"
+    )
+    logger.info(
+        f"[Relevance Filter] {len(high_quality_chunks)} chunks above primary threshold ({settings.min_relevance_score}), "
+        f"{len(scored_chunks) - len(high_quality_chunks)} filtered out"
     )
 
     # 4c. Check if we have sufficient context
@@ -904,8 +1025,13 @@ async def send_message(
             c for c in scored_chunks if c.score >= settings.fallback_relevance_score
         ]
         logger.warning(
-            f"No chunks above {settings.min_relevance_score}, using fallback threshold {settings.fallback_relevance_score}: {len(high_quality_chunks)} chunks"
+            f"[Relevance Filter] No chunks above primary threshold ({settings.min_relevance_score})"
         )
+        logger.warning(
+            f"[Relevance Filter] Using fallback threshold ({settings.fallback_relevance_score}): {len(high_quality_chunks)} chunks"
+        )
+        if not high_quality_chunks:
+            logger.error("[Relevance Filter] No chunks even with fallback threshold - no context available")
 
     # Determine context quality for warning
     max_score = (
@@ -913,9 +1039,37 @@ async def send_message(
     )
     context_is_weak = max_score < settings.weak_context_threshold
 
+    logger.info(
+        f"[Context Quality] Max relevance score: {max_score:.4f}, "
+        f"weak_threshold: {settings.weak_context_threshold}, "
+        f"context_is_weak: {context_is_weak}"
+    )
+
+    # 4d. Deduplicate nearby chunks from the same video to avoid redundant citations
+    dedup_start = time.time()
+    deduped_chunks: List[Any] = []
+    seen_context_keys: Set[tuple[uuid.UUID, int]] = set()
+    for chunk in high_quality_chunks:
+        bucket = int(chunk.start_timestamp // REFERENCE_DEDUP_BUCKET_SECONDS)
+        key = (chunk.video_id, bucket)
+        if key in seen_context_keys:
+            continue
+        seen_context_keys.add(key)
+        deduped_chunks.append(chunk)
+    dedup_time = time.time() - dedup_start
+
+    logger.info(
+        f"[Deduplication] Processed {len(high_quality_chunks)} chunks in {dedup_time:.3f}s"
+    )
+    logger.info(
+        f"[Deduplication] Removed {len(high_quality_chunks) - len(deduped_chunks)} duplicate chunks, "
+        f"{len(deduped_chunks)} remaining"
+    )
+
     # 5. Build enhanced context from retrieved chunks (Phase 1 improvement)
+    context_build_start = time.time()
     context_parts = []
-    top_chunks = high_quality_chunks[:5]
+    top_chunks = deduped_chunks[:CONTEXT_CHUNK_LIMIT]
     video_map: Dict[uuid.UUID, Video] = {}
     if top_chunks:
         unique_video_ids = list({c.video_id for c in top_chunks})
@@ -923,10 +1077,12 @@ async def send_message(
             video_rows = db.query(Video).filter(Video.id.in_(unique_video_ids)).all()
             video_map = {v.id: v for v in video_rows}
 
+    logger.info(f"[Context Building] Using top {len(top_chunks)} chunks (limit: {CONTEXT_CHUNK_LIMIT})")
+
     if not high_quality_chunks:
         # No relevant context found - explicit warning
         context = "WARNING: No relevant content found in the selected transcripts for this query."
-        logger.warning("No chunks found for query, even with fallback threshold")
+        logger.warning("[Context Building] No chunks found for query, even with fallback threshold")
     else:
         # Build enhanced context with metadata
         for i, chunk in enumerate(top_chunks, 1):  # Use top 5 for context
@@ -963,7 +1119,15 @@ async def send_message(
                 f"The response may be speculative.\n\n{context}"
             )
 
+    context_build_time = time.time() - context_build_start
+    context_token_estimate = len(context.split()) * 1.3  # Rough token estimate
+
+    logger.info(f"[Context Building] Completed in {context_build_time:.3f}s")
+    logger.info(f"[Context Building] Context length: {len(context)} chars, ~{int(context_token_estimate)} tokens")
+    logger.info(f"[Context Building] Context quality: {'WEAK' if context_is_weak else 'GOOD'} (max score: {max_score:.4f})")
+
     # 6. Get conversation history (last 10 messages) - Phase 1 improvement
+    history_start = time.time()
     history_messages = (
         db.query(MessageModel)
         .filter(
@@ -975,11 +1139,16 @@ async def send_message(
         .all()
     )
     history_messages.reverse()  # Oldest first
+    history_time = time.time() - history_start
+
+    logger.info(f"[Conversation History] Loaded {len(history_messages)} messages in {history_time:.3f}s")
 
     # NEW: Phase 2 - Load conversation facts (only for conversations with 15+ messages)
+    facts_start = time.time()
     facts_section = ""
     if conversation.message_count >= 15:
         from app.models.conversation_fact import ConversationFact
+
         conversation_facts = (
             db.query(ConversationFact)
             .filter(ConversationFact.conversation_id == conversation_id)
@@ -996,6 +1165,12 @@ async def send_message(
                 for fact in conversation_facts
             ]
             facts_section = f"\n\n**Known Facts**: {', '.join(facts_items)}"
+            facts_time = time.time() - facts_start
+            logger.info(f"[Conversation Facts] Loaded {len(conversation_facts)} facts in {facts_time:.3f}s")
+        else:
+            logger.info("[Conversation Facts] No facts found for this conversation")
+    else:
+        logger.debug(f"[Conversation Facts] Skipped (message count {conversation.message_count} < 15)")
 
     # 7. Build LLM messages (streamlined prompt - Phase 2)
     system_prompt = (
@@ -1031,7 +1206,7 @@ async def send_message(
         """
         )
         .strip()
-        .format(mode=request.mode, facts=facts_section)
+        .format(mode=message_request.mode, facts=facts_section)
     )
 
     llm_messages = [LLMMessage(role="system", content=system_prompt)]
@@ -1042,23 +1217,46 @@ async def send_message(
 
     # Add current user message with context
     user_message_with_context = (
-        f"Mode: {request.mode}\n"
+        f"Mode: {message_request.mode}\n"
         f"Context from video transcripts:\n\n{context}\n\n"
-        f"---\n\nUser question: {request.message}"
+        f"---\n\nUser question: {message_request.message}"
     )
     llm_messages.append(LLMMessage(role="user", content=user_message_with_context))
 
+    # Log prompt statistics
+    total_prompt_tokens = sum(len(msg.content.split()) * 1.3 for msg in llm_messages)
+    logger.info(f"[LLM Prompt] {len(llm_messages)} messages, ~{int(total_prompt_tokens)} tokens")
+    logger.debug(f"[LLM Prompt] System prompt: {len(system_prompt)} chars")
+    logger.debug(f"[LLM Prompt] User message with context: {len(user_message_with_context)} chars")
+
     # 8. Generate LLM response (honor optional per-request model override)
+    llm_start = time.time()
     try:
+        logger.info(f"[LLM Generation] Starting generation with model={message_request.model or settings.llm_model}, provider={settings.llm_provider}")
+
         llm_response = llm_service.complete(
             llm_messages,
-            model=request.model,
+            model=message_request.model,
         )
         assistant_content = llm_response.content
+        prompt_tokens = (
+            llm_response.usage.get("prompt_tokens") if llm_response.usage else None
+        )
+        completion_tokens = (
+            llm_response.usage.get("completion_tokens") if llm_response.usage else None
+        )
         token_count = (
             llm_response.usage.get("total_tokens", 0) if llm_response.usage else 0
         )
+
+        llm_time = time.time() - llm_start
+        logger.info(f"[LLM Generation] Completed in {llm_time:.3f}s")
+        logger.info(f"[LLM Generation] Response: {len(assistant_content)} chars, {token_count} tokens")
+        logger.info(f"[LLM Generation] Provider: {llm_response.provider}, Model: {llm_response.model}")
+
     except Exception as e:
+        llm_time = time.time() - llm_start
+        logger.error(f"[LLM Generation] Failed after {llm_time:.3f}s: {str(e)}")
         raise HTTPException(status_code=500, detail=f"LLM error: {str(e)}")
 
     # 9. Save assistant message
@@ -1068,6 +1266,8 @@ async def send_message(
         role="assistant",
         content=assistant_content,
         token_count=token_count,
+        input_tokens=prompt_tokens,
+        output_tokens=completion_tokens,
         chunks_retrieved_count=len(high_quality_chunks),  # Track filtered chunks
         response_time_seconds=time.time() - start_time,
         llm_provider=llm_response.provider,
@@ -1076,41 +1276,46 @@ async def send_message(
     db.add(assistant_message)
 
     # 10. Save chunk references (use filtered high-quality chunks)
-    chunk_references = []
     resolved_entries = []
 
+    # Build lookup dictionaries for chunks
+    chunk_by_id = {}
+    chunk_by_video_index = {}
+
+    # Collect all possible lookup keys
     chunk_ids = [c.chunk_id for c in top_chunks if c.chunk_id]
-    chunk_indices = [
-        (c.video_id, c.chunk_index)
-        for c in top_chunks
-        if c.chunk_id is None and c.chunk_index is not None
+    video_index_pairs = [
+        (c.video_id, c.chunk_index) for c in top_chunks if c.chunk_index is not None
     ]
 
-    chunk_by_id = {}
+    # Query chunks by ID
     if chunk_ids:
         for chunk in db.query(Chunk).filter(Chunk.id.in_(chunk_ids)).all():
             chunk_by_id[chunk.id] = chunk
 
-    chunk_by_video_index = {}
-    if chunk_indices:
-        video_ids_for_index = list({vid for vid, _ in chunk_indices})
-        index_set = {(vid, idx) for vid, idx in chunk_indices}
+    # Query chunks by (video_id, chunk_index) - needed because Qdrant doesn't store chunk_db_id
+    if video_index_pairs:
+        video_ids_for_index = list({vid for vid, _ in video_index_pairs})
+        chunk_indices_for_query = list({idx for _, idx in video_index_pairs})
         candidate_chunks = (
             db.query(Chunk)
             .filter(Chunk.video_id.in_(video_ids_for_index))
-            .filter(Chunk.chunk_index.in_({idx for _, idx in chunk_indices}))
+            .filter(Chunk.chunk_index.in_(chunk_indices_for_query))
             .all()
         )
         for chunk in candidate_chunks:
             key = (chunk.video_id, chunk.chunk_index)
-            if key in index_set:
-                chunk_by_video_index[key] = chunk
+            chunk_by_video_index[key] = chunk
 
     for rank, scored_chunk in enumerate(top_chunks, 1):  # Save top 5 references
         chunk_db = None
+
+        # Try lookup by ID first
         if scored_chunk.chunk_id and scored_chunk.chunk_id in chunk_by_id:
             chunk_db = chunk_by_id[scored_chunk.chunk_id]
-        elif scored_chunk.chunk_index is not None:
+
+        # Always try fallback lookup by (video_id, chunk_index) if ID lookup failed
+        if not chunk_db and scored_chunk.chunk_index is not None:
             chunk_db = chunk_by_video_index.get(
                 (scored_chunk.video_id, scored_chunk.chunk_index)
             )
@@ -1126,8 +1331,41 @@ async def send_message(
             rank=rank,
         )
         db.add(ref)
-        chunk_references.append(ref)
         resolved_entries.append((rank, scored_chunk, chunk_db))
+
+    # Build user-facing chunk reference payload (capped to match context)
+    chunk_refs_response = []
+    for rank, scored_chunk, chunk_db in resolved_entries[:MAX_CHUNK_REFERENCES]:
+        video = video_map.get(scored_chunk.video_id)
+        timestamp_display = _format_timestamp_display(
+            scored_chunk.start_timestamp, scored_chunk.end_timestamp
+        )
+        snippet = _truncate_snippet(scored_chunk.text, limit=SNIPPET_PREVIEW_MAX_CHARS)
+        chunk_refs_response.append(
+            {
+                "chunk_id": chunk_db.id,
+                "video_id": scored_chunk.video_id,
+                "video_title": video.title if video else "Unknown",
+                "youtube_id": video.youtube_id if video else None,
+                "video_url": _build_video_url(video),
+                "jump_url": _build_youtube_jump_url(
+                    video, scored_chunk.start_timestamp
+                ),
+                "start_timestamp": scored_chunk.start_timestamp,
+                "end_timestamp": scored_chunk.end_timestamp,
+                "text_snippet": snippet,
+                "relevance_score": scored_chunk.score,
+                "timestamp_display": timestamp_display,
+                "rank": rank,
+                # Phase 1 enhancement: contextual metadata
+                "speakers": chunk_db.speakers if chunk_db.speakers else None,
+                "chapter_title": chunk_db.chapter_title if chunk_db.chapter_title else None,
+                "channel_name": video.channel_name if video and video.channel_name else None,
+            }
+        )
+
+    # Update tracked source count to match what the user sees
+    assistant_message.chunks_retrieved_count = len(chunk_refs_response)
 
     # 11. Update conversation metadata
     conversation.message_count = (
@@ -1137,6 +1375,21 @@ async def send_message(
     )
     conversation.total_tokens_used += token_count
     conversation.last_message_at = assistant_message.created_at
+
+    log_chat_message(
+        db,
+        request=request,
+        user_id=current_user.id,
+        conversation_id=conversation_id,
+        message=assistant_message,
+        event_type="chat_message",
+        extra_metadata={
+            "provider": llm_response.provider,
+            "model": llm_response.model,
+            "response_time_seconds": assistant_message.response_time_seconds,
+            "chunks_retrieved_count": assistant_message.chunks_retrieved_count,
+        },
+    )
 
     db.commit()
     db.refresh(assistant_message)
@@ -1149,7 +1402,7 @@ async def send_message(
             db=db,
             message=assistant_message,
             conversation=conversation,
-            user_query=request.message
+            user_query=message_request.message,
         )
 
         # Save facts to database
@@ -1158,7 +1411,9 @@ async def send_message(
 
         if extracted_facts:
             db.commit()
-            logger.info(f"Saved {len(extracted_facts)} facts for conversation {conversation_id}")
+            logger.info(
+                f"Saved {len(extracted_facts)} facts for conversation {conversation_id}"
+            )
 
     except Exception as e:
         logger.warning(f"Fact extraction failed: {e}")
@@ -1167,28 +1422,20 @@ async def send_message(
     # 12. Build response with chunk references
     response_time = time.time() - start_time
 
-    chunk_refs_response = []
-    for rank, scored_chunk, chunk_db in resolved_entries:
-        video = video_map.get(scored_chunk.video_id)
-
-        timestamp_display = _format_timestamp_display(
-            scored_chunk.start_timestamp, scored_chunk.end_timestamp
-        )
-        chunk_refs_response.append(
-            {
-                "chunk_id": chunk_db.id,
-                "video_id": scored_chunk.video_id,
-                "video_title": video.title if video else "Unknown",
-                "start_timestamp": scored_chunk.start_timestamp,
-                "end_timestamp": scored_chunk.end_timestamp,
-                "text_snippet": scored_chunk.text[:200] + "..."
-                if len(scored_chunk.text) > 200
-                else scored_chunk.text,
-                "relevance_score": scored_chunk.score,
-                "timestamp_display": timestamp_display,
-                "rank": rank,
-            }
-        )
+    # Final pipeline summary logging
+    logger.info("=" * 80)
+    logger.info("[RAG Pipeline Complete]")
+    logger.info(f"  Total Time: {response_time:.3f}s")
+    logger.info(f"  Query Expansion: {expansion_time:.3f}s ({len(query_variants)} variants)")
+    logger.info(f"  Embedding + Search: {embedding_time:.3f}s")
+    if settings.enable_reranking:
+        logger.info(f"  Reranking: {rerank_time:.3f}s")
+    logger.info(f"  Context Building: {context_build_time:.3f}s")
+    logger.info(f"  LLM Generation: {llm_time:.3f}s")
+    logger.info(f"  Retrieved Chunks: {len(scored_chunks)} → {len(high_quality_chunks)} filtered → {len(deduped_chunks)} deduped → {len(top_chunks)} used")
+    logger.info(f"  Response Tokens: {token_count}")
+    logger.info(f"  Citations Returned: {len(chunk_refs_response)}")
+    logger.info("=" * 80)
 
     return MessageResponse(
         message_id=assistant_message.id,

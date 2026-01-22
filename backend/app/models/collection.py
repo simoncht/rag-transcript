@@ -3,7 +3,17 @@ Collection models for organizing videos into playlists/groups.
 """
 import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, DateTime, Boolean, Text, ForeignKey, Integer, CheckConstraint, UniqueConstraint
+from sqlalchemy import (
+    Column,
+    String,
+    DateTime,
+    Boolean,
+    Text,
+    ForeignKey,
+    Integer,
+    CheckConstraint,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 
@@ -16,7 +26,12 @@ class Collection(Base):
     __tablename__ = "collections"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
 
     # Basic info
     name = Column(String(255), nullable=False)
@@ -25,19 +40,25 @@ class Collection(Base):
     # Metadata (instructor, subject, semester, tags, etc.)
     # Example: {"instructor": "Dr. Ng", "subject": "ML", "semester": "Fall 2024", "tags": ["course", "ai"]}
     # Note: Using 'meta' instead of 'metadata' to avoid SQLAlchemy reserved name
-    meta = Column('metadata', JSONB, default={}, nullable=False)
+    meta = Column("metadata", JSONB, default={}, nullable=False)
 
     # Default collection flag (e.g., "Uncategorized")
     is_default = Column(Boolean, default=False, nullable=False)
 
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    updated_at = Column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )
 
     # Relationships
     user = relationship("User", back_populates="collections")
-    collection_videos = relationship("CollectionVideo", back_populates="collection", cascade="all, delete-orphan")
-    members = relationship("CollectionMember", back_populates="collection", cascade="all, delete-orphan")
+    collection_videos = relationship(
+        "CollectionVideo", back_populates="collection", cascade="all, delete-orphan"
+    )
+    members = relationship(
+        "CollectionMember", back_populates="collection", cascade="all, delete-orphan"
+    )
 
     def __repr__(self):
         return f"<Collection(id={self.id}, name={self.name}, user_id={self.user_id})>"
@@ -49,12 +70,24 @@ class CollectionVideo(Base):
     __tablename__ = "collection_videos"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    collection_id = Column(UUID(as_uuid=True), ForeignKey("collections.id", ondelete="CASCADE"), nullable=False, index=True)
-    video_id = Column(UUID(as_uuid=True), ForeignKey("videos.id", ondelete="CASCADE"), nullable=False, index=True)
+    collection_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("collections.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    video_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("videos.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
 
     # Metadata
     added_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    added_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    added_by_user_id = Column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
     position = Column(Integer, nullable=True)  # For custom ordering within collection
 
     # Relationships
@@ -64,7 +97,7 @@ class CollectionVideo(Base):
 
     # Unique constraint: one video can only be in a collection once
     __table_args__ = (
-        UniqueConstraint('collection_id', 'video_id', name='unique_collection_video'),
+        UniqueConstraint("collection_id", "video_id", name="unique_collection_video"),
     )
 
     def __repr__(self):
@@ -77,15 +110,27 @@ class CollectionMember(Base):
     __tablename__ = "collection_members"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    collection_id = Column(UUID(as_uuid=True), ForeignKey("collections.id", ondelete="CASCADE"), nullable=False, index=True)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    collection_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("collections.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
 
     # Permission level: owner, editor, viewer
     role = Column(String(20), nullable=False)
 
     # Metadata
     added_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    added_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    added_by_user_id = Column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
 
     # Relationships
     collection = relationship("Collection", back_populates="members")
@@ -94,8 +139,8 @@ class CollectionMember(Base):
 
     # Constraints
     __table_args__ = (
-        UniqueConstraint('collection_id', 'user_id', name='unique_collection_member'),
-        CheckConstraint("role IN ('owner', 'editor', 'viewer')", name='valid_role'),
+        UniqueConstraint("collection_id", "user_id", name="unique_collection_member"),
+        CheckConstraint("role IN ('owner', 'editor', 'viewer')", name="valid_role"),
     )
 
     def __repr__(self):
