@@ -371,3 +371,35 @@ def consolidate_conversation_memory():
 
     finally:
         db.close()
+
+
+@celery_app.task
+def backfill_fact_scores_task():
+    """
+    One-time task to backfill importance and category scores for existing facts.
+
+    This scores facts that were created before the multi-factor scoring system
+    was implemented. Uses heuristic patterns to estimate scores based on:
+    - Key patterns (identity facts get high importance)
+    - Source turn (early facts often establish context)
+    - Category inference from key names
+
+    Safe to run multiple times - only updates facts with NULL values.
+    """
+    db = SessionLocal()
+
+    try:
+        from app.services.fact_extraction import backfill_fact_scores
+
+        updated_count = backfill_fact_scores(db=db, dry_run=False)
+
+        print(f"[backfill] Fact score backfill complete: updated={updated_count} facts")
+
+        return {"updated": updated_count}
+
+    except Exception as e:
+        print(f"[backfill] Fact score backfill task failed: {e}")
+        raise
+
+    finally:
+        db.close()

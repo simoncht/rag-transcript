@@ -93,6 +93,21 @@ async def startup_event():
     except Exception as e:
         logger.error(f"Failed to initialize vector store: {str(e)}")
 
+    # Backfill fact scores for existing facts (one-time migration, safe to re-run)
+    try:
+        from app.db.base import SessionLocal
+        from app.services.fact_extraction import backfill_fact_scores
+
+        db = SessionLocal()
+        try:
+            updated = backfill_fact_scores(db)
+            if updated > 0:
+                logger.info(f"Backfilled importance/category for {updated} facts")
+        finally:
+            db.close()
+    except Exception as e:
+        logger.warning(f"Fact backfill skipped: {str(e)}")
+
     logger.info("Application startup complete")
 
 

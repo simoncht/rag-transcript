@@ -319,3 +319,131 @@ class FactExtractionService:
 
 # Global service instance
 fact_extraction_service = FactExtractionService()
+
+
+def backfill_fact_scores(
+    db: Session,
+    conversation_id: str = None,
+    dry_run: bool = False,
+    force_rescore: bool = False,
+) -> int:
+    """
+    Backfill importance and category scores for existing facts.
+
+    Uses heuristic patterns to estimate scores for facts created before
+    the multi-factor scoring system was implemented.
+
+    Args:
+        db: Database session
+        conversation_id: Optional - only backfill facts for this conversation
+        dry_run: If True, log changes but don't commit
+        force_rescore: If True, re-score all facts (not just NULL/default values)
+
+    Returns:
+        Number of facts updated
+    """
+    from sqlalchemy import or_, and_
+
+    # Find facts that need scoring:
+    # 1. NULL importance or category
+    # 2. Default values from migration (0.5 importance AND 'topic' category)
+    if force_rescore:
+        query = db.query(ConversationFact)
+    else:
+        query = db.query(ConversationFact).filter(
+            or_(
+                ConversationFact.importance.is_(None),
+                ConversationFact.category.is_(None),
+                # Facts with migration defaults that may be mis-categorized
+                and_(
+                    ConversationFact.importance == 0.5,
+                    ConversationFact.category == FactCategory.TOPIC.value,
+                ),
+            )
+        )
+
+    if conversation_id:
+        query = query.filter(ConversationFact.conversation_id == conversation_id)
+
+    facts_to_update = query.all()
+
+    if not facts_to_update:
+        logger.info("[Backfill] No facts need backfilling")
+        return 0
+
+    logger.info(f"[Backfill] Found {len(facts_to_update)} facts to backfill")
+
+    # Heuristic importance scoring based on key patterns
+    identity_keys = {
+        "instructor", "teacher", "speaker", "host", "channeler", "entity",
+        "source", "author", "creator", "name", "person", "who", "role",
+        "bashar", "darryl", "channeled_entity", "alien", "et", "extraterrestrial"
+    }
+
+    high_importance_keys = {
+        "concept", "framework", "principle", "teaching", "method", "technique",
+        "frequency", "vibration", "consciousness", "reality", "permission"
+    }
+
+    updated_count = 0
+
+    for fact in facts_to_update:
+        key_lower = fact.fact_key.lower()
+        value_lower = fact.fact_value.lower() if fact.fact_value else ""
+
+        # Check if it's an identity fact (by key or value patterns)
+        is_identity = any(pattern in key_lower for pattern in identity_keys)
+        is_identity = is_identity or any(
+            pattern in value_lower for pattern in ["bashar", "darryl", "channeler", "entity"]
+        )
+
+        # Determine category based on patterns
+        new_category = fact.category
+        if is_identity:
+            new_category = FactCategory.IDENTITY.value
+        elif any(p in key_lower for p in ["preference", "favorite", "likes", "user_"]):
+            new_category = FactCategory.PREFERENCE.value
+        elif any(p in key_lower for p in ["current", "today", "now", "this_session"]):
+            new_category = FactCategory.SESSION.value
+        elif fact.category is None:
+            new_category = FactCategory.TOPIC.value
+
+        # Determine importance based on category and patterns
+        new_importance = fact.importance
+        if new_category == FactCategory.IDENTITY.value:
+            # Identity facts are critical
+            new_importance = 0.9
+        elif any(pattern in key_lower for pattern in high_importance_keys):
+            # Key concepts
+            new_importance = 0.75
+        elif fact.source_turn and fact.source_turn <= 5:
+            # Early facts often establish identity/context
+            new_importance = 0.7
+        elif new_category == FactCategory.PREFERENCE.value:
+            new_importance = 0.6
+        elif new_category == FactCategory.SESSION.value:
+            new_importance = 0.4
+        elif fact.importance is None or fact.importance == 0.5:
+            # Keep default for unclassified topics
+            new_importance = 0.5
+
+        # Only count as updated if values actually changed
+        if fact.category != new_category or fact.importance != new_importance:
+            fact.category = new_category
+            fact.importance = new_importance
+            updated_count += 1
+
+            if dry_run:
+                logger.info(
+                    f"[Backfill DRY RUN] Would update fact '{fact.fact_key}': "
+                    f"importance={new_importance:.2f}, category={new_category}"
+                )
+
+    if not dry_run:
+        db.commit()
+        logger.info(f"[Backfill] Updated {updated_count} facts")
+    else:
+        db.rollback()
+        logger.info(f"[Backfill DRY RUN] Would update {updated_count} facts")
+
+    return updated_count
