@@ -47,8 +47,12 @@ COPY . .
 # Create storage directory
 RUN mkdir -p /app/storage/audio /app/storage/transcripts
 
+# Copy and make start script executable
+COPY start.sh /app/start.sh
+RUN chmod +x /app/start.sh
+
 # Expose port
 EXPOSE 8000
 
-# Default command (can be overridden in docker-compose)
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Default command - runs migrations then starts app
+CMD ["/app/start.sh"]
