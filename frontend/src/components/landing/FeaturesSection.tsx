@@ -72,11 +72,12 @@ const categories: FeatureCategory[] = [
       {
         icon: (
           <svg className="w-7 h-7" fill="none" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" viewBox="0 0 24 24" stroke="currentColor">
-            <path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            <path d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
           </svg>
         ),
-        title: 'Semantic Search',
-        description: 'Natural language queries that understand meaning, not just keywords. Ask questions like you would a person.',
+        title: 'Video Collections',
+        description: 'Group videos by topic, project, or course. Query across your entire collection and get answers that synthesize multiple sources.',
+        badge: 'NEW',
       },
       {
         icon: (
@@ -95,7 +96,7 @@ const categories: FeatureCategory[] = [
           </svg>
         ),
         title: 'Hybrid Search',
-        description: 'Combines BM25 keyword matching with semantic vectors for comprehensive coverage.',
+        description: 'Finds results whether you use the exact words from the video or just describe what you mean. Never miss relevant content.',
         badge: 'NEW',
       },
       {
@@ -104,8 +105,18 @@ const categories: FeatureCategory[] = [
             <path d="M3 4h13M3 8h9m-9 4h6m4 0l4-4m0 0l4 4m-4-4v12" />
           </svg>
         ),
-        title: 'Cross-Encoder Reranking',
-        description: 'Two-stage retrieval with neural reranking for precision on the most relevant passages.',
+        title: 'Smart Ranking',
+        description: 'AI reads each result carefully to surface the most relevant answers first, not just the closest word matches.',
+      },
+      {
+        icon: (
+          <svg className="w-7 h-7" fill="none" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" viewBox="0 0 24 24" stroke="currentColor">
+            <circle cx="12" cy="12" r="10" />
+            <polyline points="12 6 12 12 16 14" />
+          </svg>
+        ),
+        title: 'Timestamp Precision',
+        description: 'Every result pinpoints the exact moment in the video. Jump directly to the relevant 30-second segment.',
       },
     ],
   },
@@ -238,7 +249,7 @@ export default function FeaturesSection() {
         {/* View all features link */}
         <div className="text-center mt-10">
           <p className="text-gray-500">
-            <span className="font-semibold text-gray-700">12 features</span> across 3 categories to supercharge your video research
+            <span className="font-semibold text-gray-700">13 features</span> across 3 categories to supercharge your video research
           </p>
         </div>
       </div>

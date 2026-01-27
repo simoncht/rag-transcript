@@ -50,7 +50,7 @@ export default function Footer() {
             <ul className="space-y-2 text-sm">
               <li>
                 <a
-                  href="https://github.com"
+                  href="https://github.com/rag-transcript/rag-transcript"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-gray-600 hover:text-primary"
@@ -71,12 +71,12 @@ export default function Footer() {
             <h4 className="font-semibold text-gray-900 mb-4">Legal</h4>
             <ul className="space-y-2 text-sm">
               <li>
-                <a href="#" className="text-gray-600 hover:text-primary">
+                <a href="/privacy" className="text-gray-600 hover:text-primary">
                   Privacy Policy
                 </a>
               </li>
               <li>
-                <a href="#" className="text-gray-600 hover:text-primary">
+                <a href="/terms" className="text-gray-600 hover:text-primary">
                   Terms of Service
                 </a>
               </li>
@@ -94,7 +94,7 @@ export default function Footer() {
           {/* Social links */}
           <div className="flex items-center gap-4 mt-4 md:mt-0">
             <a
-              href="https://github.com"
+              href="https://github.com/rag-transcript/rag-transcript"
               target="_blank"
               rel="noopener noreferrer"
               className="text-gray-400 hover:text-gray-600"

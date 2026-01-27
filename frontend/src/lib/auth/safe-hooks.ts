@@ -13,6 +13,7 @@ import type { AuthState } from "./types";
 
 const defaultAuthState: AuthState = {
   isAuthenticated: false,
+  isLoading: false,
   user: null,
   token: null,
 };

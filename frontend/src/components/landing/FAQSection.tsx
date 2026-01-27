@@ -12,7 +12,7 @@ const faqs: FAQItem[] = [
   {
     question: "What's included in the free tier?",
     answer:
-      'The free tier includes 2 videos, 50 messages per month, 1 GB storage, and 120 minutes of transcription. Perfect for trying out the platform and small projects.',
+      'The free tier includes 2 videos, 50 messages per month, 1 GB storage, and 60 minutes of transcription per month. Perfect for trying out the platform and small projects.',
   },
   {
     question: 'Can I upgrade anytime?',
@@ -35,14 +35,44 @@ const faqs: FAQItem[] = [
       'Absolutely. All data is encrypted in transit and at rest. We use industry-standard security practices and never share your data with third parties. Your videos and transcripts are private.',
   },
   {
-    question: 'Can I export my conversations?',
+    question: 'Can I export my data?',
     answer:
-      'Yes! You can export conversations as JSON or plain text. Transcripts can be downloaded with timestamps and speaker labels. All your data is portable.',
+      'Yes! Transcripts can be downloaded as plain text with timestamps and speaker labels from the videos page. We are actively working on conversation export features.',
   },
   {
     question: 'What AI models do you use?',
     answer:
       'We use OpenAI Whisper for transcription, state-of-the-art embedding models for semantic search, and support multiple LLM providers (OpenAI, Anthropic, Ollama) for conversations.',
+  },
+  {
+    question: 'What video sources do you support?',
+    answer:
+      'Currently we support YouTube videos including public videos, unlisted videos (with URL), and videos with captions. Support for Vimeo, direct video uploads, and podcast RSS feeds is on our roadmap.',
+  },
+  {
+    question: 'How accurate is the transcription?',
+    answer:
+      'Our Whisper-based transcription achieves approximately 95% accuracy for clear English audio. When YouTube captions are available, we use those for even faster processing. You can always view and verify the full transcript.',
+  },
+  {
+    question: 'Can I search across multiple videos at once?',
+    answer:
+      'Yes! You can organize videos into collections and search across all videos in a collection simultaneously. This is perfect for course materials, research projects, or training libraries.',
+  },
+  {
+    question: 'What makes Reasoner mode different from Chat mode?',
+    answer:
+      'Chat mode gives fast, direct answers to straightforward questions. Reasoner mode uses step-by-step chain-of-thought reasoning, making it ideal for complex analysis, finding patterns across sources, or questions requiring deeper synthesis. Reasoner mode is available on Pro plans.',
+  },
+  {
+    question: 'How does conversation memory work?',
+    answer:
+      'After 15+ messages in a conversation, our AI automatically extracts and stores key facts, entities, and context from your discussion. These facts persist across sessions, so when you return to a conversation days later, the AI remembers what you discussed, what conclusions you reached, and what topics matter to you. This enables truly long-running research conversations without losing context.',
+  },
+  {
+    question: 'Is there an API available?',
+    answer:
+      'API access is on our roadmap. If you have specific integration needs for your team or product, please contact us to discuss early access or custom solutions.',
   },
 ];
 
@@ -112,7 +142,7 @@ export default function FAQSection() {
           <p className="text-gray-600">
             Still have questions?{' '}
             <a
-              href="mailto:support@example.com"
+              href="mailto:support@ragtranscript.com"
               className="text-primary hover:underline font-medium"
             >
               Contact support

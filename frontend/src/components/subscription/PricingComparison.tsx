@@ -22,7 +22,34 @@ export default function PricingComparison({
   className = '',
 }: PricingComparisonProps) {
   const [billingCycle, setBillingCycle] = useState<'monthly' | 'yearly'>('monthly');
-  const { isAuthenticated } = useSafeAuthState();
+  const [isUpgrading, setIsUpgrading] = useState(false);
+  const { isAuthenticated, isLoading: isAuthLoading } = useSafeAuthState();
+
+  // Default upgrade handler that initiates Stripe checkout
+  const handleUpgrade = async (tier: SubscriptionTier) => {
+    // Use custom handler if provided
+    if (onUpgrade) {
+      onUpgrade(tier);
+      return;
+    }
+
+    // Don't start checkout for free tier
+    if (tier === 'free') return;
+
+    setIsUpgrading(true);
+    try {
+      const { checkout_url } = await subscriptionsApi.createCheckoutSession({
+        tier,
+        success_url: `${window.location.origin}/checkout/success?session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${window.location.origin}/checkout/cancel`,
+      });
+      window.location.href = checkout_url;
+    } catch (error) {
+      console.error('Failed to create checkout session:', error);
+      alert('Failed to start checkout. Please try again.');
+      setIsUpgrading(false);
+    }
+  };
 
   // Fetch pricing tiers
   const { data: tiers, isLoading, error } = useQuery({
@@ -31,11 +58,25 @@ export default function PricingComparison({
     staleTime: 10 * 60 * 1000, // 10 minutes
   });
 
-  // Fetch current subscription if authenticated
+  // Fetch current subscription if authenticated (wait for auth to settle first)
+  // 404 means user is on free tier (no subscription record), not an error
   const { data: currentSubscription } = useQuery({
     queryKey: ['current-subscription'],
-    queryFn: subscriptionsApi.getCurrentSubscription,
-    enabled: isAuthenticated,
+    queryFn: async () => {
+      try {
+        return await subscriptionsApi.getCurrentSubscription();
+      } catch (error: unknown) {
+        // 404 = no subscription = free tier (not an error)
+        if (error && typeof error === 'object' && 'response' in error) {
+          const axiosError = error as { response?: { status?: number } };
+          if (axiosError.response?.status === 404) {
+            return null;
+          }
+        }
+        throw error;
+      }
+    },
+    enabled: isAuthenticated && !isAuthLoading,
     retry: false, // Don't retry if user has no subscription
   });
 
@@ -117,9 +158,10 @@ export default function PricingComparison({
             <PricingCard
               tier={tier}
               billingCycle={billingCycle}
-              currentTier={currentSubscription?.tier}
-              isAuthenticated={isAuthenticated}
-              onUpgrade={onUpgrade}
+              currentTier={isAuthenticated && !isAuthLoading ? currentSubscription?.tier : undefined}
+              isAuthenticated={isAuthenticated && !isAuthLoading}
+              onUpgrade={handleUpgrade}
+              isLoading={isUpgrading}
               className="w-full"
             />
           </div>

@@ -93,6 +93,12 @@ class VideoDetail(BaseModel):
     )
     audio_file_size_mb: Optional[float] = None
     transcript_size_mb: Optional[float] = None
+    chunk_storage_mb: Optional[float] = Field(
+        default=None, description="Database storage for this video's chunks (MB)"
+    )
+    vector_storage_mb: Optional[float] = Field(
+        default=None, description="Estimated Qdrant vector storage (MB)"
+    )
     storage_total_mb: Optional[float] = None
 
     # Timestamps

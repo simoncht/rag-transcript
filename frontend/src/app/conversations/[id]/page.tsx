@@ -13,7 +13,11 @@ import { useParams, useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { useAuth, createParallelQueryFn } from "@/lib/auth";
+import { useAuth, useAuthState, createParallelQueryFn } from "@/lib/auth";
+import { apiClient } from "@/lib/api/client";
+import { subscriptionsApi } from "@/lib/api/subscriptions";
+import QuotaDisplay from "@/components/subscription/QuotaDisplay";
+import type { QuotaUsage } from "@/lib/types";
 import { conversationsApi } from "@/lib/api/conversations";
 import { insightsApi } from "@/lib/api/insights";
 import { videosApi } from "@/lib/api/videos";
@@ -40,12 +44,19 @@ import {
   SheetContent,
   SheetTrigger,
 } from "@/components/ui/sheet";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { cn, formatMessageTime } from "@/lib/utils";
 import { ConversationInsightMap } from "@/components/insights/ConversationInsightMap";
 import {
   ArrowLeft,
   Loader2,
   MessageCircle,
+  MessageSquare,
   Menu,
   Plus,
   Video,
@@ -56,6 +67,12 @@ import {
   Minimize2,
   X,
   LogOut,
+  Shield,
+  User,
+  Settings,
+  PanelRightClose,
+  PanelRightOpen,
+  Info,
 } from "lucide-react";
 import Link from "next/link";
 import { ThemeToggle } from "@/components/layout/ThemeToggle";
@@ -114,37 +131,17 @@ const MARKDOWN_STATIC_COMPONENTS = {
 const REMARK_PLUGINS = [remarkGfm];
 
 const MODEL_OPTIONS = [
-  // Ollama Cloud Models (Free - runs on Ollama Cloud infrastructure)
   {
-    id: "qwen3-vl:235b-instruct-cloud",
-    label: "Qwen3 VL 235B",
-    description: "Free - Vision & deep reasoning (Ollama Cloud)",
+    id: "deepseek-chat",
+    label: "Chat",
+    description: "Fast responses (Free tier)",
+    tooltip: "Fast & efficient. Best for quick questions, finding quotes, and simple summaries.",
   },
   {
-    id: "gpt-oss:120b-cloud",
-    label: "GPT-OSS 120B",
-    description: "Free - Broad context understanding (Ollama Cloud)",
-  },
-  {
-    id: "qwen3-coder:480b-cloud",
-    label: "Qwen3 Coder 480B",
-    description: "Free - Code-focused large model (Ollama Cloud)",
-  },
-  // Anthropic Models (Paid API)
-  {
-    id: "claude-3-5-sonnet-20241022",
-    label: "Claude 3.5 Sonnet",
-    description: "Paid - Best balance of speed and intelligence",
-  },
-  {
-    id: "claude-3-opus-20240229",
-    label: "Claude 3 Opus",
-    description: "Paid - Most capable for complex tasks",
-  },
-  {
-    id: "claude-3-haiku-20240307",
-    label: "Claude 3 Haiku",
-    description: "Paid - Fastest for simple tasks",
+    id: "deepseek-reasoner",
+    label: "Reasoner",
+    description: "Advanced reasoning (Pro tier)",
+    tooltip: "Thinks before answering. Best for complex analysis, comparing sources, and finding patterns.",
   },
 ];
 
@@ -164,40 +161,40 @@ const MODE_OPTIONS = [
     label: "Compare Sources",
     helper: "Contrast speakers and highlight agreements",
   },
-  {
-    id: "timeline",
-    label: "Timeline",
-    helper: "Sequence events chronologically",
-  },
-  {
-    id: "extract_actions",
-    label: "Extract Actions",
-    helper: "List concrete decisions and owners",
-  },
-  {
-    id: "quiz_me",
-    label: "Quiz Me",
-    helper: "Pose knowledge-check questions",
-  },
+  // Future modes - will be enabled after testing:
+  // { id: "timeline", label: "Timeline", helper: "Sequence events chronologically" },
+  // { id: "extract_actions", label: "Extract Actions", helper: "List concrete decisions and owners" },
+  // { id: "quiz_me", label: "Quiz Me", helper: "Pose knowledge-check questions" },
 ];
 type ModeId = (typeof MODE_OPTIONS)[number]["id"];
 
 // Helper function: linkify source mentions in markdown content
-// Memoized per message to avoid regex processing on every render
+// Converts "Source N" and "[N]" to clickable footnote-style citations
 const linkifySourceMentions = (
   content: string,
   messageId: string,
   chunkRefs?: ChunkReference[],
 ) => {
-  return content.replace(/Source (\d+)/g, (_match, srcNumber) => {
+  // First, handle explicit "Source N" mentions (legacy format)
+  let result = content.replace(/Source (\d+)/g, (_match, srcNumber) => {
     const rank = Number(srcNumber?.trim());
     if (!chunkRefs || chunkRefs.length === 0 || Number.isNaN(rank)) {
-      return `Source ${srcNumber} (citation unavailable)`;
+      return `[${srcNumber}]`;
     }
-    const match = chunkRefs?.find((chunk) => (chunk.rank ?? 0) === rank);
-    const label = match?.video_title ? `Source ${rank}: ${match.video_title}` : `Source ${rank}`;
-    return `[${label}](#source-${messageId}-${rank})`;
+    return `[[${rank}]](#source-${messageId}-${rank})`;
   });
+
+  // Then, handle footnote-style [N] citations (new format from updated prompt)
+  // Match [N] but not [[N]] (which we just created above) or [text](url) markdown links
+  result = result.replace(/(?<!\[)\[(\d+)\](?!\()/g, (_match, srcNumber) => {
+    const rank = Number(srcNumber?.trim());
+    if (!chunkRefs || chunkRefs.length === 0 || Number.isNaN(rank)) {
+      return `[${srcNumber}]`;
+    }
+    return `[[${rank}]](#source-${messageId}-${rank})`;
+  });
+
+  return result;
 };
 
 // Video grouping for multi-video conversations
@@ -295,7 +292,7 @@ const MessageItem = memo<MessageItemProps>(({ message, highlightedSourceId, onCi
     ...MARKDOWN_STATIC_COMPONENTS,
     a: ({ href, children, ...props }: any) => {
       const isCitation = href?.startsWith("#source-");
-      const rankMatch = href?.match(/#source-[^-]+-(\d+)/);
+      const rankMatch = href?.match(/-(\d+)$/);
       const rankNumber = rankMatch?.[1] ? parseInt(rankMatch[1], 10) : undefined;
       return (
         <a
@@ -507,19 +504,60 @@ export default function ConversationDetailPage() {
   const [messageText, setMessageText] = useState("");
   const [isAutoScrollEnabled, setIsAutoScrollEnabled] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [contextPanelOpen, setContextPanelOpen] = useState(true);
   const [sourcesSheetOpen, setSourcesSheetOpen] = useState(false);
   const [insightsDialogOpen, setInsightsDialogOpen] = useState(false);
   const [insightsDialogMaximized, setInsightsDialogMaximized] = useState(false);
   const [highlightedSourceId, setHighlightedSourceId] = useState<string | null>(null);
   const [sendError, setSendError] = useState<string | null>(null);
   const [sourcesUpdateError, setSourcesUpdateError] = useState<string | null>(null);
-  const [selectedModelId, setSelectedModelId] = useState<string>(MODEL_OPTIONS[0]?.id);
+  const [selectedModelId, setSelectedModelId] = useState<string>("deepseek-chat");
   const [selectedMode, setSelectedMode] = useState<ModeId>(MODE_OPTIONS[0].id);
+  const [isAdminBackend, setIsAdminBackend] = useState<boolean | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const prevMessageCountRef = useRef<number>(0);
+
+  // Get user info for sidebar display
+  const { user } = useAuthState();
+  const displayName = user?.displayName || user?.email;
+  const email = user?.email;
+
+  // Check if user is admin (stored in auth metadata)
+  const isAdmin = user?.metadata?.is_superuser === true;
+  const hasAdminAccess = isAdmin || isAdminBackend === true;
+
   const handleLogout = () => {
     authProvider.signOut("/sign-in");
   };
+
+  // Fetch admin status from backend
+  useEffect(() => {
+    if (!user) {
+      setIsAdminBackend(false);
+      return;
+    }
+
+    let isMounted = true;
+
+    const fetchAdminStatus = async () => {
+      try {
+        const response = await apiClient.get("/auth/me");
+        if (isMounted) {
+          setIsAdminBackend(Boolean(response.data?.is_superuser));
+        }
+      } catch {
+        if (isMounted) {
+          setIsAdminBackend(false);
+        }
+      }
+    };
+
+    fetchAdminStatus();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [user?.id]);
 
   // Performance: Parallel auth + data fetch - no blocking
   const { data: conversationsData } = useQuery({
@@ -532,6 +570,15 @@ export default function ConversationDetailPage() {
   });
 
   const conversations = conversationsData?.conversations ?? [];
+
+  // Fetch quota for sidebar display
+  const { data: quota } = useQuery<QuotaUsage>({
+    queryKey: ["subscription-quota"],
+    queryFn: subscriptionsApi.getQuota,
+    enabled: isAuthenticated,
+    staleTime: 60 * 1000, // 60 seconds
+    refetchInterval: 120 * 1000, // Refetch every 2 minutes
+  });
 
   // Performance: Parallel fetch with longer cache
   const {
@@ -1039,21 +1086,110 @@ export default function ConversationDetailPage() {
             </div>
           </div>
 
-          {/* Navigation */}
-          <div className="border-t p-2">
-            <Link href="/videos">
-              <Button variant="ghost" className="w-full justify-start gap-2" size="sm">
+          {/* Navigation - MainLayout style */}
+          <nav className="space-y-1 px-2 py-3 border-t">
+            <Link
+              href="/videos"
+              className={cn(
+                "group flex items-center justify-between rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+                "text-muted-foreground hover:text-foreground"
+              )}
+            >
+              <span className="flex items-center gap-2">
                 <Video className="h-4 w-4" />
                 Videos
-              </Button>
+              </span>
             </Link>
-            <Link href="/collections">
-              <Button variant="ghost" className="w-full justify-start gap-2" size="sm">
+            <Link
+              href="/collections"
+              className={cn(
+                "group flex items-center justify-between rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+                "text-muted-foreground hover:text-foreground"
+              )}
+            >
+              <span className="flex items-center gap-2">
                 <Folder className="h-4 w-4" />
                 Collections
-              </Button>
+              </span>
             </Link>
-          </div>
+            <Link
+              href="/conversations"
+              className={cn(
+                "group flex items-center justify-between rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+                "bg-primary/10 text-foreground"
+              )}
+            >
+              <span className="flex items-center gap-2">
+                <MessageSquare className="h-4 w-4" />
+                Conversations
+              </span>
+            </Link>
+            <Link
+              href="/account"
+              className={cn(
+                "group flex items-center justify-between rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+                "text-muted-foreground hover:text-foreground"
+              )}
+            >
+              <span className="flex items-center gap-2">
+                <User className="h-4 w-4" />
+                Account
+              </span>
+            </Link>
+            {hasAdminAccess && (
+              <Link
+                href="/admin"
+                className={cn(
+                  "group flex items-center justify-between rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+                  "text-muted-foreground hover:text-foreground",
+                  "border-t mt-2 pt-4"
+                )}
+              >
+                <span className="flex items-center gap-2">
+                  <Shield className="h-4 w-4" />
+                  Admin
+                </span>
+              </Link>
+            )}
+          </nav>
+
+          {/* Quota indicator */}
+          {quota && (
+            <div className="border-t px-4 py-3">
+              <p className="text-xs font-semibold text-muted-foreground mb-2">QUOTA</p>
+              <div className="space-y-1.5">
+                <QuotaDisplay
+                  used={quota.videos_used}
+                  limit={quota.videos_limit}
+                  label="videos"
+                  variant="compact"
+                />
+                <QuotaDisplay
+                  used={quota.messages_used}
+                  limit={quota.messages_limit}
+                  label="messages/mo"
+                  variant="compact"
+                />
+              </div>
+            </div>
+          )}
+
+          {/* User profile section */}
+          {user && (
+            <div className="border-t px-4 py-4 text-sm text-muted-foreground">
+              <p className="font-medium text-foreground">{displayName}</p>
+              {email && <p>{email}</p>}
+              <Button
+                variant="ghost"
+                size="sm"
+                className="mt-3 w-full justify-start gap-2"
+                onClick={handleLogout}
+              >
+                <LogOut className="h-4 w-4" />
+                Logout
+              </Button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -1065,303 +1201,275 @@ export default function ConversationDetailPage() {
         />
       )}
 
-      {/* Main content */}
-      <div className="flex min-h-screen flex-1 flex-col">
-        {/* Top navigation bar - ChatGPT style */}
-        <header className="sticky top-0 z-30 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-          <div className="flex h-14 items-center px-4">
-            <div className="flex flex-1 items-center gap-3">
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-9 w-9"
-                onClick={() => setSidebarOpen(!sidebarOpen)}
-              >
-                <Menu className="h-5 w-5" />
-              </Button>
-              <Separator orientation="vertical" className="h-6" />
-              <h1 className="text-sm font-medium truncate">
-                {conversation.title || "New conversation"}
-              </h1>
-            </div>
-            <div className="flex items-center gap-3">
-              <Dialog
-                open={insightsDialogOpen}
-                onOpenChange={(open) => {
-                  setInsightsDialogOpen(open);
-                  if (!open) setInsightsDialogMaximized(false);
-                }}
-              >
-                <DialogTrigger asChild>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="gap-2"
-                    disabled={selectedSourcesCount === 0}
-                    title={
-                      selectedSourcesCount === 0
-                        ? "Select at least one source to generate insights"
-                        : "Generate a topic map from selected video sources"
-                    }
-                  >
-                    <Network className="h-4 w-4" />
-                    Insights
-                  </Button>
-                </DialogTrigger>
-                <DialogContent
-                  className={cn(
-                    "p-0 flex flex-col gap-0",
-                    insightsDialogMaximized
-                      ? "max-w-[calc(100vw-1.5rem)] h-[calc(100vh-1.5rem)]"
-                      : "max-w-6xl h-[85vh]"
-                  )}
+      {/* Main content - Three column layout */}
+      <div className="flex min-h-screen flex-1">
+        {/* Chat area column */}
+        <div className="flex flex-1 flex-col min-w-0">
+          {/* Top navigation bar */}
+          <header className="sticky top-0 z-30 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+            <div className="flex h-14 items-center px-4">
+              <div className="flex flex-1 items-center gap-3">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-9 w-9 lg:hidden"
+                  onClick={() => setSidebarOpen(!sidebarOpen)}
                 >
-                  <DialogHeader className="p-6 pb-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <DialogTitle>Conversation Insights: Topic Map</DialogTitle>
-                        {insightsData?.metadata ? (
-                          <p className="mt-1 text-xs text-muted-foreground">
-                            {insightsData.metadata.cached ? "Cached" : "Generated"} •{" "}
-                            {insightsData.metadata.topics_count} topics
-                          </p>
-                        ) : null}
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="gap-2"
-                          onClick={() => setInsightsDialogMaximized((prev) => !prev)}
-                          title={insightsDialogMaximized ? "Restore window" : "Enlarge window"}
-                        >
-                          {insightsDialogMaximized ? (
-                            <Minimize2 className="h-4 w-4" />
-                          ) : (
-                            <Maximize2 className="h-4 w-4" />
-                          )}
-                          {insightsDialogMaximized ? "Restore" : "Enlarge"}
-                        </Button>
+                  <Menu className="h-5 w-5" />
+                </Button>
+                <Separator orientation="vertical" className="h-6 lg:hidden" />
+                <h1 className="text-sm font-medium truncate">
+                  {conversation.title || "New conversation"}
+                </h1>
+              </div>
+              <div className="flex items-center gap-2">
+                {/* Insights dialog */}
+                <Dialog
+                  open={insightsDialogOpen}
+                  onOpenChange={(open) => {
+                    setInsightsDialogOpen(open);
+                    if (!open) setInsightsDialogMaximized(false);
+                  }}
+                >
+                  <DialogTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-9 w-9"
+                      disabled={selectedSourcesCount === 0}
+                      title={
+                        selectedSourcesCount === 0
+                          ? "Select at least one source to generate insights"
+                          : "Generate a topic map from selected video sources"
+                      }
+                    >
+                      <Network className="h-4 w-4" />
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent
+                    className={cn(
+                      "p-0 flex flex-col gap-0",
+                      insightsDialogMaximized
+                        ? "max-w-[calc(100vw-1.5rem)] h-[calc(100vh-1.5rem)]"
+                        : "max-w-6xl h-[85vh]"
+                    )}
+                  >
+                    <DialogHeader className="p-6 pb-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <DialogTitle>Conversation Insights: Topic Map</DialogTitle>
+                          {insightsData?.metadata ? (
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              {insightsData.metadata.cached ? "Cached" : "Generated"} •{" "}
+                              {insightsData.metadata.topics_count} topics
+                            </p>
+                          ) : null}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="gap-2"
+                            onClick={() => setInsightsDialogMaximized((prev) => !prev)}
+                            title={insightsDialogMaximized ? "Restore window" : "Enlarge window"}
+                          >
+                            {insightsDialogMaximized ? (
+                              <Minimize2 className="h-4 w-4" />
+                            ) : (
+                              <Maximize2 className="h-4 w-4" />
+                            )}
+                            {insightsDialogMaximized ? "Restore" : "Enlarge"}
+                          </Button>
 
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="gap-2"
-                          onClick={() => regenerateInsightsMutation.mutate()}
-                          disabled={
-                            regenerateInsightsMutation.isPending ||
-                            insightsLoading ||
-                            !conversationId
-                          }
-                        >
-                          {regenerateInsightsMutation.isPending ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          ) : (
-                            <RotateCcw className="h-4 w-4" />
-                          )}
-                          Regenerate
-                        </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="gap-2"
+                            onClick={() => regenerateInsightsMutation.mutate()}
+                            disabled={
+                              regenerateInsightsMutation.isPending ||
+                              insightsLoading ||
+                              !conversationId
+                            }
+                          >
+                            {regenerateInsightsMutation.isPending ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <RotateCcw className="h-4 w-4" />
+                            )}
+                            Regenerate
+                          </Button>
+                        </div>
+                      </div>
+                    </DialogHeader>
+
+                    <div className="flex-1 min-h-0 px-6 pb-6">
+                      {insightsLoading || regenerateInsightsMutation.isPending ? (
+                        <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Generating insights...
+                        </div>
+                      ) : insightsError ? (
+                        <div className="flex h-full items-center justify-center text-sm text-destructive">
+                          Failed to load insights.
+                        </div>
+                      ) : insightsData ? (
+                        <ConversationInsightMap
+                          conversationId={conversationId as string}
+                          graphData={insightsData.graph}
+                        />
+                      ) : (
+                        <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                          No insights available.
+                        </div>
+                      )}
+                    </div>
+                  </DialogContent>
+                </Dialog>
+
+                <ThemeToggle />
+
+                {/* Context panel toggle - desktop */}
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-9 w-9 hidden lg:flex"
+                  onClick={() => setContextPanelOpen(!contextPanelOpen)}
+                  title={contextPanelOpen ? "Hide settings panel" : "Show settings panel"}
+                >
+                  {contextPanelOpen ? (
+                    <PanelRightClose className="h-4 w-4" />
+                  ) : (
+                    <PanelRightOpen className="h-4 w-4" />
+                  )}
+                </Button>
+
+                {/* Sources panel toggle - mobile (opens sheet) */}
+                <Sheet open={sourcesSheetOpen} onOpenChange={setSourcesSheetOpen}>
+                  <SheetTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-9 w-9 lg:hidden"
+                      title="Open sources"
+                    >
+                      <Settings className="h-4 w-4" />
+                    </Button>
+                  </SheetTrigger>
+                  <SheetContent side="right" className="w-full max-w-sm overflow-y-auto">
+                    <div className="mt-4 space-y-6">
+                      {/* Sources section */}
+                      <div className="space-y-3">
+                        <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                          Sources
+                        </h3>
+                        {renderSourcesContent()}
                       </div>
                     </div>
-                  </DialogHeader>
+                  </SheetContent>
+                </Sheet>
+              </div>
+            </div>
+          </header>
 
-                  <div className="flex-1 min-h-0 px-6 pb-6">
-                    {insightsLoading || regenerateInsightsMutation.isPending ? (
-                      <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                        Generating insights...
-                      </div>
-                    ) : insightsError ? (
-                      <div className="flex h-full items-center justify-center text-sm text-destructive">
-                        Failed to load insights.
-                      </div>
-                    ) : insightsData ? (
-                      <ConversationInsightMap
-                        conversationId={conversationId as string}
-                        graphData={insightsData.graph}
-                      />
-                    ) : (
-                      <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-                        No insights available.
-                      </div>
-                    )}
+          {/* Messages area - clean, focused */}
+          <div className="flex-1 overflow-y-auto">
+            <div className="mx-auto max-w-3xl px-4 py-6">
+              {selectedSourcesCount === 0 && (
+                <div className="mb-4 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                  No sources selected. Enable at least one source to ask questions.
+                </div>
+              )}
+
+              {messages.length === 0 ? (
+                <div className="flex h-[60vh] flex-col items-center justify-center gap-3 text-center">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10">
+                    <MessageCircle className="h-6 w-6 text-primary" />
                   </div>
-                </DialogContent>
-              </Dialog>
-
-              <ThemeToggle />
-              {authState.isAuthenticated && authState.user && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="gap-2"
-                  onClick={handleLogout}
-                >
-                  <LogOut className="h-4 w-4" />
-                  Sign out
-                </Button>
+                  <div className="space-y-1">
+                    <p className="text-sm font-medium">Start a conversation</p>
+                    <p className="text-xs text-muted-foreground">
+                      Ask questions about your {sourceCountLabel} source
+                      {sourceCountLabel !== 1 ? "s" : ""}
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-8">
+                  {messages.map((message) => (
+                    <MessageItem
+                      key={message.id}
+                      message={message as Message & { chunk_references?: ChunkReference[] }}
+                      highlightedSourceId={highlightedSourceId}
+                      onCitationClick={handleCitationClick}
+                    />
+                  ))}
+                  <div ref={messagesEndRef} />
+                </div>
               )}
             </div>
           </div>
-        </header>
 
-        {/* Messages area - centered like ChatGPT */}
-        <div className="flex-1 overflow-y-auto">
-          <div className="mx-auto max-w-[1220px] px-5 py-8">
-            <div className="mb-4 flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <span className="font-semibold text-foreground">
-                  Using {selectedSourcesCount} of {totalSourcesCount} sources
-                </span>
-                {updateSourcesMutation.isPending && (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
-                )}
-              </div>
-              <Sheet open={sourcesSheetOpen} onOpenChange={setSourcesSheetOpen}>
-                <SheetTrigger asChild>
-                  <Button variant="outline" size="sm" className="lg:hidden">
-                    Sources
-                  </Button>
-                </SheetTrigger>
-                <SheetContent side="right" className="w-full max-w-sm">
-                  <div className="mt-4 space-y-4">{renderSourcesContent()}</div>
-                </SheetContent>
-              </Sheet>
-            </div>
-
-            {selectedSourcesCount === 0 && (
-              <div className="mb-4 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
-                No sources selected. Enable at least one source to ask questions.
-              </div>
-            )}
-
-            <div className="flex flex-col gap-6 lg:flex-row">
-              <div className="flex-1 min-w-0">
-                {messages.length === 0 ? (
-                  <div className="flex h-[60vh] flex-col items-center justify-center gap-3 text-center">
-                    <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10">
-                      <MessageCircle className="h-6 w-6 text-primary" />
-                    </div>
-                    <div className="space-y-1">
-                      <p className="text-sm font-medium">Start a conversation</p>
-                      <p className="text-xs text-muted-foreground">
-                        Ask questions about your {sourceCountLabel} source
-                        {sourceCountLabel !== 1 ? "s" : ""}
-                      </p>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="space-y-8">
-                    {messages.map((message) => (
-                      <MessageItem
-                        key={message.id}
-                        message={message as Message & { chunk_references?: ChunkReference[] }}
-                        highlightedSourceId={highlightedSourceId}
-                        onCitationClick={handleCitationClick}
-                      />
+          {/* Input area with settings */}
+          <div className="sticky bottom-0 border-t bg-background/95 backdrop-blur">
+            <div className="mx-auto max-w-3xl px-4 py-4">
+              {/* Settings row above input */}
+              <div className="mb-3 flex flex-wrap items-center gap-3">
+                <div className="flex items-center gap-1">
+                  <label className="text-xs text-muted-foreground whitespace-nowrap">Model:</label>
+                  <select
+                    value={selectedModelId}
+                    onChange={(e) => setSelectedModelId(e.target.value)}
+                    className="rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground focus-visible:border-primary focus-visible:ring-1 focus-visible:ring-primary/40"
+                  >
+                    {MODEL_OPTIONS.map((option) => (
+                      <option key={option.id} value={option.id}>
+                        {option.label}
+                      </option>
                     ))}
-                    <div ref={messagesEndRef} />
-                  </div>
-                )}
-              </div>
-
-              <div className="hidden w-80 flex-shrink-0 lg:block">
-                <div className="sticky top-20 rounded-lg border border-border bg-muted/20 p-3">
-                  {renderSourcesContent()}
+                  </select>
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Info className="h-3.5 w-3.5 text-muted-foreground cursor-help ml-1" />
+                      </TooltipTrigger>
+                      <TooltipContent side="top" className="max-w-xs">
+                        <p className="text-sm">{selectedModel.tooltip}</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                </div>
+                <div className="flex items-center gap-2">
+                  <label className="text-xs text-muted-foreground whitespace-nowrap">Mode:</label>
+                  <select
+                    value={selectedMode}
+                    onChange={(e) => setSelectedMode(e.target.value as ModeId)}
+                    className="rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground focus-visible:border-primary focus-visible:ring-1 focus-visible:ring-primary/40"
+                  >
+                    {MODE_OPTIONS.map((option) => (
+                      <option key={option.id} value={option.id}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
                 </div>
               </div>
-            </div>
-          </div>
-        </div>
 
-        {/* Input area - fixed at bottom like ChatGPT */}
-        <div className="sticky bottom-0 border-t bg-background/80 backdrop-blur">
-          <div className="mx-auto w-full max-w-[1220px] px-5 py-4">
-            <form onSubmit={handleSubmit}>
-              <div className="rounded-2xl border border-border bg-muted/70 p-4 shadow-inner">
-                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                  <div className="flex-1">
-                    <div className="flex flex-wrap items-center gap-3">
-                      <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/70">
-                        Model
-                      </span>
-                      <div className="flex flex-wrap gap-2">
-                        {MODEL_OPTIONS.map((option) => (
-                          <button
-                            key={option.id}
-                            type="button"
-                            onClick={() => setSelectedModelId(option.id)}
-                            className={cn(
-                              "rounded-full border px-3 py-1 text-[11px] transition-colors",
-                              selectedModelId === option.id
-                                ? "border-primary bg-primary/20 text-primary"
-                                : "border-border bg-background hover:border-primary/90 hover:text-primary",
-                            )}
-                          >
-                            {option.label}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                    {selectedModel && (
-                      <p className="mt-1 text-[11px] text-muted-foreground">
-                        {selectedModel.label}: {selectedModel.description}
-                      </p>
-                    )}
-                  </div>
-
-                  <div className="flex max-w-xs flex-1 flex-col gap-2">
-                    <label
-                      htmlFor="response-mode"
-                      className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/70"
-                    >
-                      Mode
-                    </label>
-                    <select
-                      id="response-mode"
-                      value={selectedMode}
-                      onChange={(event) =>
-                        setSelectedMode(event.target.value as ModeId)
-                      }
-                      className="rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/40"
-                    >
-                      {MODE_OPTIONS.map((modeOption) => (
-                        <option key={modeOption.id} value={modeOption.id}>
-                          {modeOption.label}
-                        </option>
-                      ))}
-                    </select>
-                    {selectedModeDetails && (
-                      <p className="text-[11px] text-muted-foreground">
-                        {selectedModeDetails.helper}
-                      </p>
-                    )}
-                    </div>
-                  </div>
-
-                  <div className="mb-2 flex items-center justify-between text-[11px] text-muted-foreground">
-                    <span>
-                      Using {selectedSourcesCount} of {totalSourcesCount} sources
-                    </span>
-                    {selectedSourcesCount === 0 && (
-                      <span className="text-destructive">Select a source to send a message</span>
-                    )}
-                  </div>
-
-                  <div className="flex items-end gap-3">
+              <form onSubmit={handleSubmit}>
+                <div className="flex items-center gap-3">
                   <Input
                     id="message"
                     placeholder="Ask InsightGuide about the transcript..."
                     value={messageText}
                     onChange={(e) => setMessageText(e.target.value)}
                     disabled={sendMessageMutation.isPending}
-                    className="flex-1 rounded-2xl border border-border bg-background/50 px-4 py-3 text-sm shadow-none focus:border-primary focus:ring-0"
+                    className="flex-1 rounded-xl border border-border bg-muted/50 px-4 py-3 text-sm shadow-none focus:border-primary focus:ring-0"
                     autoComplete="off"
                   />
                   <Button
                     type="submit"
                     size="icon"
-                    className="rounded-2xl border border-border bg-primary text-primary-foreground hover:bg-primary/90"
+                    className="h-10 w-10 rounded-xl bg-primary text-primary-foreground hover:bg-primary/90"
                     disabled={
                       sendMessageMutation.isPending ||
                       !messageText.trim() ||
@@ -1369,7 +1477,7 @@ export default function ConversationDetailPage() {
                     }
                   >
                     {sendMessageMutation.isPending ? (
-                      <Loader2 className="h-5 w-5 animate-spin" />
+                      <Loader2 className="h-4 w-4 animate-spin" />
                     ) : (
                       <svg
                         xmlns="http://www.w3.org/2000/svg"
@@ -1382,13 +1490,60 @@ export default function ConversationDetailPage() {
                     )}
                   </Button>
                 </div>
+
+                {/* Inline sources summary when context panel is collapsed */}
+                {!contextPanelOpen && (
+                  <button
+                    type="button"
+                    onClick={() => setContextPanelOpen(true)}
+                    className="mt-2 flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    <Settings className="h-3 w-3" />
+                    <span>
+                      {selectedSourcesCount} source{selectedSourcesCount !== 1 ? "s" : ""} selected
+                    </span>
+                  </button>
+                )}
+
                 {sendError && (
                   <p className="mt-2 text-[11px] text-destructive">{sendError}</p>
                 )}
-              </div>
-            </form>
+              </form>
+            </div>
           </div>
         </div>
+
+        {/* Context panel - desktop only, collapsible */}
+        <aside
+          className={cn(
+            "hidden lg:flex flex-col w-72 border-l bg-background transition-all duration-200 overflow-hidden",
+            contextPanelOpen ? "translate-x-0" : "translate-x-full w-0 border-l-0"
+          )}
+        >
+          {/* Panel header */}
+          <div className="flex h-14 items-center justify-between border-b px-4">
+            <span className="text-sm font-medium">Context</span>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8"
+              onClick={() => setContextPanelOpen(false)}
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          </div>
+
+          {/* Panel content - scrollable */}
+          <div className="flex-1 overflow-y-auto">
+            {/* Sources section */}
+            <div className="p-4">
+              <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-3">
+                Sources
+              </h3>
+              {renderSourcesContent()}
+            </div>
+          </div>
+        </aside>
       </div>
     </div>
   );

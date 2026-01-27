@@ -13,9 +13,11 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 
+from sqlalchemy import func
+
 from app.core.nextauth import get_current_user
 from app.db.base import get_db
-from app.models import Video, Job, Transcript, User, CollectionVideo
+from app.models import Video, Job, Transcript, User, CollectionVideo, Chunk
 from app.schemas import (
     VideoIngestRequest,
     VideoIngestResponse,
@@ -204,23 +206,66 @@ async def list_videos(
     )
     transcript_map = {t.video_id: t for t in transcripts}
 
+    # Calculate chunk storage per video (sum of all text fields: text + chunk_summary + embedding_text)
+    # This matches StorageCalculator behavior for consistent storage reporting
+    chunk_sizes = (
+        db.query(
+            Chunk.video_id,
+            func.sum(
+                func.coalesce(func.length(Chunk.text), 0)
+                + func.coalesce(func.length(Chunk.chunk_summary), 0)
+                + func.coalesce(func.length(Chunk.embedding_text), 0)
+            ).label("chunk_bytes"),
+        )
+        .filter(Chunk.video_id.in_(video_ids))
+        .group_by(Chunk.video_id)
+        .all()
+        if video_ids
+        else []
+    )
+    chunk_size_map = {cs.video_id: cs.chunk_bytes or 0 for cs in chunk_sizes}
+
     def get_transcript_size_mb(video: Video) -> float:
-        # Calculate from transcript in database (no file I/O)
+        # Priority: actual file size > text encoding estimate
+        if video.transcript_file_path:
+            try:
+                file_path = Path(video.transcript_file_path)
+                if file_path.exists():
+                    return file_path.stat().st_size / (1024 * 1024)
+            except (OSError, IOError):
+                pass  # Fall through to estimate
+
+        # Fallback to text encoding estimate
         transcript = transcript_map.get(video.id)
         if transcript and transcript.full_text:
             return len(transcript.full_text.encode("utf-8")) / (1024 * 1024)
         return 0.0
 
+    def get_chunk_storage_mb(video: Video) -> float:
+        """Calculate chunk storage in MB from text bytes."""
+        text_bytes = chunk_size_map.get(video.id, 0)
+        return text_bytes / (1024 * 1024)
+
+    def get_vector_storage_mb(video: Video) -> float:
+        """Estimate vector storage: ~5KB per chunk."""
+        if video.chunk_count == 0:
+            return 0.0
+        return (video.chunk_count * 5.0) / 1024.0
+
     video_details: List[VideoDetail] = []
     for video in videos:
         transcript_size_mb = round(get_transcript_size_mb(video), 3)
-        audio_size_mb = round(video.audio_file_size_mb or 0.0, 3)
-        storage_total_mb = round(audio_size_mb + transcript_size_mb, 3)
+        chunk_storage_mb = round(get_chunk_storage_mb(video), 3)
+        vector_storage_mb = round(get_vector_storage_mb(video), 3)
+        # Total is now: transcript + chunks + vectors (audio is 0)
+        storage_total_mb = round(transcript_size_mb + chunk_storage_mb + vector_storage_mb, 3)
         base = VideoDetail.model_validate(video)
         video_details.append(
             base.model_copy(
                 update={
                     "transcript_size_mb": transcript_size_mb,
+                    "chunk_storage_mb": chunk_storage_mb,
+                    "vector_storage_mb": vector_storage_mb,
                     "storage_total_mb": storage_total_mb,
                 }
             )
@@ -257,18 +302,53 @@ async def get_video(
     if not video:
         raise HTTPException(status_code=404, detail="Video not found")
 
-    transcript = db.query(Transcript).filter(Transcript.video_id == video_id).first()
+    # Calculate transcript size - prefer actual file size over text estimate
     transcript_size_mb = 0.0
-    if transcript and transcript.full_text:
-        transcript_size_mb = len(transcript.full_text.encode("utf-8")) / (1024 * 1024)
+    if video.transcript_file_path:
+        try:
+            file_path = Path(video.transcript_file_path)
+            if file_path.exists():
+                transcript_size_mb = file_path.stat().st_size / (1024 * 1024)
+        except (OSError, IOError):
+            pass
+
+    # Fallback to text encoding estimate if file not found
+    if transcript_size_mb == 0.0:
+        transcript = db.query(Transcript).filter(Transcript.video_id == video_id).first()
+        if transcript and transcript.full_text:
+            transcript_size_mb = len(transcript.full_text.encode("utf-8")) / (1024 * 1024)
+
+    # Calculate chunk storage (sum of all text fields: text + chunk_summary + embedding_text)
+    # This matches StorageCalculator behavior for consistent storage reporting
+    chunk_bytes = (
+        db.query(
+            func.sum(
+                func.coalesce(func.length(Chunk.text), 0)
+                + func.coalesce(func.length(Chunk.chunk_summary), 0)
+                + func.coalesce(func.length(Chunk.embedding_text), 0)
+            )
+        )
+        .filter(Chunk.video_id == video_id)
+        .scalar()
+        or 0
+    )
+    chunk_storage_mb = chunk_bytes / (1024 * 1024)
+
+    # Estimate vector storage: ~5KB per chunk
+    vector_storage_mb = (video.chunk_count * 5.0) / 1024.0 if video.chunk_count > 0 else 0.0
+
     transcript_size_mb = round(transcript_size_mb, 3)
-    audio_size_mb = round(video.audio_file_size_mb or 0.0, 3)
-    storage_total_mb = round(audio_size_mb + transcript_size_mb, 3)
+    chunk_storage_mb = round(chunk_storage_mb, 3)
+    vector_storage_mb = round(vector_storage_mb, 3)
+    # Total is now: transcript + chunks + vectors (audio is 0)
+    storage_total_mb = round(transcript_size_mb + chunk_storage_mb + vector_storage_mb, 3)
 
     base = VideoDetail.model_validate(video)
     return base.model_copy(
         update={
             "transcript_size_mb": transcript_size_mb,
+            "chunk_storage_mb": chunk_storage_mb,
+            "vector_storage_mb": vector_storage_mb,
             "storage_total_mb": storage_total_mb,
         }
     )
@@ -563,7 +643,23 @@ async def cancel_videos_bulk(
 
 
 def _get_transcript_size_mb(video: Video) -> float:
-    """Calculate transcript size in MB (from database, no file I/O)."""
+    """
+    Get transcript size in MB.
+
+    Priority:
+    1. Actual file size on disk (most accurate)
+    2. Text encoding estimate (fallback if file not found)
+    """
+    # Try actual file size first
+    if video.transcript_file_path:
+        try:
+            file_path = Path(video.transcript_file_path)
+            if file_path.exists():
+                return file_path.stat().st_size / (1024 * 1024)
+        except (OSError, IOError):
+            pass  # Fall through to estimate
+
+    # Fallback to text encoding estimate
     transcript = video.transcript
     if transcript and transcript.full_text:
         return len(transcript.full_text.encode("utf-8")) / (1024 * 1024)
@@ -656,12 +752,24 @@ async def delete_videos(
             except Exception as e:
                 print(f"Warning: Failed to delete transcript file: {str(e)}")
 
-        # Delete from vector store if requested
+        # Delete from vector store and clean up chunks if requested
         if request.delete_search_index:
             try:
                 vector_store_service.delete_video(video.id)
             except Exception as e:
                 print(f"Warning: Failed to delete video from vector store: {str(e)}")
+
+            # Also delete chunk rows from PostgreSQL to avoid orphaned data
+            try:
+                deleted_chunks = (
+                    db.query(Chunk)
+                    .filter(Chunk.video_id == video.id)
+                    .delete(synchronize_session=False)
+                )
+                if deleted_chunks > 0:
+                    print(f"Deleted {deleted_chunks} chunks for video {video.id}")
+            except Exception as e:
+                print(f"Warning: Failed to delete chunks from database: {str(e)}")
 
         # Soft delete from database if requested
         if request.remove_from_library:

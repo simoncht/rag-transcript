@@ -1,10 +1,17 @@
 import React from 'react';
 import type { Metadata } from 'next';
 import HeroSection from '@/components/landing/HeroSection';
+import HowItWorksSection from '@/components/landing/HowItWorksSection';
 import FeaturesSection from '@/components/landing/FeaturesSection';
+import TechnologySection from '@/components/landing/TechnologySection';
+import UseCasesSection from '@/components/landing/UseCasesSection';
+import ComparisonSection from '@/components/landing/ComparisonSection';
+import TestimonialsSection from '@/components/landing/TestimonialsSection';
 import PricingSection from '@/components/landing/PricingSection';
 import FAQSection from '@/components/landing/FAQSection';
+import FinalCTASection from '@/components/landing/FinalCTASection';
 import Footer from '@/components/landing/Footer';
+import HeaderAuthButtons from '@/components/landing/HeaderAuthButtons';
 
 export const metadata: Metadata = {
   title: 'RAG Transcript - AI-Powered Video Knowledge Base',
@@ -29,42 +36,47 @@ export default function HomePage() {
             </a>
 
             {/* Navigation */}
-            <nav className="hidden md:flex items-center gap-8">
+            <nav className="hidden md:flex items-center gap-6">
+              <a
+                href="#how-it-works"
+                className="text-gray-600 hover:text-primary transition-colors text-sm"
+              >
+                How It Works
+              </a>
               <a
                 href="#features"
-                className="text-gray-600 hover:text-primary transition-colors"
+                className="text-gray-600 hover:text-primary transition-colors text-sm"
               >
                 Features
               </a>
               <a
+                href="#technology"
+                className="text-gray-600 hover:text-primary transition-colors text-sm"
+              >
+                Technology
+              </a>
+              <a
+                href="#use-cases"
+                className="text-gray-600 hover:text-primary transition-colors text-sm"
+              >
+                Use Cases
+              </a>
+              <a
                 href="#pricing"
-                className="text-gray-600 hover:text-primary transition-colors"
+                className="text-gray-600 hover:text-primary transition-colors text-sm"
               >
                 Pricing
               </a>
               <a
                 href="#faq"
-                className="text-gray-600 hover:text-primary transition-colors"
+                className="text-gray-600 hover:text-primary transition-colors text-sm"
               >
                 FAQ
               </a>
             </nav>
 
             {/* Auth buttons */}
-            <div className="flex items-center gap-4">
-              <a
-                href="/login"
-                className="text-gray-600 hover:text-primary transition-colors"
-              >
-                Sign In
-              </a>
-              <a
-                href="/login"
-                className="bg-primary text-white px-6 py-2 rounded-lg hover:bg-primary-light transition-colors"
-              >
-                Get Started
-              </a>
-            </div>
+            <HeaderAuthButtons />
           </div>
         </div>
       </header>
@@ -72,11 +84,15 @@ export default function HomePage() {
       {/* Main content */}
       <main>
         <HeroSection />
-        <div id="features">
-          <FeaturesSection />
-        </div>
+        <HowItWorksSection />
+        <FeaturesSection />
+        <TechnologySection />
+        <UseCasesSection />
+        <ComparisonSection />
+        <TestimonialsSection />
         <PricingSection />
         <FAQSection />
+        <FinalCTASection />
       </main>
 
       {/* Footer */}

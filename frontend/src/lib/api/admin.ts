@@ -11,6 +11,7 @@ import type {
   ContentOverviewResponse,
   AbuseAlertResponse,
   AuditLogResponse,
+  LLMUsageResponse,
 } from "../types";
 
 export const adminApi = {
@@ -120,18 +121,6 @@ export const adminApi = {
   },
 
   /**
-   * Get a single conversation timeline
-   */
-  async getConversationDetail(
-    conversationId: string
-  ): Promise<AdminConversationDetail> {
-    const response = await apiClient.get(
-      `/admin/conversations/${conversationId}`
-    );
-    return response.data;
-  },
-
-  /**
    * Get combined content overview (videos + collections)
    */
   async getContentOverview(): Promise<ContentOverviewResponse> {
@@ -144,6 +133,17 @@ export const adminApi = {
    */
   async getAlerts(): Promise<AbuseAlertResponse> {
     const response = await apiClient.get("/admin/alerts");
+    return response.data;
+  },
+
+  /**
+   * Get LLM usage statistics and cost tracking
+   */
+  async getLLMUsage(params?: {
+    days?: number;
+    limit?: number;
+  }): Promise<LLMUsageResponse> {
+    const response = await apiClient.get("/admin/llm-usage", { params });
     return response.data;
   },
 };

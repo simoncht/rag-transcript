@@ -14,6 +14,17 @@ export function parseApiDate(value?: string | null): Date | null {
   return Number.isNaN(date.getTime()) ? null : date
 }
 
+/**
+ * Parse API timestamp as UTC Date, with fallback to current time.
+ * Use this for required timestamp fields where null is not acceptable.
+ * Fixes timezone bug: backend sends UTC without 'Z' suffix, browser interprets as local time.
+ */
+export function parseUTCDate(value: string): Date {
+  const normalized = TIMEZONE_REGEX.test(value) ? value : `${value}Z`
+  const date = new Date(normalized)
+  return Number.isNaN(date.getTime()) ? new Date() : date
+}
+
 export function formatMessageTime(value?: string | Date | null): string {
   const date = value instanceof Date ? value : parseApiDate(value ?? undefined)
   if (!date) return ""

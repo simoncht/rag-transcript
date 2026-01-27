@@ -37,7 +37,8 @@ router = APIRouter()
 @router.post("/checkout", response_model=CheckoutSessionResponse)
 @limiter.limit("5/minute")
 async def create_checkout_session(
-    request: CheckoutSessionRequest,
+    request: Request,
+    checkout_request: CheckoutSessionRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -48,7 +49,7 @@ async def create_checkout_session(
     """
     try:
         # Validate tier
-        if request.tier == "free":
+        if checkout_request.tier == "free":
             raise HTTPException(
                 status_code=400,
                 detail="Cannot create checkout session for free tier"
@@ -57,16 +58,16 @@ async def create_checkout_session(
         # Determine billing cycle from tier request
         # Default to monthly if not specified in success_url
         billing_cycle = "monthly"
-        if "yearly" in request.success_url.lower():
+        if "yearly" in checkout_request.success_url.lower():
             billing_cycle = "yearly"
 
         # Create checkout session
         result = subscription_service.create_checkout_session(
             user=current_user,
-            tier=request.tier,
+            tier=checkout_request.tier,
             billing_cycle=billing_cycle,
-            success_url=request.success_url,
-            cancel_url=request.cancel_url,
+            success_url=checkout_request.success_url,
+            cancel_url=checkout_request.cancel_url,
             db=db,
         )
 
@@ -88,7 +89,8 @@ async def create_checkout_session(
 @router.post("/portal", response_model=CustomerPortalResponse)
 @limiter.limit("5/minute")
 async def create_customer_portal_session(
-    request: CustomerPortalRequest,
+    request: Request,
+    portal_request: CustomerPortalRequest,
     current_user: User = Depends(get_current_user),
 ):
     """
@@ -110,7 +112,7 @@ async def create_customer_portal_session(
         # Create portal session
         result = subscription_service.create_customer_portal_session(
             user=current_user,
-            return_url=request.return_url,
+            return_url=portal_request.return_url,
         )
 
         logger.info(f"Created customer portal session for user {current_user.id}")

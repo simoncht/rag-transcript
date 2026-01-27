@@ -31,12 +31,14 @@ from app.schemas import (
     SubscriptionDetail,
     PricingTier,
 )
+from app.services.storage_calculator import StorageCalculator
+from app.services.storage import storage_service
 import logging
 
 logger = logging.getLogger(__name__)
 
 # Initialize Stripe with API key from settings
-stripe.api_key = settings.stripe_api_key if hasattr(settings, 'stripe_api_key') else None
+stripe.api_key = settings.stripe_secret_key if settings.stripe_secret_key else None
 
 
 class SubscriptionService:
@@ -71,9 +73,10 @@ class SubscriptionService:
             # Get tier limits
             limits = get_quota_limits(user.subscription_tier)
 
-        # Calculate videos used
+        # Calculate videos used (exclude soft-deleted)
         videos_used = db.query(func.count(Video.id)).filter(
-            Video.user_id == user_id
+            Video.user_id == user_id,
+            Video.is_deleted.is_(False)
         ).scalar() or 0
 
         # Calculate messages used (from usage_events)
@@ -82,15 +85,27 @@ class SubscriptionService:
             UsageEvent.event_type == "message"
         ).scalar() or 0
 
-        # Calculate storage used (sum of video file sizes)
-        storage_query = db.query(func.sum(Video.audio_file_size_mb)).filter(
-            Video.user_id == user_id
-        ).scalar()
-        storage_used_mb = float(storage_query) if storage_query else 0.0
+        # Calculate comprehensive storage (disk files + database text + vectors)
+        # This includes: audio files, transcript files, chunks, messages, facts, vectors
+        calculator = StorageCalculator(db)
+        storage_breakdown = calculator.calculate_total_storage_mb(user_id)
 
-        # Calculate video minutes used (sum of video durations)
+        # Disk usage from storage service (audio + transcript files)
+        disk_usage_mb = storage_service.get_storage_usage(user_id)
+
+        # Total = disk files + database text + vectors
+        storage_used_mb = disk_usage_mb + storage_breakdown["database_mb"] + storage_breakdown["vector_mb"]
+
+        logger.debug(
+            f"User {user_id} storage breakdown: "
+            f"disk={disk_usage_mb:.2f}MB, db={storage_breakdown['database_mb']:.2f}MB, "
+            f"vector={storage_breakdown['vector_mb']:.2f}MB, total={storage_used_mb:.2f}MB"
+        )
+
+        # Calculate video minutes used (exclude soft-deleted)
         minutes_query = db.query(func.sum(Video.duration_seconds)).filter(
-            Video.user_id == user_id
+            Video.user_id == user_id,
+            Video.is_deleted.is_(False)
         ).scalar()
         minutes_used = int((minutes_query or 0) / 60)  # Convert seconds to minutes
 

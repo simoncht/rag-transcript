@@ -70,12 +70,20 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { cn } from "@/lib/utils";
+import { cn, parseUTCDate } from "@/lib/utils";
+import { useToast } from "@/hooks/use-toast";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 export default function VideosPage() {
   const authProvider = useAuth();
   const authState = useAuthState();
   const canFetch = authState.isAuthenticated;
+  const { toast } = useToast();
   const [youtubeUrl, setYoutubeUrl] = useState("");
   const [addToCollectionVideos, setAddToCollectionVideos] = useState<Video[]>([]);
   const [manageTagsVideo, setManageTagsVideo] = useState<Video | null>(null);
@@ -87,6 +95,7 @@ export default function VideosPage() {
   const [videosToCancel, setVideosToCancel] = useState<Video[]>([]);
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
+  const [showStorageBreakdown, setShowStorageBreakdown] = useState(false);
   const queryClient = useQueryClient();
 
   // Performance: Parallel auth + data fetch (no blocking on auth)
@@ -134,11 +143,18 @@ export default function VideosPage() {
     },
     onError: (error: unknown) => {
       console.error("Video ingest failed:", error);
+      // Handle quota exceeded errors where detail is an object with message property
+      const detail = (error as any)?.response?.data?.detail;
       const message =
-        (error as any)?.response?.data?.detail ??
+        typeof detail === 'string' ? detail :
+        typeof detail === 'object' && detail?.message ? detail.message :
         (error as any)?.message ??
         "Failed to ingest video. Please try again.";
-      alert(message);
+      toast({
+        title: "Ingest failed",
+        description: message,
+        variant: "destructive",
+      });
     },
   });
 
@@ -169,7 +185,11 @@ export default function VideosPage() {
     },
     onError: (error) => {
       console.error("Delete failed:", error);
-      alert("Failed to delete videos. Please try again.");
+      toast({
+        title: "Delete failed",
+        description: "Failed to delete videos. Please try again.",
+        variant: "destructive",
+      });
     },
   });
 
@@ -185,7 +205,11 @@ export default function VideosPage() {
     },
     onError: (error) => {
       console.error("Cancel failed:", error);
-      alert("Failed to cancel video. Please try again.");
+      toast({
+        title: "Cancel failed",
+        description: "Failed to cancel video. Please try again.",
+        variant: "destructive",
+      });
     },
   });
 
@@ -202,7 +226,11 @@ export default function VideosPage() {
     },
     onError: (error) => {
       console.error("Bulk cancel failed:", error);
-      alert("Failed to cancel videos. Please try again.");
+      toast({
+        title: "Cancel failed",
+        description: "Failed to cancel videos. Please try again.",
+        variant: "destructive",
+      });
     },
   });
 
@@ -213,10 +241,17 @@ export default function VideosPage() {
     },
     onError: (error) => {
       console.error("Reprocess failed:", error);
+      // Handle quota exceeded errors where detail is an object with message property
+      const detail = (error as any)?.response?.data?.detail;
       const message =
-        (error as any)?.response?.data?.detail ??
+        typeof detail === 'string' ? detail :
+        typeof detail === 'object' && detail?.message ? detail.message :
         "Failed to reprocess video. Please try again.";
-      alert(message);
+      toast({
+        title: "Reprocess failed",
+        description: message,
+        variant: "destructive",
+      });
     },
   });
 
@@ -288,7 +323,11 @@ export default function VideosPage() {
     if (ids.length === 0) return;
     const toCancel = data?.videos.filter((v) => ids.includes(v.id) && isCancelable(v)) ?? [];
     if (toCancel.length === 0) {
-      alert("No cancelable videos selected. Only videos in processing states can be canceled.");
+      toast({
+        title: "No cancelable videos",
+        description: "Only videos in processing states can be canceled.",
+        variant: "destructive",
+      });
       return;
     }
     setVideosToCancel(toCancel);
@@ -387,7 +426,7 @@ export default function VideosPage() {
       return null;
     }
 
-    const updatedAt = new Date(video.updated_at);
+    const updatedAt = parseUTCDate(video.updated_at);
     const now = new Date();
     const secondsAgo = Math.floor((now.getTime() - updatedAt.getTime()) / 1000);
 
@@ -688,6 +727,7 @@ export default function VideosPage() {
     );
   };
   return (
+    <TooltipProvider>
     <MainLayout>
       <div className="space-y-8">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
@@ -768,22 +808,15 @@ export default function VideosPage() {
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="flex items-end justify-between">
-                  <div>
-                    <p className="text-3xl font-semibold">
-                      {formatMb(usageSummary.storage_breakdown.total_mb)}
-                    </p>
-                    <p className="text-sm text-muted-foreground">
-                      {usageSummary.storage_breakdown.limit_mb === -1
-                        ? "Unlimited storage"
-                        : `of ${formatMb(usageSummary.storage_breakdown.limit_mb)} used`}
-                    </p>
-                  </div>
-                  <div className="text-sm text-muted-foreground">
-                    <p>Audio: {formatMb(usageSummary.storage_breakdown.audio_mb)}</p>
-                    <p>Transcript: {formatMb(usageSummary.storage_breakdown.transcript_mb)}</p>
-                    <p>On disk: {formatMb(usageSummary.storage_breakdown.disk_usage_mb)}</p>
-                  </div>
+                <div>
+                  <p className="text-3xl font-semibold">
+                    {formatMb(usageSummary.storage_breakdown.total_mb)}
+                  </p>
+                  <p className="text-sm text-muted-foreground">
+                    {usageSummary.storage_breakdown.limit_mb === -1
+                      ? "Unlimited storage"
+                      : `of ${formatMb(usageSummary.storage_breakdown.limit_mb)} used`}
+                  </p>
                 </div>
                 {usageSummary.storage_breakdown.limit_mb !== -1 && (
                   <Progress
@@ -794,13 +827,42 @@ export default function VideosPage() {
                     className="h-2"
                   />
                 )}
+                <button
+                  type="button"
+                  onClick={() => setShowStorageBreakdown(!showStorageBreakdown)}
+                  className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  {showStorageBreakdown ? (
+                    <ChevronUp className="h-3.5 w-3.5" />
+                  ) : (
+                    <ChevronDown className="h-3.5 w-3.5" />
+                  )}
+                  View breakdown
+                </button>
+                <div
+                  className={cn(
+                    "overflow-hidden transition-all duration-200",
+                    showStorageBreakdown ? "max-h-40 opacity-100" : "max-h-0 opacity-0"
+                  )}
+                >
+                  <div className="rounded-lg border bg-muted/30 p-3 space-y-2">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-muted-foreground">Disk (audio/transcripts)</span>
+                      <span className="font-medium">{formatMb(usageSummary.storage_breakdown.disk_usage_mb)}</span>
+                    </div>
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-muted-foreground">Database (chunks/messages)</span>
+                      <span className="font-medium">{formatMb(usageSummary.storage_breakdown.database_mb)}</span>
+                    </div>
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-muted-foreground">Vector index</span>
+                      <span className="font-medium">{formatMb(usageSummary.storage_breakdown.vector_mb)}</span>
+                    </div>
+                  </div>
+                </div>
                 <div className="rounded-lg border bg-muted/30 p-3 text-xs text-muted-foreground">
                   Delete {videos.length} video(s) to free approximately {formatMb(
-                    (videos.reduce(
-                      (sum, v) =>
-                        sum + (v.audio_file_size_mb || 0) + (v.transcript_size_mb || 0),
-                      0
-                    ) || 0) * 1.15
+                    videos.reduce((sum, v) => sum + (v.storage_total_mb || 0), 0)
                   )}.
                 </div>
               </CardContent>
@@ -970,7 +1032,7 @@ export default function VideosPage() {
                                 <p className="font-medium leading-none">{video.title}</p>
                                 <div className="text-xs text-muted-foreground">
                                   {formatDuration(video.duration_seconds)} - Added {formatDistanceToNow(
-                                    new Date(video.created_at)
+                                    parseUTCDate(video.created_at)
                                   )} ago
                                 </div>
                               </div>
@@ -1040,11 +1102,29 @@ export default function VideosPage() {
                               )}
                           </TableCell>
                           <TableCell className="text-sm text-muted-foreground">
-                            <div>Audio: {formatMb(video.audio_file_size_mb)}</div>
-                            <div>Transcript: {formatMb(video.transcript_size_mb)}</div>
-                            <div className="font-medium text-foreground">
-                              Total: {formatMb(video.storage_total_mb)}
-                            </div>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <span className="cursor-help border-b border-dashed border-muted-foreground/50">
+                                  {formatMb(video.storage_total_mb)}
+                                </span>
+                              </TooltipTrigger>
+                              <TooltipContent side="top" className="bg-popover text-popover-foreground border shadow-md">
+                                <div className="space-y-1 text-xs">
+                                  <div className="flex justify-between gap-4">
+                                    <span className="text-muted-foreground">Transcript</span>
+                                    <span className="font-medium">{formatMb(video.transcript_size_mb)}</span>
+                                  </div>
+                                  <div className="flex justify-between gap-4">
+                                    <span className="text-muted-foreground">Chunks</span>
+                                    <span className="font-medium">{formatMb(video.chunk_storage_mb)}</span>
+                                  </div>
+                                  <div className="flex justify-between gap-4">
+                                    <span className="text-muted-foreground">Vectors</span>
+                                    <span className="font-medium">{formatMb(video.vector_storage_mb)}</span>
+                                  </div>
+                                </div>
+                              </TooltipContent>
+                            </Tooltip>
                           </TableCell>
                           <TableCell className="text-right">
                             <div className="flex flex-wrap items-center justify-end gap-2 sm:flex-nowrap">
@@ -1191,5 +1271,6 @@ export default function VideosPage() {
         />
       </div>
     </MainLayout>
+    </TooltipProvider>
   );
 }

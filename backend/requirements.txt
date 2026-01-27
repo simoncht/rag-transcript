@@ -25,6 +25,7 @@ torchaudio==2.2.0
 sentence-transformers==2.3.1
 tiktoken==0.6.0
 numpy==1.26.3
+rank-bm25==0.2.2  # BM25 keyword search for hybrid retrieval
 
 # Vector Database
 qdrant-client==1.12.1
@@ -34,9 +35,8 @@ httpx==0.27.0
 anthropic==0.18.1
 openai==1.10.0
 
-# Payments & Emails
-stripe==7.8.0
-resend==0.8.0
+# Payments
+stripe==6.7.0
 
 # Configuration & Validation
 pydantic==2.5.3

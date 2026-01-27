@@ -15,6 +15,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { AlertCircle, Film } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
+import { parseUTCDate } from "@/lib/utils";
 
 export default function AdminVideosPage() {
   const { data, isLoading, error } = useQuery({
@@ -132,7 +133,7 @@ export default function AdminVideosPage() {
                     {Math.round(video.progress_percent)}%
                   </TableCell>
                   <TableCell className="text-sm text-muted-foreground">
-                    {formatDistanceToNow(new Date(video.created_at), {
+                    {formatDistanceToNow(parseUTCDate(video.created_at), {
                       addSuffix: true,
                     })}
                   </TableCell>

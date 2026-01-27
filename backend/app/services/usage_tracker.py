@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 
 from app.models import UsageEvent, UserQuota, User
 from app.core.config import settings
+from app.core.pricing import get_quota_limits
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +95,9 @@ class UsageTracker:
         """
         Create initial quota based on subscription tier.
 
+        Uses PRICING_TIERS from pricing.py as the single source of truth.
+        -1 values indicate unlimited (stored as a high number for DB compatibility).
+
         Args:
             user_id: User ID
             tier: Subscription tier (free, pro, enterprise)
@@ -103,32 +107,20 @@ class UsageTracker:
         """
         now = datetime.utcnow()
 
-        # Define limits by tier
-        tier_limits = {
-            "free": {
-                "videos": settings.free_tier_video_limit,
-                "minutes": Decimal(settings.free_tier_minutes_limit),
-                "messages": settings.free_tier_messages_limit,
-                "storage_mb": Decimal(settings.free_tier_storage_mb_limit),
-                "embedding_tokens": None,  # Unlimited for local embeddings
-            },
-            "pro": {
-                "videos": 50,
-                "minutes": Decimal(500),
-                "messages": 999999,  # Unlimited
-                "storage_mb": Decimal(10000),  # 10 GB
-                "embedding_tokens": None,
-            },
-            "enterprise": {
-                "videos": 999999,  # Unlimited
-                "minutes": Decimal(999999),
-                "messages": 999999,
-                "storage_mb": Decimal(100000),  # 100 GB
-                "embedding_tokens": None,
-            },
-        }
+        # Use pricing.py as single source of truth for tier limits
+        pricing_limits = get_quota_limits(tier)
 
-        limits = tier_limits.get(tier, tier_limits["free"])
+        # Convert -1 (unlimited) to high numbers for DB storage
+        # The quota check logic treats these as effectively unlimited
+        UNLIMITED = 999999
+
+        limits = {
+            "videos": pricing_limits["video_limit"] if pricing_limits["video_limit"] != -1 else UNLIMITED,
+            "minutes": Decimal(pricing_limits["minutes_limit"]) if pricing_limits["minutes_limit"] != -1 else Decimal(UNLIMITED),
+            "messages": pricing_limits["message_limit"] if pricing_limits["message_limit"] != -1 else UNLIMITED,
+            "storage_mb": Decimal(pricing_limits["storage_limit_mb"]) if pricing_limits["storage_limit_mb"] != -1 else Decimal(UNLIMITED),
+            "embedding_tokens": None,  # Unlimited for local embeddings
+        }
 
         return UserQuota(
             user_id=user_id,

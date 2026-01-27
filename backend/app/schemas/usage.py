@@ -19,6 +19,8 @@ class StorageBreakdown(BaseModel):
     audio_mb: float
     transcript_mb: float
     disk_usage_mb: float
+    database_mb: float  # PostgreSQL storage (chunks, messages, facts, insights)
+    vector_mb: float  # Qdrant vector storage (estimated)
 
 
 class UsageCounts(BaseModel):

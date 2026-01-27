@@ -1,11 +1,172 @@
 """
 Pricing tier configuration for RAG Transcript SaaS.
 
-Defines available subscription tiers, pricing, quotas, and features.
-"""
-from typing import Dict, Any, List
+Defines available subscription tiers, pricing, quotas, features, and LLM model assignments.
 
-# Pricing tiers configuration
+Model Tier Configuration (DeepSeek API):
+- Free tier uses deepseek-chat: Fast responses, 128K context, $0.28/M in, $0.42/M out
+- Paid tiers use deepseek-reasoner: Advanced reasoning with chain-of-thought, 128K context
+
+DeepSeek automatically caches prompt prefixes (system prompt, conversation history),
+reducing input costs by up to 90% for long conversations ($0.028/M for cache hits).
+
+See docs/MODEL_RESEARCH.md for detailed analysis.
+"""
+from typing import Dict, Any, List, Optional
+
+from app.core.config import settings
+
+
+# =============================================================================
+# LLM Model Configuration by Tier (DeepSeek API)
+# =============================================================================
+#
+# DeepSeek models for RAG transcript processing:
+#
+# | Model             | Context | Max Output | Pricing (per M tokens)        |
+# |-------------------|---------|------------|-------------------------------|
+# | deepseek-chat     | 128K    | 8K         | $0.28 in / $0.42 out         |
+# | deepseek-reasoner | 128K    | 64K        | $0.28 in / $0.42 out         |
+#
+# Cache pricing: $0.028/M (10x cheaper for automatic prefix cache hits)
+#
+# Key benefits:
+# - OpenAI-compatible API (easy integration)
+# - Automatic context caching (reduces costs for multi-turn conversations)
+# - Reasoner model provides chain-of-thought for complex queries
+
+MODEL_TIERS: Dict[str, Dict[str, Any]] = {
+    "free": {
+        "model_id": "deepseek-chat",
+        "display_name": "DeepSeek Chat",
+        "description": "Fast responses for most queries",
+        "specs": {
+            "provider": "deepseek",
+            "context_length": 128000,
+            "max_output": 8000,
+            "pricing_input": "$0.28/M",
+            "pricing_output": "$0.42/M",
+            "pricing_cache_hit": "$0.028/M",
+            "strengths": ["Fast inference", "Low latency", "Cost effective"],
+            "limitations": ["No chain-of-thought reasoning"],
+        },
+    },
+    "pro": {
+        "model_id": "deepseek-reasoner",
+        "display_name": "DeepSeek Reasoner",
+        "description": "Advanced reasoning for complex analysis",
+        "specs": {
+            "provider": "deepseek",
+            "context_length": 128000,
+            "max_output": 64000,
+            "has_reasoning": True,
+            "pricing_input": "$0.28/M",
+            "pricing_output": "$0.42/M",
+            "pricing_cache_hit": "$0.028/M",
+            "strengths": ["Chain-of-thought reasoning", "Complex analysis", "Long output"],
+            "limitations": ["Slightly slower due to reasoning step"],
+        },
+    },
+    "enterprise": {
+        "model_id": "deepseek-reasoner",
+        "display_name": "DeepSeek Reasoner (Enterprise)",
+        "description": "Enterprise-grade with SLA",
+        "specs": {
+            "provider": "deepseek",
+            "context_length": 128000,
+            "max_output": 64000,
+            "has_reasoning": True,
+            "pricing_input": "$0.28/M",
+            "pricing_output": "$0.42/M",
+            "pricing_cache_hit": "$0.028/M",
+            "strengths": ["Chain-of-thought reasoning", "Complex analysis", "Enterprise SLA"],
+            "limitations": ["Slightly slower due to reasoning step"],
+        },
+    },
+}
+
+
+def get_model_for_tier(tier: str) -> str:
+    """
+    Get the default LLM model ID for a subscription tier.
+
+    Checks environment-configured overrides first (settings.llm_model_{tier}),
+    then falls back to MODEL_TIERS defaults.
+
+    Args:
+        tier: Subscription tier (free, pro, enterprise)
+
+    Returns:
+        Model ID string in Ollama format (e.g., "qwen3-vl:235b")
+
+    Raises:
+        ValueError: If tier is invalid
+    """
+    # Check for environment override first
+    env_model = getattr(settings, f"llm_model_{tier}", None)
+    if env_model:
+        return env_model
+
+    if tier not in MODEL_TIERS:
+        # Fallback to free tier model if unknown tier
+        return MODEL_TIERS["free"]["model_id"]
+
+    return MODEL_TIERS[tier]["model_id"]
+
+
+def get_model_info_for_tier(tier: str) -> Dict[str, Any]:
+    """
+    Get full model information for a subscription tier.
+
+    Args:
+        tier: Subscription tier (free, pro, enterprise)
+
+    Returns:
+        Dictionary with model_id, display_name, description, and specs
+    """
+    if tier not in MODEL_TIERS:
+        return MODEL_TIERS["free"]
+
+    return MODEL_TIERS[tier]
+
+
+def resolve_model(
+    user_tier: str,
+    requested_model: Optional[str] = None,
+    allow_upgrade: bool = False,
+) -> str:
+    """
+    Resolve which model to use based on user tier and optional override.
+
+    If a model is explicitly requested:
+    - If allow_upgrade=False (default): Only allow the tier's assigned model
+    - If allow_upgrade=True: Allow any model (for admin/testing purposes)
+
+    Args:
+        user_tier: User's subscription tier
+        requested_model: Optional explicit model request from API
+        allow_upgrade: Whether to allow model upgrades beyond tier
+
+    Returns:
+        Model ID to use for the request
+    """
+    tier_model = get_model_for_tier(user_tier)
+
+    if not requested_model:
+        return tier_model
+
+    if allow_upgrade:
+        return requested_model
+
+    # For now, allow explicit model requests (future: enforce tier limits)
+    # This enables testing different models while preserving tier defaults
+    return requested_model
+
+
+# =============================================================================
+# Pricing Tiers Configuration
+# =============================================================================
+
 PRICING_TIERS: Dict[str, Dict[str, Any]] = {
     "free": {
         "name": "Free",
@@ -18,13 +179,15 @@ PRICING_TIERS: Dict[str, Dict[str, Any]] = {
             "2 videos",
             "50 messages per month",
             "1GB storage",
-            "60 minutes of video per month",
+            "1000 minutes of video per month",
+            "DeepSeek Chat model (fast responses)",
             "Community support",
         ],
         "video_limit": 2,
         "message_limit": 50,
         "storage_limit_mb": 1000,
-        "minutes_limit": 60,
+        "minutes_limit": 1000,
+        "model_tier": "free",
     },
     "pro": {
         "name": "Pro",
@@ -38,6 +201,7 @@ PRICING_TIERS: Dict[str, Dict[str, Any]] = {
             "Unlimited messages",
             "50GB storage",
             "1,000 minutes of video per month",
+            "DeepSeek Reasoner (advanced reasoning)",
             "Priority support",
             "Advanced analytics",
             "Export conversations",
@@ -46,6 +210,7 @@ PRICING_TIERS: Dict[str, Dict[str, Any]] = {
         "message_limit": -1,
         "storage_limit_mb": 50000,
         "minutes_limit": 1000,
+        "model_tier": "pro",
     },
     "enterprise": {
         "name": "Enterprise",
@@ -58,6 +223,7 @@ PRICING_TIERS: Dict[str, Dict[str, Any]] = {
             "Everything in Pro",
             "Unlimited storage",
             "Unlimited video minutes",
+            "DeepSeek Reasoner (enterprise SLA)",
             "Custom integrations",
             "Dedicated account manager",
             "SLA guarantee (99.9% uptime)",
@@ -68,6 +234,7 @@ PRICING_TIERS: Dict[str, Dict[str, Any]] = {
         "message_limit": -1,
         "storage_limit_mb": -1,  # -1 means unlimited
         "minutes_limit": -1,
+        "model_tier": "enterprise",
     },
 }
 

@@ -17,13 +17,27 @@ export default function SubscriptionManager() {
   const [isLoading, setIsLoading] = useState(false);
 
   // Fetch current subscription
+  // 404 means user is on free tier (no subscription record), not an error
   const {
     data: subscription,
     isLoading: isLoadingSubscription,
     error: subscriptionError,
   } = useQuery({
     queryKey: ['current-subscription'],
-    queryFn: subscriptionsApi.getCurrentSubscription,
+    queryFn: async () => {
+      try {
+        return await subscriptionsApi.getCurrentSubscription();
+      } catch (error: unknown) {
+        // 404 = no subscription = free tier (not an error)
+        if (error && typeof error === 'object' && 'response' in error) {
+          const axiosError = error as { response?: { status?: number } };
+          if (axiosError.response?.status === 404) {
+            return null;
+          }
+        }
+        throw error;
+      }
+    },
     retry: false,
   });
 
@@ -61,7 +75,8 @@ export default function SubscriptionManager() {
   };
 
   const isLoadingData = isLoadingSubscription || isLoadingQuota;
-  const hasError = subscriptionError || quotaError;
+  // Only treat quota errors as critical - subscription 404 is handled as "free tier"
+  const hasError = quotaError;
 
   if (isLoadingData) {
     return (

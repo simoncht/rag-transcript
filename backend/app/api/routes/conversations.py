@@ -11,9 +11,11 @@ Endpoints:
 """
 import textwrap
 import uuid
-from typing import Any, Optional, List, Dict, Set, Sequence
+from typing import Any, Optional, List, Dict, Set, Sequence, AsyncGenerator
 from datetime import datetime
+import json
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import StreamingResponse
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -46,6 +48,7 @@ from app.schemas import (
 from app.services.query_expansion import get_query_expansion_service
 from app.services.audit_logger import log_chat_message
 from app.core.rate_limit import limiter
+from app.core.pricing import resolve_model, get_model_info_for_tier
 
 router = APIRouter()
 
@@ -1180,19 +1183,34 @@ async def send_message(
 
         **Core Rules**:
         1. Use ONLY the provided source transcripts - never add external knowledge
-        2. Always cite sources by number and speaker (e.g., "According to Source 2, Dr. Smith states...")
-        3. If information is not in the transcripts, say: "This is not mentioned in the provided transcripts"
-        4. Be concise but thorough - aim for clear, direct answers
-        5. Include speaker names and video titles when citing
+        2. If information is not in the transcripts, say: "This is not mentioned in the provided transcripts"
+        3. Be concise but thorough - aim for clear, direct answers
+
+        **Citation Rules** (IMPORTANT - follow exactly):
+        - Write clean, readable prose - let the answer flow naturally
+        - Place citation markers at the END of claims, not mid-sentence
+        - Use simple format: [1], [2], [3] (just the number in brackets)
+        - Multiple sources for one claim: [1][2] or [1, 2]
+        - Do NOT write "According to Source 1" or "Source 2 states" - just add [N] after the claim
+
+        **Good citation examples:**
+        - "Bashar did not present physical evidence. [1]"
+        - "The disclosure is metaphysical and behavioral. [1][2]"
+        - "ET contact requires vibrational alignment. [1]"
+
+        **Bad citation examples (AVOID):**
+        - "According to Source 1, Bashar states..."
+        - "Source 2 mentions that..."
+        - "As stated in Source 1..."
 
         **Response Format**:
-        - Answer the question directly with citations
+        - Answer the question directly with inline [N] citations at sentence ends
+        - Keep citations at natural sentence boundaries
         - If ambiguous, ask ONE clarifying question
         - Suggest up to 2 related follow-up questions that are explicitly answerable from the provided transcripts
-          - Each follow-up must be grounded in a specific cited point from the transcripts
-          - Append the supporting citations to each follow-up question (e.g., "(Source 1)")
-          - Do NOT suggest follow-ups whose best answer would be: "This is not mentioned in the provided transcripts"
-          - If you cannot find 2 that meet these rules, suggest fewer (or none)
+          - Each follow-up must be grounded in a specific cited point
+          - Append the supporting citations to each follow-up question (e.g., "[1]")
+          - If you cannot find 2 valid follow-ups, suggest fewer (or none)
 
         **Mode Handling** (mode={mode}):
         - summarize: Brief overview with key points
@@ -1229,14 +1247,28 @@ async def send_message(
     logger.debug(f"[LLM Prompt] System prompt: {len(system_prompt)} chars")
     logger.debug(f"[LLM Prompt] User message with context: {len(user_message_with_context)} chars")
 
-    # 8. Generate LLM response (honor optional per-request model override)
+    # 8. Generate LLM response (use tier-based model with optional override)
     llm_start = time.time()
+
+    # Resolve model based on user's subscription tier and optional request override
+    user_tier = current_user.subscription_tier or "free"
+    resolved_model = resolve_model(
+        user_tier=user_tier,
+        requested_model=message_request.model,
+        allow_upgrade=current_user.is_superuser,  # Admins can use any model
+    )
+    tier_model_info = get_model_info_for_tier(user_tier)
+
     try:
-        logger.info(f"[LLM Generation] Starting generation with model={message_request.model or settings.llm_model}, provider={settings.llm_provider}")
+        logger.info(
+            f"[LLM Generation] User tier: {user_tier}, "
+            f"Tier model: {tier_model_info.get('display_name', 'Unknown')}, "
+            f"Resolved model: {resolved_model}"
+        )
 
         llm_response = llm_service.complete(
             llm_messages,
-            model=message_request.model,
+            model=resolved_model,
         )
         assistant_content = llm_response.content
         prompt_tokens = (
@@ -1253,6 +1285,24 @@ async def send_message(
         logger.info(f"[LLM Generation] Completed in {llm_time:.3f}s")
         logger.info(f"[LLM Generation] Response: {len(assistant_content)} chars, {token_count} tokens")
         logger.info(f"[LLM Generation] Provider: {llm_response.provider}, Model: {llm_response.model}")
+
+        # Log DeepSeek cache performance if available
+        if llm_response.usage:
+            cache_hit = llm_response.usage.get("prompt_cache_hit_tokens", 0)
+            cache_miss = llm_response.usage.get("prompt_cache_miss_tokens", 0)
+            if cache_hit > 0 or cache_miss > 0:
+                total_prompt = cache_hit + cache_miss
+                hit_rate = cache_hit / total_prompt if total_prompt > 0 else 0
+                logger.info(
+                    f"[DeepSeek Cache] Hit: {cache_hit} tokens ({hit_rate:.1%}), "
+                    f"Miss: {cache_miss} tokens"
+                )
+
+        # Log reasoning content if present (deepseek-reasoner)
+        if llm_response.reasoning_content:
+            logger.info(
+                f"[DeepSeek Reasoner] Generated {len(llm_response.reasoning_content)} chars of chain-of-thought"
+            )
 
     except Exception as e:
         llm_time = time.time() - llm_start
@@ -1274,6 +1324,23 @@ async def send_message(
         llm_model=llm_response.model,
     )
     db.add(assistant_message)
+    db.flush()  # Ensure message is in DB before referencing in LLM usage
+
+    # 9a. Track LLM usage for cost monitoring
+    if llm_response.usage:
+        from app.models.llm_usage import LLMUsageEvent
+
+        llm_usage = LLMUsageEvent.create_from_response(
+            user_id=current_user.id,
+            model=llm_response.model,
+            provider=llm_response.provider,
+            usage=llm_response.usage,
+            conversation_id=conversation_id,
+            message_id=assistant_message.id,
+            response_time_seconds=llm_response.response_time_seconds,
+        )
+        db.add(llm_usage)
+        logger.info(f"[Cost Tracking] Recorded usage: ${float(llm_usage.cost_usd):.6f}")
 
     # 10. Save chunk references (use filtered high-quality chunks)
     resolved_entries = []
@@ -1446,4 +1513,252 @@ async def send_message(
         token_count=token_count,
         response_time_seconds=response_time,
         model=llm_response.model if hasattr(llm_response, "model") else None,
+    )
+
+
+@router.post("/{conversation_id}/messages/stream")
+@limiter.limit("50/hour")
+async def send_message_stream(
+    conversation_id: uuid.UUID,
+    request: Request,
+    message_request: MessageSendRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Send a message in a conversation with streaming response.
+
+    Returns Server-Sent Events (SSE) stream with:
+    - Content chunks as they are generated
+    - Final metadata (sources, token count) at the end
+
+    SSE format:
+    - data: {"type": "content", "content": "..."}
+    - data: {"type": "done", "message_id": "...", "sources": [...], "token_count": N}
+    - data: {"type": "error", "error": "..."}
+    """
+    import time
+    import numpy as np
+    import logging
+    from app.services.embeddings import embedding_service
+    from app.services.vector_store import vector_store_service
+    from app.services.llm_providers import llm_service, Message as LLMMessage
+    from app.models import MessageChunkReference, Chunk, Video
+    from app.core.config import settings
+
+    logger = logging.getLogger(__name__)
+    start_time = time.time()
+
+    # Check message quota
+    from app.core.quota import check_message_quota
+    await check_message_quota(current_user, db)
+
+    # Verify conversation exists and belongs to user
+    conversation = _ensure_conversation_owned(db, conversation_id, current_user)
+    _sync_collection_sources(db, conversation, current_user)
+
+    selected_sources = (
+        db.query(ConversationSource)
+        .filter(
+            ConversationSource.conversation_id == conversation_id,
+            ConversationSource.is_selected == True,  # noqa: E712
+        )
+        .all()
+    )
+
+    if not selected_sources:
+        async def error_stream():
+            yield f"data: {json.dumps({'type': 'error', 'error': 'No sources selected'})}\n\n"
+        return StreamingResponse(error_stream(), media_type="text/event-stream")
+
+    selected_video_ids = [src.video_id for src in selected_sources]
+
+    # Save user message
+    user_message = MessageModel(
+        id=uuid.uuid4(),
+        conversation_id=conversation_id,
+        role="user",
+        content=message_request.message,
+        token_count=len(message_request.message.split()),
+        message_metadata={
+            "mode": message_request.mode,
+            "model": message_request.model,
+            "stream": True,
+        },
+    )
+    db.add(user_message)
+    db.commit()
+
+    # Prepare context (simplified version of main endpoint)
+    query_embedding = embedding_service.embed_text(message_request.message)
+    if isinstance(query_embedding, tuple):
+        query_embedding = np.array(query_embedding, dtype=np.float32)
+
+    scored_chunks = vector_store_service.search_chunks(
+        query_embedding=query_embedding,
+        user_id=current_user.id,
+        video_ids=selected_video_ids,
+        top_k=settings.retrieval_top_k,
+    )
+
+    # Filter and dedupe chunks
+    high_quality_chunks = [c for c in scored_chunks if c.score >= settings.min_relevance_score]
+    if not high_quality_chunks:
+        high_quality_chunks = [c for c in scored_chunks if c.score >= settings.fallback_relevance_score]
+
+    # Dedupe
+    deduped_chunks = []
+    seen_keys = set()
+    for chunk in high_quality_chunks:
+        bucket = int(chunk.start_timestamp // REFERENCE_DEDUP_BUCKET_SECONDS)
+        key = (chunk.video_id, bucket)
+        if key not in seen_keys:
+            seen_keys.add(key)
+            deduped_chunks.append(chunk)
+
+    top_chunks = deduped_chunks[:CONTEXT_CHUNK_LIMIT]
+
+    # Build context
+    video_map = {}
+    if top_chunks:
+        unique_video_ids = list({c.video_id for c in top_chunks})
+        video_rows = db.query(Video).filter(Video.id.in_(unique_video_ids)).all()
+        video_map = {v.id: v for v in video_rows}
+
+    context_parts = []
+    for i, chunk in enumerate(top_chunks, 1):
+        video = video_map.get(chunk.video_id)
+        video_title = video.title if video else "Unknown Video"
+        timestamp_display = _format_timestamp_display(chunk.start_timestamp, chunk.end_timestamp)
+        speaker = chunk.speakers[0] if chunk.speakers else "Unknown"
+        topic = chunk.chapter_title or chunk.title or "General"
+        context_parts.append(
+            f'[Source {i}] from "{video_title}"\n'
+            f"Speaker: {speaker}\nTopic: {topic}\nTime: {timestamp_display}\n"
+            f"---\n{chunk.text}\n"
+        )
+    context = "\n---\n".join(context_parts) if context_parts else "No relevant context found."
+
+    # Build conversation history
+    history_messages = (
+        db.query(MessageModel)
+        .filter(
+            MessageModel.conversation_id == conversation_id,
+            MessageModel.role != SYSTEM_ROLE,
+        )
+        .order_by(MessageModel.created_at.desc())
+        .limit(10)
+        .all()
+    )
+    history_messages.reverse()
+
+    # Build LLM messages
+    system_prompt = textwrap.dedent("""
+        You are InsightGuide, an AI assistant that answers questions using ONLY information from provided video transcripts.
+
+        **Core Rules**:
+        1. Use ONLY the provided source transcripts - never add external knowledge
+        2. If information is not in the transcripts, say: "This is not mentioned in the provided transcripts"
+        3. Be concise but thorough - aim for clear, direct answers
+
+        **Citation Rules**:
+        - Use simple format: [1], [2], [3] at the end of claims
+        - Do NOT write "According to Source 1" - just add [N] after the claim
+    """).strip()
+
+    llm_messages = [LLMMessage(role="system", content=system_prompt)]
+    for msg in history_messages[:-1]:
+        llm_messages.append(LLMMessage(role=msg.role, content=msg.content))
+
+    user_message_with_context = (
+        f"Mode: {message_request.mode}\n"
+        f"Context from video transcripts:\n\n{context}\n\n"
+        f"---\n\nUser question: {message_request.message}"
+    )
+    llm_messages.append(LLMMessage(role="user", content=user_message_with_context))
+
+    # Resolve model
+    user_tier = current_user.subscription_tier or "free"
+    resolved_model = resolve_model(
+        user_tier=user_tier,
+        requested_model=message_request.model,
+        allow_upgrade=current_user.is_superuser,
+    )
+
+    # Stream generator
+    async def generate_stream() -> AsyncGenerator[str, None]:
+        full_content = []
+        message_id = uuid.uuid4()
+
+        try:
+            # Stream LLM response
+            for chunk in llm_service.stream_complete(
+                llm_messages,
+                model=resolved_model,
+            ):
+                full_content.append(chunk)
+                yield f"data: {json.dumps({'type': 'content', 'content': chunk})}\n\n"
+
+            # Save assistant message after streaming completes
+            assistant_content = "".join(full_content)
+            assistant_message = MessageModel(
+                id=message_id,
+                conversation_id=conversation_id,
+                role="assistant",
+                content=assistant_content,
+                token_count=len(assistant_content.split()),
+                chunks_retrieved_count=len(top_chunks),
+                response_time_seconds=time.time() - start_time,
+                llm_provider="deepseek",
+                llm_model=resolved_model,
+            )
+            db.add(assistant_message)
+
+            # Save chunk references
+            chunk_refs_response = []
+            for rank, scored_chunk in enumerate(top_chunks, 1):
+                video = video_map.get(scored_chunk.video_id)
+                timestamp_display = _format_timestamp_display(
+                    scored_chunk.start_timestamp, scored_chunk.end_timestamp
+                )
+                snippet = _truncate_snippet(scored_chunk.text, limit=SNIPPET_PREVIEW_MAX_CHARS)
+                chunk_refs_response.append({
+                    "chunk_id": str(scored_chunk.chunk_id) if scored_chunk.chunk_id else None,
+                    "video_id": str(scored_chunk.video_id),
+                    "video_title": video.title if video else "Unknown",
+                    "youtube_id": video.youtube_id if video else None,
+                    "jump_url": _build_youtube_jump_url(video, scored_chunk.start_timestamp),
+                    "start_timestamp": scored_chunk.start_timestamp,
+                    "end_timestamp": scored_chunk.end_timestamp,
+                    "text_snippet": snippet,
+                    "relevance_score": scored_chunk.score,
+                    "timestamp_display": timestamp_display,
+                    "rank": rank,
+                })
+
+            # Update conversation metadata
+            conversation.message_count = (
+                db.query(MessageModel)
+                .filter(MessageModel.conversation_id == conversation_id)
+                .count()
+            )
+            conversation.last_message_at = assistant_message.created_at
+
+            db.commit()
+
+            # Send final metadata
+            yield f"data: {json.dumps({'type': 'done', 'message_id': str(message_id), 'sources': chunk_refs_response, 'token_count': len(assistant_content.split()), 'response_time_seconds': time.time() - start_time})}\n\n"
+
+        except Exception as e:
+            logger.error(f"[Streaming] Error: {str(e)}")
+            yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
+
+    return StreamingResponse(
+        generate_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # Disable nginx buffering
+        },
     )

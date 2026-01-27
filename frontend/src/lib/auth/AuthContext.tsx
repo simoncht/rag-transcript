@@ -31,12 +31,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // Create adapter once and reuse (avoid re-creating on every render)
   const adapterRef = useRef<NextAuthAdapter | null>(null);
   if (!adapterRef.current) {
-    adapterRef.current = new NextAuthAdapter(session);
+    adapterRef.current = new NextAuthAdapter(session, status);
   }
 
   const adapter = adapterRef.current;
-  // Keep adapter references in sync with the latest session
-  adapter.updateSession(session);
+  // Keep adapter references in sync with the latest session and status
+  adapter.updateSession(session, status);
 
   // Update adapter when NextAuth session changes
   useEffect(() => {
@@ -88,43 +88,3 @@ export function useAuthState(): AuthState {
   return state;
 }
 
-/**
- * Hook for async auth state (use with Suspense)
- *
- * Suspends until auth is loaded, then returns state.
- * Enables parallel rendering with React Suspense.
- */
-export function useAuthStateAsync(): AuthState {
-  const provider = useAuth();
-  const [state, setState] = useState<AuthState | null>(null);
-  const [promise, setPromise] = useState<Promise<AuthState> | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    const fetchAuth = async () => {
-      try {
-        const authState = await provider.getStateAsync();
-        if (!cancelled) {
-          setState(authState);
-        }
-      } catch (error) {
-        console.error("Auth fetch failed:", error);
-      }
-    };
-
-    // Create promise for Suspense
-    const authPromise = fetchAuth();
-    setPromise(authPromise as any);
-
-    return () => {
-      cancelled = true;
-    };
-  }, [provider]);
-
-  if (!state && promise) {
-    throw promise; // Suspend until auth loads
-  }
-
-  return state ?? provider.getState();
-}

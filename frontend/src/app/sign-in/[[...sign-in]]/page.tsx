@@ -2,18 +2,22 @@
 
 import { Button } from "@/components/ui/button"
 import Link from "next/link"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import { signIn } from "next-auth/react"
 import { useState } from "react"
 
 export default function SignInPage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const [isLoading, setIsLoading] = useState(false)
+
+  // Get callback URL from query params (for post-login redirect to checkout, etc.)
+  const callbackUrl = searchParams.get('callbackUrl') || '/videos'
 
   const handleGoogleSignIn = async () => {
     setIsLoading(true)
     try {
-      await signIn("google", { callbackUrl: "/videos" })
+      await signIn("google", { callbackUrl })
     } catch (error) {
       console.error("Sign-in error:", error)
       setIsLoading(false)

@@ -41,10 +41,6 @@ class TestSSLBypassRemoval:
 class TestJWTVerification:
     """Test that JWT verification is properly enabled."""
 
-    def test_jwt_verification_enabled(self):
-        """Verify JWT verification is enabled in settings."""
-        assert settings.clerk_jwt_verification is True, "JWT verification must be enabled"
-
     def test_production_validation(self):
         """Verify production environment validates secrets."""
         # This test verifies the validation logic exists
@@ -55,7 +51,6 @@ class TestJWTVerification:
             Settings(
                 environment="production",
                 secret_key="change-this-in-production",
-                clerk_jwt_verification=True,
                 debug=False
             )
 

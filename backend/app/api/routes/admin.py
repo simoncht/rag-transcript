@@ -4,7 +4,7 @@ Admin API endpoints for user management and system monitoring.
 All routes require admin (superuser) authentication.
 """
 from datetime import datetime, timedelta
-from typing import List, Optional
+from typing import Dict, List, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -24,6 +24,7 @@ from app.models import (
     MessageChunkReference,
     AdminAuditLog,
 )
+from app.models.subscription import Subscription
 from app.schemas import (
     AdminCollectionOverview,
     AdminVideoItem,
@@ -40,8 +41,10 @@ from app.schemas import (
     AuditLogItem,
     AuditLogResponse,
     QuotaOverrideRequest,
+    QuotaRecalculateResponse,
     SystemStats,
     UserCostBreakdown,
+    UserDeleteResponse,
     UserDetail,
     UserDetailMetrics,
     UserEngagementStats,
@@ -51,6 +54,8 @@ from app.schemas import (
     AbuseAlertResponse,
 )
 from app.services.usage_tracker import UsageTracker
+from app.services.storage_calculator import StorageCalculator
+from app.services.storage import storage_service
 
 router = APIRouter()
 
@@ -198,10 +203,21 @@ def calculate_user_metrics(db: Session, user_id: UUID) -> UserDetailMetrics:
     output_tokens = int(token_stats.output or 0)
     total_tokens = input_tokens + output_tokens
 
-    # Storage metrics
+    # Comprehensive storage metrics (audio files + database + vectors)
+    # Audio from videos table (for backwards compatibility display)
     audio_mb = (
         videos_query.with_entities(func.sum(Video.audio_file_size_mb)).scalar() or 0.0
     )
+
+    # Calculate comprehensive storage using StorageCalculator
+    calculator = StorageCalculator(db)
+    storage_breakdown = calculator.calculate_total_storage_mb(user_id)
+
+    # Disk usage from storage service (audio + transcript files)
+    disk_usage_mb = storage_service.get_storage_usage(user_id)
+
+    # Total storage = disk files + database text + vectors
+    total_storage_mb = disk_usage_mb + storage_breakdown["database_mb"] + storage_breakdown["vector_mb"]
 
     # Get user quota
     quota = db.query(UserQuota).filter(UserQuota.user_id == user_id).first()
@@ -221,9 +237,9 @@ def calculate_user_metrics(db: Session, user_id: UUID) -> UserDetailMetrics:
         total_tokens=total_tokens,
         input_tokens=input_tokens,
         output_tokens=output_tokens,
-        storage_mb=round(audio_mb, 2),
+        storage_mb=round(total_storage_mb, 2),  # Now includes all storage
         audio_mb=round(audio_mb, 2),
-        transcript_mb=0.0,  # TODO: Calculate from transcript files
+        transcript_mb=round(storage_breakdown["database_mb"], 2),  # DB text storage
         quota_videos_used=quota.videos_used if quota else 0,
         quota_videos_limit=quota.videos_limit if quota else 0,
         quota_minutes_used=quota.minutes_used if quota else 0.0,
@@ -384,12 +400,21 @@ async def get_admin_dashboard(
         or 0
     )
 
-    total_storage_mb = (
+    # Calculate comprehensive storage across all users
+    # Audio files from videos table (quick count)
+    audio_storage_mb = (
         db.query(func.sum(Video.audio_file_size_mb))
         .filter(Video.is_deleted.is_(False))  # noqa: E712
         .scalar()
         or 0.0
     )
+
+    # Estimate total database + vector storage system-wide
+    # For dashboard performance, we use audio_mb as base and estimate overhead
+    # More accurate per-user calculation is done in calculate_user_metrics
+    # Estimated overhead: ~50% for database text + ~30% for vectors
+    estimated_overhead_factor = 1.8
+    total_storage_mb = float(audio_storage_mb) * estimated_overhead_factor
 
     # Engagement stats
     week_ago = datetime.utcnow() - timedelta(days=7)
@@ -779,6 +804,163 @@ async def override_user_quota(
         metrics=metrics,
         costs=costs,
         admin_notes_count=0,
+    )
+
+
+@router.delete("/users/{user_id}", response_model=UserDeleteResponse)
+async def delete_user(
+    user_id: UUID,
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_admin_user),
+):
+    """
+    Delete a user and all associated data.
+
+    Admin only. Prevents self-deletion. Handles non-cascading foreign keys
+    (subscriptions) before deleting user. Other tables with CASCADE constraints
+    are automatically cleaned up.
+
+    Returns count of deleted records by table.
+    """
+    # Prevent self-deletion
+    if user_id == admin_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot delete your own admin account",
+        )
+
+    # Check user exists
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
+        )
+
+    deleted_email = user.email
+    deleted_records: Dict[str, int] = {}
+
+    # Delete subscriptions first (no CASCADE constraint)
+    subscription_count = (
+        db.query(Subscription).filter(Subscription.user_id == user_id).delete()
+    )
+    deleted_records["subscriptions"] = subscription_count
+
+    # Delete user_quotas (may not have CASCADE depending on setup)
+    quota_count = db.query(UserQuota).filter(UserQuota.user_id == user_id).delete()
+    deleted_records["user_quotas"] = quota_count
+
+    # Delete user (cascades to: videos, conversations, collections, usage_events,
+    # jobs, llm_usage_events, conversation_facts, conversation_insights)
+    db.delete(user)
+    db.commit()
+
+    return UserDeleteResponse(
+        success=True,
+        message=f"Successfully deleted user {deleted_email} and all associated data",
+        deleted_user_id=user_id,
+        deleted_email=deleted_email,
+        deleted_records=deleted_records,
+    )
+
+
+@router.post("/quotas/recalculate", response_model=QuotaRecalculateResponse)
+async def recalculate_quotas(
+    user_id: Optional[UUID] = Query(None, description="Recalculate for specific user only"),
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_admin_user),
+):
+    """
+    Recalculate quota usage from actual data.
+
+    Fixes discrepancies between tracked quota and actual resource usage.
+    Recalculates: storage_mb_used, videos_used, minutes_used.
+
+    Use user_id parameter to recalculate for a single user, or omit to
+    recalculate for all users.
+    """
+    from decimal import Decimal
+
+    corrections: List[Dict] = []
+
+    # Build query for quotas to update
+    quota_query = db.query(UserQuota)
+    if user_id:
+        quota_query = quota_query.filter(UserQuota.user_id == user_id)
+
+    quotas = quota_query.all()
+
+    for quota in quotas:
+        user = db.query(User).filter(User.id == quota.user_id).first()
+        user_email = user.email if user else str(quota.user_id)
+
+        # Recalculate comprehensive storage (disk + database + vectors)
+        calculator = StorageCalculator(db)
+        storage_breakdown = calculator.calculate_total_storage_mb(quota.user_id)
+        disk_usage_mb = storage_service.get_storage_usage(quota.user_id)
+        actual_storage = disk_usage_mb + storage_breakdown["database_mb"] + storage_breakdown["vector_mb"]
+
+        # Allow small differences (< 0.1 MB) to avoid excessive corrections
+        if abs(float(quota.storage_mb_used) - actual_storage) > 0.1:
+            corrections.append({
+                "user_id": str(quota.user_id),
+                "user_email": user_email,
+                "field": "storage_mb_used",
+                "old_value": float(quota.storage_mb_used),
+                "new_value": round(actual_storage, 3),
+            })
+            quota.storage_mb_used = Decimal(str(round(actual_storage, 3)))
+
+        # Recalculate videos_used from active videos
+        actual_videos = (
+            db.query(func.count(Video.id))
+            .filter(
+                Video.user_id == quota.user_id,
+                Video.is_deleted.is_(False),
+                Video.status == "completed",
+            )
+            .scalar()
+        ) or 0
+
+        if quota.videos_used != actual_videos:
+            corrections.append({
+                "user_id": str(quota.user_id),
+                "user_email": user_email,
+                "field": "videos_used",
+                "old_value": quota.videos_used,
+                "new_value": actual_videos,
+            })
+            quota.videos_used = actual_videos
+
+        # Recalculate minutes_used from completed videos
+        actual_minutes = (
+            db.query(func.coalesce(func.sum(Video.duration_seconds), 0))
+            .filter(
+                Video.user_id == quota.user_id,
+                Video.is_deleted.is_(False),
+                Video.status == "completed",
+            )
+            .scalar()
+        ) or 0
+        actual_minutes = actual_minutes / 60.0  # Convert to minutes
+
+        if abs(float(quota.minutes_used) - actual_minutes) > 0.01:
+            corrections.append({
+                "user_id": str(quota.user_id),
+                "user_email": user_email,
+                "field": "minutes_used",
+                "old_value": float(quota.minutes_used),
+                "new_value": actual_minutes,
+            })
+            quota.minutes_used = Decimal(str(actual_minutes))
+
+    db.commit()
+
+    return QuotaRecalculateResponse(
+        success=True,
+        message=f"Recalculated quotas for {len(quotas)} user(s), made {len(corrections)} correction(s)",
+        users_updated=len(quotas),
+        corrections=corrections,
     )
 
 
@@ -1185,3 +1367,149 @@ async def get_admin_alerts(
     Returns an empty list until alerting is implemented.
     """
     return AbuseAlertResponse(total=0, alerts=[])
+
+
+@router.get("/llm-usage")
+async def get_llm_usage(
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_admin_user),
+    days: int = Query(default=30, ge=1, le=365, description="Number of days to look back"),
+    limit: int = Query(default=50, ge=1, le=500, description="Max recent events to return"),
+):
+    """
+    Get LLM usage statistics and cost tracking.
+
+    Returns aggregated stats, per-user breakdown, and recent usage events.
+    """
+    from datetime import timedelta
+    from app.models.llm_usage import LLMUsageEvent
+    from app.schemas.admin import (
+        LLMUsageResponse,
+        LLMUsageStats,
+        LLMUsageByUser,
+        LLMUsageItem,
+    )
+
+    period_start = datetime.utcnow() - timedelta(days=days)
+    period_end = datetime.utcnow()
+
+    # Query usage events in the period
+    events = (
+        db.query(LLMUsageEvent)
+        .filter(LLMUsageEvent.created_at >= period_start)
+        .order_by(LLMUsageEvent.created_at.desc())
+        .all()
+    )
+
+    if not events:
+        return LLMUsageResponse(
+            stats=LLMUsageStats(
+                period_start=period_start,
+                period_end=period_end,
+            ),
+            by_user=[],
+            recent_events=[],
+        )
+
+    # Aggregate stats
+    total_input = sum(e.input_tokens for e in events)
+    total_output = sum(e.output_tokens for e in events)
+    total_tokens = sum(e.total_tokens for e in events)
+    total_cache_hit = sum(e.cache_hit_tokens for e in events)
+    total_cache_miss = sum(e.cache_miss_tokens for e in events)
+    total_cost = sum(float(e.cost_usd) for e in events)
+
+    # Calculate cache savings (difference between full price and cached price)
+    # Full price: $0.28/M, Cache price: $0.028/M, Savings: $0.252/M
+    estimated_savings = (total_cache_hit / 1_000_000) * 0.252
+
+    # Cache hit rate
+    total_prompt_tokens = total_cache_hit + total_cache_miss
+    cache_hit_rate = total_cache_hit / total_prompt_tokens if total_prompt_tokens > 0 else 0.0
+
+    # Requests by model
+    model_counts: Dict[str, int] = {}
+    for e in events:
+        model_counts[e.model] = model_counts.get(e.model, 0) + 1
+
+    # Average response time
+    response_times = [float(e.response_time_seconds) for e in events if e.response_time_seconds]
+    avg_response_time = sum(response_times) / len(response_times) if response_times else None
+
+    stats = LLMUsageStats(
+        total_input_tokens=total_input,
+        total_output_tokens=total_output,
+        total_tokens=total_tokens,
+        total_cache_hit_tokens=total_cache_hit,
+        total_cache_miss_tokens=total_cache_miss,
+        total_cost_usd=round(total_cost, 4),
+        estimated_savings_usd=round(estimated_savings, 4),
+        total_requests=len(events),
+        requests_by_model=model_counts,
+        avg_response_time_seconds=round(avg_response_time, 3) if avg_response_time else None,
+        cache_hit_rate=round(cache_hit_rate, 4),
+        period_start=period_start,
+        period_end=period_end,
+    )
+
+    # Per-user breakdown
+    user_usage: Dict[UUID, dict] = {}
+    for e in events:
+        if e.user_id not in user_usage:
+            user_usage[e.user_id] = {
+                "user_id": e.user_id,
+                "total_requests": 0,
+                "total_tokens": 0,
+                "total_cost_usd": 0.0,
+                "cache_hit_tokens": 0,
+                "cache_miss_tokens": 0,
+            }
+        user_usage[e.user_id]["total_requests"] += 1
+        user_usage[e.user_id]["total_tokens"] += e.total_tokens
+        user_usage[e.user_id]["total_cost_usd"] += float(e.cost_usd)
+        user_usage[e.user_id]["cache_hit_tokens"] += e.cache_hit_tokens
+        user_usage[e.user_id]["cache_miss_tokens"] += e.cache_miss_tokens
+
+    # Get user emails
+    user_ids = list(user_usage.keys())
+    users = db.query(User).filter(User.id.in_(user_ids)).all()
+    user_email_map = {u.id: u.email for u in users}
+
+    by_user = []
+    for uid, data in sorted(user_usage.items(), key=lambda x: x[1]["total_cost_usd"], reverse=True):
+        total_prompt = data["cache_hit_tokens"] + data["cache_miss_tokens"]
+        user_cache_rate = data["cache_hit_tokens"] / total_prompt if total_prompt > 0 else 0.0
+        by_user.append(LLMUsageByUser(
+            user_id=uid,
+            user_email=user_email_map.get(uid),
+            total_requests=data["total_requests"],
+            total_tokens=data["total_tokens"],
+            total_cost_usd=round(data["total_cost_usd"], 4),
+            cache_hit_rate=round(user_cache_rate, 4),
+        ))
+
+    # Recent events
+    recent_events = []
+    for e in events[:limit]:
+        recent_events.append(LLMUsageItem(
+            id=e.id,
+            user_id=e.user_id,
+            user_email=user_email_map.get(e.user_id),
+            conversation_id=e.conversation_id,
+            model=e.model,
+            provider=e.provider,
+            input_tokens=e.input_tokens,
+            output_tokens=e.output_tokens,
+            total_tokens=e.total_tokens,
+            cache_hit_tokens=e.cache_hit_tokens,
+            cache_miss_tokens=e.cache_miss_tokens,
+            cost_usd=float(e.cost_usd),
+            response_time_seconds=float(e.response_time_seconds) if e.response_time_seconds else None,
+            created_at=e.created_at,
+        ))
+
+    return LLMUsageResponse(
+        stats=stats,
+        by_user=by_user,
+        recent_events=recent_events,
+    )

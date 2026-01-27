@@ -57,6 +57,10 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.cleanup_tasks.cleanup_orphaned_files",
         "schedule": crontab(minute=30, hour="*/6"),  # Every 6 hours at :30
     },
+    "reconcile-storage-quotas": {
+        "task": "app.tasks.cleanup_tasks.reconcile_storage_quotas",
+        "schedule": crontab(minute=15, hour=3),  # Daily at 3:15 AM UTC
+    },
 }
 
 

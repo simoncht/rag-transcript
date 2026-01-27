@@ -2,10 +2,14 @@
 
 import { Button } from "@/components/ui/button"
 import Link from "next/link"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 
 export default function LoginPage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
+
+  // Get callback URL from query params (for post-login redirect)
+  const callbackUrl = searchParams.get('callbackUrl') || '/videos'
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background">
@@ -19,7 +23,7 @@ export default function LoginPage() {
 
         <div className="space-y-3">
           <Button
-            onClick={() => router.push("/sign-in")}
+            onClick={() => router.push(`/sign-in?callbackUrl=${encodeURIComponent(callbackUrl)}`)}
             className="w-full"
             size="lg"
           >

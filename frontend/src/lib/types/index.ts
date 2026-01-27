@@ -21,6 +21,8 @@ export interface Video {
   tags: string[];
   audio_file_size_mb?: number;
   transcript_size_mb?: number;
+  chunk_storage_mb?: number;
+  vector_storage_mb?: number;
   storage_total_mb?: number;
   created_at: string;
   updated_at: string;
@@ -307,6 +309,8 @@ export interface StorageBreakdown {
   audio_mb: number;
   transcript_mb: number;
   disk_usage_mb: number;
+  database_mb: number;  // PostgreSQL storage (chunks, messages, facts, insights)
+  vector_mb: number;    // Qdrant vector storage (estimated)
 }
 
 export interface UsageCounts {
@@ -747,4 +751,53 @@ export interface CustomerPortalRequest {
 
 export interface CustomerPortalResponse {
   portal_url: string;
+}
+
+// LLM Usage/Cost Tracking types
+export interface LLMUsageItem {
+  id: string;
+  user_id: string;
+  user_email?: string;
+  conversation_id?: string;
+  model: string;
+  provider: string;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  cache_hit_tokens: number;
+  cache_miss_tokens: number;
+  cost_usd: number;
+  response_time_seconds?: number;
+  created_at: string;
+}
+
+export interface LLMUsageStats {
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_tokens: number;
+  total_cache_hit_tokens: number;
+  total_cache_miss_tokens: number;
+  total_cost_usd: number;
+  estimated_savings_usd: number;
+  total_requests: number;
+  requests_by_model: Record<string, number>;
+  avg_response_time_seconds?: number;
+  cache_hit_rate: number;
+  period_start?: string;
+  period_end?: string;
+}
+
+export interface LLMUsageByUser {
+  user_id: string;
+  user_email?: string;
+  total_requests: number;
+  total_tokens: number;
+  total_cost_usd: number;
+  cache_hit_rate: number;
+}
+
+export interface LLMUsageResponse {
+  stats: LLMUsageStats;
+  by_user: LLMUsageByUser[];
+  recent_events: LLMUsageItem[];
 }

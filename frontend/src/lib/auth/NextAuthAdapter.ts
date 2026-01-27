@@ -34,17 +34,20 @@ export class NextAuthAdapter implements IAuthProvider {
   private cachedState: AuthState
   private listeners: Set<(state: AuthState) => void> = new Set()
   private session: NextAuthSession
+  private status: 'loading' | 'authenticated' | 'unauthenticated' = 'loading'
 
-  constructor(session: NextAuthSession) {
+  constructor(session: NextAuthSession, status?: string) {
     this.session = session
+    this.status = (status as typeof this.status) || 'loading'
     this.cachedState = this.buildState()
   }
 
   /**
    * Update session reference when it changes (prevents stale auth state)
    */
-  updateSession(session: NextAuthSession): void {
+  updateSession(session: NextAuthSession, status?: string): void {
     this.session = session
+    this.status = (status as typeof this.status) || 'loading'
     this.notifyStateChange()
   }
 
@@ -131,11 +134,22 @@ export class NextAuthAdapter implements IAuthProvider {
    * Build AuthState from current NextAuth session
    */
   private buildState(): AuthState {
+    // If still loading, return unauthenticated with loading flag
+    if (this.status === 'loading') {
+      return {
+        isAuthenticated: false,
+        isLoading: true,
+        user: null,
+        token: null,
+      }
+    }
+
     const sessionUser = this.session?.user
 
     if (!sessionUser || !sessionUser.email) {
       return {
         isAuthenticated: false,
+        isLoading: false,
         user: null,
         token: null,
       }
@@ -153,6 +167,7 @@ export class NextAuthAdapter implements IAuthProvider {
 
     return {
       isAuthenticated: true,
+      isLoading: false,
       user,
       token: null, // Token fetched on-demand via getToken()
     }
@@ -172,6 +187,7 @@ export class NextAuthAdapter implements IAuthProvider {
   private stateChanged(old: AuthState, next: AuthState): boolean {
     return (
       old.isAuthenticated !== next.isAuthenticated ||
+      old.isLoading !== next.isLoading ||
       old.user?.id !== next.user?.id ||
       old.user?.email !== next.user?.email
     )

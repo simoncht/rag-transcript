@@ -18,6 +18,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { AlertCircle, MessageSquare, Search } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
+import { parseUTCDate } from "@/lib/utils";
 
 export default function AdminConversationsPage() {
   const [page, setPage] = useState(1);
@@ -161,13 +162,13 @@ export default function AdminConversationsPage() {
                     {(conversation.total_tokens || 0).toLocaleString()}
                   </TableCell>
                   <TableCell className="text-sm text-muted-foreground">
-                    {formatDistanceToNow(new Date(conversation.started_at), {
+                    {formatDistanceToNow(parseUTCDate(conversation.started_at), {
                       addSuffix: true,
                     })}
                   </TableCell>
                   <TableCell className="text-sm text-muted-foreground">
                     {conversation.last_message_at ? (
-                      formatDistanceToNow(new Date(conversation.last_message_at), {
+                      formatDistanceToNow(parseUTCDate(conversation.last_message_at), {
                         addSuffix: true,
                       })
                     ) : (

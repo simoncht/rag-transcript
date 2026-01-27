@@ -70,6 +70,7 @@ qdrant_data/
 
 # Model caches
 hf_cache/
+whisper_cache/
 backend/.cache/
 
 # Testing

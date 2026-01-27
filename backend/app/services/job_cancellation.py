@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 from app.models import Video, Transcript, Chunk, Job
 from app.services.vector_store import vector_store_service
 from app.services.storage import storage_service
+from app.services.storage_calculator import StorageCalculator, BYTES_PER_VECTOR
 
 
 class CleanupOption(str, Enum):
@@ -39,6 +40,7 @@ class CleanupSummary:
     audio_file_deleted: bool = False
     transcript_file_deleted: bool = False
     vectors_deleted: bool = False
+    storage_freed_mb: float = 0.0  # Total storage freed across all cleanup actions
 
 
 @dataclass
@@ -107,9 +109,10 @@ def cleanup_video_data(
     delete_files: bool = True,
     delete_vectors: bool = True,
     delete_db_records: bool = True,
+    track_quota: bool = True,
 ) -> CleanupSummary:
     """
-    Clean up all data associated with a video.
+    Clean up all data associated with a video and track storage freed.
 
     Args:
         db: Database session
@@ -117,17 +120,57 @@ def cleanup_video_data(
         delete_files: Whether to delete audio/transcript files
         delete_vectors: Whether to delete vectors from Qdrant
         delete_db_records: Whether to delete transcript/chunk DB records
+        track_quota: Whether to credit freed storage back to user quota
 
     Returns:
         CleanupSummary with details of what was deleted
     """
+    from sqlalchemy import func
+    from app.services.usage_tracker import UsageTracker
+
     summary = CleanupSummary()
+    storage_freed_bytes = 0
+
+    # Calculate chunk storage before deletion (text + summary + embedding_text)
+    chunk_text_bytes = 0
+    indexed_chunk_count = 0
+    if delete_db_records:
+        try:
+            # Get total text bytes from chunks
+            chunk_storage = (
+                db.query(
+                    func.coalesce(
+                        func.sum(
+                            func.length(Chunk.text)
+                            + func.coalesce(func.length(Chunk.chunk_summary), 0)
+                            + func.coalesce(func.length(Chunk.embedding_text), 0)
+                        ),
+                        0,
+                    )
+                )
+                .filter(Chunk.video_id == video.id)
+                .scalar()
+                or 0
+            )
+            chunk_text_bytes = chunk_storage
+
+            # Count indexed chunks for vector storage estimation
+            indexed_chunk_count = (
+                db.query(func.count(Chunk.id))
+                .filter(Chunk.video_id == video.id, Chunk.is_indexed.is_(True))
+                .scalar()
+                or 0
+            )
+        except Exception as e:
+            print(f"[cleanup] Error calculating chunk storage for video {video.id}: {e}")
 
     # 1. Delete vectors from Qdrant
     if delete_vectors:
         try:
             vector_store_service.delete_video(video.id)
             summary.vectors_deleted = True
+            # Estimate vector storage freed
+            storage_freed_bytes += indexed_chunk_count * BYTES_PER_VECTOR
         except Exception as e:
             print(f"[cleanup] Error deleting vectors for video {video.id}: {e}")
 
@@ -140,6 +183,8 @@ def cleanup_video_data(
                 )
             )
             summary.chunks_deleted = chunk_count
+            # Add text storage freed
+            storage_freed_bytes += chunk_text_bytes
         except Exception as e:
             print(f"[cleanup] Error deleting chunks for video {video.id}: {e}")
 
@@ -160,6 +205,8 @@ def cleanup_video_data(
         try:
             audio_path = Path(video.audio_file_path)
             if audio_path.exists():
+                # Track file size before deletion
+                storage_freed_bytes += audio_path.stat().st_size
                 audio_path.unlink()
                 summary.audio_file_deleted = True
             # Also try to remove the parent directory if empty
@@ -173,6 +220,8 @@ def cleanup_video_data(
         try:
             transcript_path = Path(video.transcript_file_path)
             if transcript_path.exists():
+                # Track file size before deletion
+                storage_freed_bytes += transcript_path.stat().st_size
                 transcript_path.unlink()
                 summary.transcript_file_deleted = True
             # Also try to remove the parent directory if empty
@@ -184,6 +233,30 @@ def cleanup_video_data(
             print(
                 f"[cleanup] Error deleting transcript file for video {video.id}: {e}"
             )
+
+    # Calculate storage freed in MB
+    summary.storage_freed_mb = storage_freed_bytes / (1024 * 1024)
+
+    # Credit freed storage back to user quota
+    if track_quota and summary.storage_freed_mb > 0 and video.user_id:
+        try:
+            usage_tracker = UsageTracker(db)
+            usage_tracker.track_storage_usage(
+                user_id=video.user_id,
+                delta_mb=-summary.storage_freed_mb,  # Negative = credit back
+                reason="video_cleanup",
+                video_id=video.id,
+                extra_metadata={
+                    "chunks_deleted": summary.chunks_deleted,
+                    "audio_deleted": summary.audio_file_deleted,
+                    "vectors_deleted": summary.vectors_deleted,
+                },
+            )
+            print(
+                f"[cleanup] Credited {summary.storage_freed_mb:.2f} MB back to user {video.user_id}"
+            )
+        except Exception as e:
+            print(f"[cleanup] Error crediting storage back for video {video.id}: {e}")
 
     # Clear file path references on video
     video.audio_file_path = None

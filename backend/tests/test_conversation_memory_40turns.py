@@ -166,7 +166,7 @@ class ConversationMemoryTest:
         print("=" * 80 + "\n")
 
 
-def test_40_turn_conversation_memory(
+async def test_40_turn_conversation_memory(
     db: Session, test_user: User, completed_videos: List[Video]
 ):
     """

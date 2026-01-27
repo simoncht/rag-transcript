@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AlertCircle, RefreshCw, MessageSquare, Timer } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
+import { parseUTCDate } from "@/lib/utils";
 
 const truncate = (value: string, limit = 120) => {
   if (value.length <= limit) return value;
@@ -146,7 +147,7 @@ export default function AdminQAFeedPage() {
               items.map((item) => (
                 <TableRow key={item.qa_id}>
                   <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
-                    {formatDistanceToNow(new Date(item.asked_at), {
+                    {formatDistanceToNow(parseUTCDate(item.asked_at), {
                       addSuffix: true,
                     })}
                   </TableCell>
@@ -326,7 +327,7 @@ export default function AdminQAFeedPage() {
               auditItems.map((item) => (
                 <TableRow key={item.id}>
                   <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
-                    {formatDistanceToNow(new Date(item.created_at), {
+                    {formatDistanceToNow(parseUTCDate(item.created_at), {
                       addSuffix: true,
                     })}
                   </TableCell>

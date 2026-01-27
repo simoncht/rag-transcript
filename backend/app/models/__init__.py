@@ -14,6 +14,7 @@ from app.models.conversation_fact import ConversationFact
 from app.models.message import Message, MessageChunkReference
 from app.models.collection import Collection, CollectionVideo, CollectionMember
 from app.models.usage import UsageEvent, UserQuota
+from app.models.llm_usage import LLMUsageEvent, calculate_llm_cost
 from app.models.job import Job
 from app.models.admin_audit_log import AdminAuditLog
 from app.models.subscription import Subscription
@@ -34,6 +35,8 @@ __all__ = [
     "CollectionMember",
     "UsageEvent",
     "UserQuota",
+    "LLMUsageEvent",
+    "calculate_llm_cost",
     "Job",
     "AdminAuditLog",
     "Subscription",

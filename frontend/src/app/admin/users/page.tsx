@@ -33,6 +33,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { formatDistanceToNow } from "date-fns";
+import { parseUTCDate } from "@/lib/utils";
 
 export default function AdminUsersPage() {
   const [page, setPage] = useState(1);
@@ -237,7 +238,7 @@ export default function AdminUsersPage() {
                   <TableCell>
                     {user.last_active_at ? (
                       <span className="text-sm">
-                        {formatDistanceToNow(new Date(user.last_active_at), {
+                        {formatDistanceToNow(parseUTCDate(user.last_active_at), {
                           addSuffix: true,
                         })}
                       </span>

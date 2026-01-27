@@ -2,6 +2,7 @@
 LLM provider abstraction for multiple backends.
 
 Supports:
+- DeepSeek (DeepSeek-V3 chat and reasoner models)
 - Ollama (local LLMs via HTTP API)
 - OpenAI (GPT models)
 - Anthropic (Claude models)
@@ -35,9 +36,10 @@ class LLMResponse:
     provider: str
     usage: Optional[
         Dict[str, int]
-    ] = None  # {input_tokens, output_tokens, total_tokens}
+    ] = None  # {input_tokens, output_tokens, total_tokens, prompt_cache_hit_tokens, prompt_cache_miss_tokens}
     finish_reason: Optional[str] = None
     response_time_seconds: Optional[float] = None
+    reasoning_content: Optional[str] = None  # For DeepSeek Reasoner chain-of-thought
 
 
 class LLMProvider(ABC):
@@ -452,6 +454,175 @@ class AnthropicProvider(LLMProvider):
         return {"provider": "anthropic", "model": self.model}
 
 
+class DeepSeekProvider(LLMProvider):
+    """
+    DeepSeek LLM provider using OpenAI-compatible API.
+
+    Supports:
+    - deepseek-chat: Fast responses, standard chat completion
+    - deepseek-reasoner: Advanced reasoning with chain-of-thought
+
+    Note: deepseek-reasoner returns `reasoning_content` which must NOT be
+    included in subsequent messages (returns 400 error if included).
+    """
+
+    def __init__(self, api_key: str = None, model: str = None):
+        """
+        Initialize DeepSeek provider.
+
+        Args:
+            api_key: DeepSeek API key
+            model: Model name (deepseek-chat or deepseek-reasoner)
+        """
+        import openai
+        import logging
+
+        self.logger = logging.getLogger(__name__)
+        self.api_key = api_key or settings.deepseek_api_key
+        if not self.api_key:
+            raise ValueError("DeepSeek API key is required")
+
+        self.model = model or settings.deepseek_model
+        self.base_url = settings.deepseek_base_url
+        self.client = openai.OpenAI(
+            api_key=self.api_key,
+            base_url=self.base_url,
+        )
+
+    def complete(
+        self,
+        messages: List[Message],
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        **kwargs,
+    ) -> LLMResponse:
+        """
+        Generate completion using DeepSeek API.
+
+        For deepseek-reasoner model, extracts reasoning_content but does NOT
+        include it in the response content (to prevent errors in multi-turn).
+        """
+        start_time = time.time()
+
+        # Allow per-request model override
+        override_model = kwargs.pop("model", None)
+        effective_model = override_model or self.model
+
+        # Convert messages to OpenAI format
+        deepseek_messages = [
+            {"role": msg.role, "content": msg.content} for msg in messages
+        ]
+
+        params = {
+            "model": effective_model,
+            "messages": deepseek_messages,
+        }
+
+        if temperature is not None:
+            params["temperature"] = temperature
+
+        if max_tokens is not None:
+            params["max_tokens"] = max_tokens
+
+        try:
+            response = self.client.chat.completions.create(**params)
+
+            response_time = time.time() - start_time
+
+            # Extract reasoning_content if present (for deepseek-reasoner)
+            reasoning_content = None
+            message = response.choices[0].message
+            if hasattr(message, "reasoning_content") and message.reasoning_content:
+                reasoning_content = message.reasoning_content
+                self.logger.info(
+                    f"[DeepSeek Reasoner] Generated {len(reasoning_content)} chars of chain-of-thought"
+                )
+
+            # Build usage dict with cache metrics
+            usage_dict = {
+                "input_tokens": response.usage.prompt_tokens,
+                "output_tokens": response.usage.completion_tokens,
+                "total_tokens": response.usage.total_tokens,
+            }
+
+            # Add cache metrics if available (DeepSeek automatic caching)
+            if hasattr(response.usage, "prompt_cache_hit_tokens"):
+                usage_dict["prompt_cache_hit_tokens"] = response.usage.prompt_cache_hit_tokens
+            if hasattr(response.usage, "prompt_cache_miss_tokens"):
+                usage_dict["prompt_cache_miss_tokens"] = response.usage.prompt_cache_miss_tokens
+
+            # Log cache performance
+            cache_hit = usage_dict.get("prompt_cache_hit_tokens", 0)
+            cache_miss = usage_dict.get("prompt_cache_miss_tokens", 0)
+            if cache_hit > 0 or cache_miss > 0:
+                total_prompt = cache_hit + cache_miss
+                hit_rate = cache_hit / total_prompt if total_prompt > 0 else 0
+                # Price difference: $0.28/M (miss) vs $0.028/M (hit) = $0.252/M savings
+                savings = cache_hit * 0.000000252
+                self.logger.info(
+                    f"[DeepSeek Cache] Hit: {cache_hit} tokens ({hit_rate:.1%}), "
+                    f"Miss: {cache_miss} tokens, Est. savings: ${savings:.6f}"
+                )
+
+            return LLMResponse(
+                content=message.content,
+                model=response.model,
+                provider="deepseek",
+                usage=usage_dict,
+                finish_reason=response.choices[0].finish_reason,
+                response_time_seconds=response_time,
+                reasoning_content=reasoning_content,
+            )
+
+        except Exception as e:
+            raise Exception(f"DeepSeek API error: {str(e)}")
+
+    def stream_complete(
+        self,
+        messages: List[Message],
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        **kwargs,
+    ) -> Iterator[str]:
+        """Generate streaming completion using DeepSeek API."""
+        override_model = kwargs.pop("model", None)
+        effective_model = override_model or self.model
+
+        deepseek_messages = [
+            {"role": msg.role, "content": msg.content} for msg in messages
+        ]
+
+        params = {
+            "model": effective_model,
+            "messages": deepseek_messages,
+            "stream": True,
+        }
+
+        if temperature is not None:
+            params["temperature"] = temperature
+
+        if max_tokens is not None:
+            params["max_tokens"] = max_tokens
+
+        try:
+            stream = self.client.chat.completions.create(**params)
+
+            for chunk in stream:
+                if chunk.choices[0].delta.content is not None:
+                    yield chunk.choices[0].delta.content
+
+        except Exception as e:
+            raise Exception(f"DeepSeek streaming error: {str(e)}")
+
+    def get_model_info(self) -> Dict:
+        """Get model information."""
+        return {
+            "provider": "deepseek",
+            "model": self.model,
+            "base_url": self.base_url,
+        }
+
+
 class LLMService:
     """
     High-level LLM service with retry logic and error handling.
@@ -476,6 +647,7 @@ class LLMService:
         self._ollama_provider = None
         self._anthropic_provider = None
         self._openai_provider = None
+        self._deepseek_provider = None
 
         self.max_retries = 3
 
@@ -483,7 +655,9 @@ class LLMService:
         """Create LLM provider based on configuration."""
         provider_type = settings.llm_provider
 
-        if provider_type == "ollama":
+        if provider_type == "deepseek":
+            return DeepSeekProvider()
+        elif provider_type == "ollama":
             return OllamaProvider()
         elif provider_type == "openai":
             return OpenAIProvider()
@@ -497,6 +671,7 @@ class LLMService:
         Determine which provider to use based on model name.
 
         Routes to:
+        - DeepSeek: for models starting with "deepseek-" (e.g., "deepseek-chat", "deepseek-reasoner")
         - Ollama: for models with ":" in name (e.g., "qwen3-vl:235b", "llama2:7b")
         - Anthropic: for models starting with "claude-"
         - OpenAI: for models starting with "gpt-"
@@ -510,6 +685,12 @@ class LLMService:
         """
         if not model_name:
             return self.provider
+
+        # DeepSeek models (deepseek-chat, deepseek-reasoner)
+        if model_name.startswith("deepseek-"):
+            if self._deepseek_provider is None:
+                self._deepseek_provider = DeepSeekProvider()
+            return self._deepseek_provider
 
         # Ollama models typically use "model:tag" format
         if ":" in model_name:

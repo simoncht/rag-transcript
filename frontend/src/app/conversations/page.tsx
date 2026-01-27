@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { formatDistanceToNow } from "date-fns";
+import { parseUTCDate } from "@/lib/utils";
 import { useAuthState } from "@/lib/auth";
 import { MainLayout } from "@/components/layout/MainLayout";
 import { conversationsApi } from "@/lib/api/conversations";
@@ -380,10 +381,10 @@ export default function ConversationsPage() {
                           <span>
                             {conversation.last_message_at
                               ? `Active ${formatDistanceToNow(
-                                  new Date(conversation.last_message_at),
+                                  parseUTCDate(conversation.last_message_at),
                                 )} ago`
                               : `Created ${formatDistanceToNow(
-                                  new Date(conversation.created_at),
+                                  parseUTCDate(conversation.created_at),
                                 )} ago`}
                           </span>
                         </div>

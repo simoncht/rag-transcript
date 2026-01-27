@@ -9,15 +9,19 @@ Tasks:
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from decimal import Decimal
+
 from app.core.celery_app import celery_app
 from app.core.config import settings
 from app.db.base import SessionLocal
-from app.models import Video
+from app.models import Video, User, UserQuota, Chunk
 from app.services.job_cancellation import (
     cancel_video_processing,
     CleanupOption,
     CANCELABLE_STATUSES,
 )
+from app.services.storage_calculator import StorageCalculator
+from app.services.storage import storage_service
 
 
 # How long a video can be in pending/downloading before auto-cancel (hours)
@@ -192,6 +196,131 @@ def cleanup_orphaned_files():
 
     except Exception as e:
         print(f"[cleanup] Orphaned files cleanup task failed: {e}")
+        raise
+
+    finally:
+        db.close()
+
+
+# Threshold for quota discrepancy correction (MB)
+QUOTA_DISCREPANCY_THRESHOLD_MB = 10.0
+
+
+@celery_app.task
+def reconcile_storage_quotas():
+    """
+    Daily task to reconcile quota storage with actual usage.
+
+    Fixes discrepancies between tracked quota storage_mb_used and actual storage
+    (disk files + database text + vectors). This handles drift from:
+    - Cleanup operations that didn't update quotas
+    - Manual database modifications
+    - Edge cases in storage tracking
+
+    Only corrects discrepancies larger than QUOTA_DISCREPANCY_THRESHOLD_MB (10 MB)
+    to avoid unnecessary database churn.
+    """
+    db = SessionLocal()
+
+    try:
+        # First, clean up orphaned chunks from soft-deleted videos
+        # This prevents drift where chunks remain after video soft-deletion
+        orphaned_chunk_count = (
+            db.query(Chunk)
+            .filter(
+                Chunk.video_id.in_(
+                    db.query(Video.id).filter(Video.is_deleted.is_(True))
+                )
+            )
+            .delete(synchronize_session=False)
+        )
+        if orphaned_chunk_count > 0:
+            db.commit()
+            print(
+                f"[reconcile] Deleted {orphaned_chunk_count} orphaned chunks "
+                "from soft-deleted videos"
+            )
+
+        # Get all user quotas
+        quotas = db.query(UserQuota).all()
+
+        if not quotas:
+            print("[reconcile] No user quotas found")
+            return {"users_checked": 0, "corrections": 0}
+
+        corrections_made = 0
+        users_checked = 0
+        discrepancies = []
+
+        for quota in quotas:
+            users_checked += 1
+
+            try:
+                # Calculate actual comprehensive storage
+                calculator = StorageCalculator(db)
+                storage_breakdown = calculator.calculate_total_storage_mb(quota.user_id)
+
+                # Disk usage from storage service
+                disk_usage_mb = storage_service.get_storage_usage(quota.user_id)
+
+                # Total = disk files + database text + vectors
+                actual_storage = disk_usage_mb + storage_breakdown["database_mb"] + storage_breakdown["vector_mb"]
+
+                # Get tracked storage
+                tracked_storage = float(quota.storage_mb_used)
+
+                # Calculate discrepancy
+                discrepancy = abs(actual_storage - tracked_storage)
+
+                # Only correct if discrepancy exceeds threshold
+                if discrepancy > QUOTA_DISCREPANCY_THRESHOLD_MB:
+                    user = db.query(User).filter(User.id == quota.user_id).first()
+                    user_email = user.email if user else str(quota.user_id)
+
+                    discrepancies.append({
+                        "user_id": str(quota.user_id),
+                        "user_email": user_email,
+                        "tracked_mb": round(tracked_storage, 2),
+                        "actual_mb": round(actual_storage, 2),
+                        "discrepancy_mb": round(discrepancy, 2),
+                        "breakdown": {
+                            "disk_mb": round(disk_usage_mb, 2),
+                            "database_mb": round(storage_breakdown["database_mb"], 2),
+                            "vector_mb": round(storage_breakdown["vector_mb"], 2),
+                        },
+                    })
+
+                    # Apply correction
+                    quota.storage_mb_used = Decimal(str(round(actual_storage, 3)))
+                    corrections_made += 1
+
+                    print(
+                        f"[reconcile] Corrected user {user_email}: "
+                        f"{tracked_storage:.2f} MB -> {actual_storage:.2f} MB "
+                        f"(delta: {discrepancy:.2f} MB)"
+                    )
+
+            except Exception as e:
+                print(f"[reconcile] Error processing user {quota.user_id}: {e}")
+
+        # Commit all corrections at once
+        if corrections_made > 0:
+            db.commit()
+
+        print(
+            f"[reconcile] Storage quota reconciliation complete: "
+            f"checked={users_checked}, corrections={corrections_made}"
+        )
+
+        return {
+            "users_checked": users_checked,
+            "corrections": corrections_made,
+            "threshold_mb": QUOTA_DISCREPANCY_THRESHOLD_MB,
+            "discrepancies": discrepancies if discrepancies else None,
+        }
+
+    except Exception as e:
+        print(f"[reconcile] Storage quota reconciliation task failed: {e}")
         raise
 
     finally:

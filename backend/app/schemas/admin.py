@@ -184,6 +184,31 @@ class QuotaOverrideRequest(BaseModel):
     storage_mb_limit: Optional[float] = None
 
 
+class UserDeleteResponse(BaseModel):
+    """Response for user deletion."""
+
+    success: bool
+    message: str
+    deleted_user_id: UUID
+    deleted_email: str
+    deleted_records: Dict[str, int] = Field(
+        default_factory=dict,
+        description="Count of deleted records by table (subscriptions, etc.)"
+    )
+
+
+class QuotaRecalculateResponse(BaseModel):
+    """Response for quota recalculation."""
+
+    success: bool
+    message: str
+    users_updated: int
+    corrections: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="List of quota corrections made (user_id, field, old_value, new_value)"
+    )
+
+
 class AdminNoteCreateRequest(BaseModel):
     """Request to add an admin note to a user."""
 
@@ -503,3 +528,71 @@ class ContentOverviewResponse(BaseModel):
 
     videos: AdminVideoOverview
     collections: AdminCollectionOverview
+
+
+# LLM Usage/Cost Tracking Schemas
+
+
+class LLMUsageItem(BaseModel):
+    """Single LLM usage event."""
+
+    id: UUID
+    user_id: UUID
+    user_email: Optional[str] = None
+    conversation_id: Optional[UUID] = None
+    model: str
+    provider: str
+    input_tokens: int
+    output_tokens: int
+    total_tokens: int
+    cache_hit_tokens: int = 0
+    cache_miss_tokens: int = 0
+    cost_usd: float
+    response_time_seconds: Optional[float] = None
+    created_at: datetime
+
+
+class LLMUsageStats(BaseModel):
+    """Aggregated LLM usage statistics."""
+
+    # Token totals
+    total_input_tokens: int = 0
+    total_output_tokens: int = 0
+    total_tokens: int = 0
+    total_cache_hit_tokens: int = 0
+    total_cache_miss_tokens: int = 0
+
+    # Cost totals
+    total_cost_usd: float = 0.0
+    estimated_savings_usd: float = 0.0  # From caching
+
+    # Request counts
+    total_requests: int = 0
+    requests_by_model: Dict[str, int] = Field(default_factory=dict)
+
+    # Performance
+    avg_response_time_seconds: Optional[float] = None
+    cache_hit_rate: float = 0.0
+
+    # Time range
+    period_start: Optional[datetime] = None
+    period_end: Optional[datetime] = None
+
+
+class LLMUsageByUser(BaseModel):
+    """LLM usage grouped by user."""
+
+    user_id: UUID
+    user_email: Optional[str] = None
+    total_requests: int = 0
+    total_tokens: int = 0
+    total_cost_usd: float = 0.0
+    cache_hit_rate: float = 0.0
+
+
+class LLMUsageResponse(BaseModel):
+    """Response for LLM usage endpoint."""
+
+    stats: LLMUsageStats
+    by_user: List[LLMUsageByUser] = Field(default_factory=list)
+    recent_events: List[LLMUsageItem] = Field(default_factory=list)

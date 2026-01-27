@@ -55,15 +55,6 @@ class Settings(BaseSettings):
             return [email.strip() for email in v.split(",") if email.strip()]
         return v
 
-    @field_validator("clerk_issuer", "clerk_audience", mode="before")
-    @classmethod
-    def _blank_optional_to_none(cls, v):  # noqa: ANN001
-        if v is None:
-            return None
-        if isinstance(v, str) and not v.strip():
-            return None
-        return v
-
     # Database
     database_url: str = "postgresql://postgres:postgres@localhost:5432/rag_transcript"
     db_echo_sql: bool = False
@@ -81,14 +72,6 @@ class Settings(BaseSettings):
 
     # NextAuth.js Authentication
     nextauth_secret: Optional[str] = Field(default=None, env="NEXTAUTH_SECRET")
-
-    # Clerk Authentication (DEPRECATED - will be removed)
-    clerk_secret_key: str = ""
-    clerk_publishable_key: str = ""
-    clerk_jwt_verification: bool = True
-    clerk_issuer: Optional[str] = None
-    clerk_audience: Optional[str] = None
-    clerk_webhook_secret: str = ""
     admin_emails: List[str] = []
 
     # Storage
@@ -126,10 +109,16 @@ class Settings(BaseSettings):
     embedding_provider: Literal["local", "openai", "azure"] = "local"
 
     # LLM Provider Configuration
-    llm_provider: Literal["ollama", "openai", "anthropic", "azure"] = "ollama"
-    llm_model: str = "llama2"
+    llm_provider: Literal["deepseek", "ollama", "openai", "anthropic", "azure"] = "deepseek"
+    llm_model: str = "deepseek-chat"
     llm_max_tokens: int = 1500
     llm_temperature: float = 0.7
+
+    # Tier-Based Model Configuration (see pricing.py for full config)
+    # DeepSeek models: deepseek-chat (fast), deepseek-reasoner (advanced reasoning)
+    llm_model_free: str = "deepseek-chat"  # DeepSeek Chat - fast, non-thinking mode
+    llm_model_pro: str = "deepseek-reasoner"  # DeepSeek Reasoner - thinking mode
+    llm_model_enterprise: str = "deepseek-reasoner"  # Same as Pro with SLA
 
     # Ollama
     ollama_base_url: str = "http://localhost:11434"
@@ -143,6 +132,11 @@ class Settings(BaseSettings):
     # Anthropic
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-3-sonnet-20240229"
+
+    # DeepSeek (recommended for RAG - OpenAI-compatible API)
+    deepseek_api_key: str = ""
+    deepseek_base_url: str = "https://api.deepseek.com/v1"
+    deepseek_model: str = "deepseek-chat"  # Options: deepseek-chat, deepseek-reasoner
 
     # Azure OpenAI
     azure_openai_endpoint: str = ""
@@ -178,7 +172,7 @@ class Settings(BaseSettings):
 
     # Usage Quotas
     free_tier_video_limit: int = 2
-    free_tier_minutes_limit: int = 60
+    free_tier_minutes_limit: int = 1000
     free_tier_messages_limit: int = 50
     free_tier_storage_mb_limit: int = 1000
 
@@ -192,10 +186,6 @@ class Settings(BaseSettings):
     stripe_pro_yearly_price_id: str = ""
     stripe_enterprise_monthly_price_id: str = ""
     stripe_enterprise_yearly_price_id: str = ""
-
-    # Resend Email Service
-    resend_api_key: str = ""
-    resend_from_email: str = "noreply@example.com"
 
     # Logging
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"

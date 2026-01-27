@@ -28,7 +28,6 @@ from app.services.enrichment import ContextualEnricher
 from app.services.embeddings import (
     embedding_service,
     resolve_collection_name,
-    set_active_embedding_model,
 )
 from app.services.vector_store import vector_store_service
 from app.services.storage import storage_service
@@ -659,28 +658,6 @@ def embed_and_index(self, video_id: str, user_id: str):
 
     except Exception as e:
         raise self.retry(exc=e, countdown=60)
-
-
-@celery_app.task(bind=True, max_retries=1)
-def reembed_all_videos(self, model_key: str):
-    """
-    Re-embed and re-index all videos using the specified embedding model key.
-    """
-    db = SessionLocal()
-    try:
-        set_active_embedding_model(model_key)
-        videos = db.query(Video).filter(Video.is_deleted.is_(False)).all()
-        for video in videos:
-            _embed_and_index(str(video.id), str(video.user_id), force_reindex=True)
-        return {
-            "status": "completed",
-            "video_count": len(videos),
-            "model_key": model_key,
-        }
-    except Exception as e:
-        raise self.retry(exc=e, countdown=60)
-    finally:
-        db.close()
 
 
 class VideoCanceledException(Exception):

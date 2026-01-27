@@ -9,10 +9,10 @@
 export type { AuthState, AuthUser, IAuthProvider, ParallelResult } from "./types";
 
 // Context & Hooks (DI - Dependency Injection)
-export { AuthProvider, useAuth, useAuthState, useAuthStateAsync } from "./AuthContext";
+export { AuthProvider, useAuth, useAuthState } from "./AuthContext";
 
 // Adapter (DIP - Dependency Inversion)
 export { NextAuthAdapter } from "./NextAuthAdapter";
 
 // Utilities (SRP - Single Responsibility)
-export { fetchParallel, prefetchParallel, createParallelQueryFn } from "./parallelFetcher";
+export { prefetchParallel, createParallelQueryFn } from "./parallelFetcher";

@@ -54,7 +54,8 @@
       "Bash(pip index versions:*)",
       "Bash(pip install:*)",
       "Bash(docker inspect:*)",
-      "Bash(python3:*)"
+      "Bash(python3:*)",
+      "WebSearch"
     ],
     "deny": [],
     "ask": []

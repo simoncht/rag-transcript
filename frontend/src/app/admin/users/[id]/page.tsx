@@ -41,6 +41,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { formatDistanceToNow, format } from "date-fns";
+import { parseUTCDate } from "@/lib/utils";
 import { useParams } from "next/navigation";
 import { useToast } from "@/hooks/use-toast";
 
@@ -204,7 +205,7 @@ export default function AdminUserDetailPage() {
               <Skeleton className="h-5 w-24 mt-1" />
             ) : (
               <p className="mt-1 text-sm">
-                {format(new Date(data!.created_at), "MMM d, yyyy")}
+                {format(parseUTCDate(data!.created_at), "MMM d, yyyy")}
               </p>
             )}
           </div>
@@ -216,7 +217,7 @@ export default function AdminUserDetailPage() {
               <Skeleton className="h-5 w-24 mt-1" />
             ) : data?.last_login_at ? (
               <p className="mt-1 text-sm">
-                {formatDistanceToNow(new Date(data.last_login_at), {
+                {formatDistanceToNow(parseUTCDate(data.last_login_at), {
                   addSuffix: true,
                 })}
               </p>

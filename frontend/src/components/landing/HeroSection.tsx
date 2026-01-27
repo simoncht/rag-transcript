@@ -20,9 +20,9 @@ export default function HeroSection() {
 
           {/* Subheadline */}
           <p className="text-xl lg:text-2xl text-gray-600 mb-8 max-w-3xl mx-auto">
-            AI-powered transcription, semantic search, and conversation memory
-            for your video library. Chat with your videos and get precise,
-            cited answers.
+            Build a searchable knowledge base from your video library. Query
+            across entire collections and get synthesized answers with precise
+            citations.
           </p>
 
           {/* CTAs */}

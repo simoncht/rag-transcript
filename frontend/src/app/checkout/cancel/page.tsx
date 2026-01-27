@@ -96,7 +96,7 @@ export default function CheckoutCancelPage() {
                 >
                   <path d="M5 13l4 4L19 7" />
                 </svg>
-                <span>120 minutes per month</span>
+                <span>60 minutes per month</span>
               </li>
             </ul>
           </div>
@@ -123,7 +123,7 @@ export default function CheckoutCancelPage() {
           <p className="text-sm text-gray-500 mt-8">
             Have questions?{' '}
             <a
-              href="mailto:support@example.com"
+              href="mailto:support@ragtranscript.com"
               className="text-primary hover:underline"
             >
               Contact support

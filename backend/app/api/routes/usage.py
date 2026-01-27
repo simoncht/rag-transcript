@@ -22,6 +22,7 @@ from app.schemas import (
     QuotaStat,
 )
 from app.services.storage import storage_service
+from app.services.storage_calculator import StorageCalculator
 from app.services.usage_tracker import UsageTracker
 from app.services.vector_store import vector_store_service
 
@@ -86,9 +87,15 @@ async def get_usage_summary(
         transcript_file_mb if transcript_file_mb > 0 else transcript_mb_estimate
     )
 
-    # Chunk counts for the user
+    # Chunk counts (only from non-deleted videos)
     chunk_count = (
-        db.query(func.count(Chunk.id)).filter(Chunk.user_id == current_user.id).scalar()
+        db.query(func.count(Chunk.id))
+        .join(Video, Chunk.video_id == Video.id)
+        .filter(
+            Chunk.user_id == current_user.id,
+            Video.is_deleted.is_(False),
+        )
+        .scalar()
         or 0
     )
 
@@ -109,12 +116,25 @@ async def get_usage_summary(
     except Exception:
         disk_usage_mb = 0.0
 
+    # Calculate database and vector storage
+    storage_calculator = StorageCalculator(db)
+    try:
+        calculated_storage = storage_calculator.calculate_total_storage_mb(
+            current_user.id
+        )
+        database_mb = calculated_storage["database_mb"]
+        vector_mb = calculated_storage["vector_mb"]
+    except Exception:
+        database_mb = 0.0
+        vector_mb = 0.0
+
     storage_quota = base_summary["storage_mb"]
     limit_mb = float(storage_quota["limit"])
     quota_used_mb = float(storage_quota["used"])
-    measured_storage_mb = max(
-        float(round(audio_mb + transcript_mb, 3)),
-        float(round(disk_usage_mb, 3)),
+
+    # Total measured storage includes disk, database, and vector storage
+    measured_storage_mb = float(
+        round(disk_usage_mb + database_mb + vector_mb, 3)
     )
     effective_storage_used_mb = max(quota_used_mb, measured_storage_mb)
     storage_remaining_mb = max(limit_mb - effective_storage_used_mb, 0.0)
@@ -155,6 +175,8 @@ async def get_usage_summary(
             audio_mb=float(round(audio_mb, 3)),
             transcript_mb=float(round(transcript_mb_estimate, 3)),
             disk_usage_mb=float(round(disk_usage_mb, 3)),
+            database_mb=float(round(database_mb, 3)),
+            vector_mb=float(round(vector_mb, 3)),
         ),
         counts=UsageCounts(
             videos_total=videos_total,

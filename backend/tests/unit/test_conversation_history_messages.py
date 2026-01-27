@@ -12,7 +12,7 @@ from sqlalchemy.sql.elements import BinaryExpression, BooleanClauseList, UnaryEx
 from sqlalchemy.sql import operators as sql_operators
 
 from app.api.routes import conversations as conversations_routes
-from app.core.auth import get_current_user
+from app.core.nextauth import get_current_user
 from app.db.base import get_db
 from app.models import (
     Chunk,

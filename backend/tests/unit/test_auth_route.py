@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.api.routes import auth as auth_routes
-from app.core.auth import get_current_user
+from app.core.nextauth import get_current_user
 from app.models import User
 
 

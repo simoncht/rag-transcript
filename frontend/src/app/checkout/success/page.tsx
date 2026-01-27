@@ -151,7 +151,7 @@ function CheckoutSuccessContent() {
                 <div className="text-center">
                   <p className="text-gray-600 mb-1">Storage</p>
                   <p className="text-2xl font-bold text-green-600">
-                    {quota.storage_limit_mb === -1 ? '∞' : `${quota.storage_limit_mb / 1024} GB`}
+                    {quota.storage_limit_mb === -1 ? '∞' : `${Math.round(quota.storage_limit_mb / 1000)} GB`}
                   </p>
                 </div>
                 <div className="text-center">

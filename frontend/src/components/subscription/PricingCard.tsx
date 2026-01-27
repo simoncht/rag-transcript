@@ -12,6 +12,7 @@ interface PricingCardProps {
   currentTier?: SubscriptionTier;
   isAuthenticated?: boolean;
   onUpgrade?: (tier: SubscriptionTier) => void;
+  isLoading?: boolean;
   className?: string;
 }
 
@@ -26,6 +27,7 @@ export default function PricingCard({
   currentTier,
   isAuthenticated = false,
   onUpgrade,
+  isLoading = false,
   className = '',
 }: PricingCardProps) {
   const isCurrentTier = currentTier === tier.tier;
@@ -39,20 +41,35 @@ export default function PricingCard({
   // Determine CTA text and action
   const getCtaText = () => {
     if (isCurrentTier) return 'Current Plan';
-    if (isFree) return isAuthenticated ? 'Current Plan' : 'Get Started';
-    return isAuthenticated ? `Upgrade to ${tier.name}` : 'Get Started';
+    if (isFree) {
+      // Only show "Current Plan" if authenticated AND we have subscription data
+      // (currentTier being defined means the subscription query succeeded)
+      // This prevents showing "Current Plan" during auth loading state
+      if (isAuthenticated && currentTier !== undefined) {
+        return 'Current Plan';
+      }
+      return 'Get Started';
+    }
+    // Always show "Upgrade to X" for paid tiers, regardless of auth status
+    return `Upgrade to ${tier.name}`;
   };
 
   const handleCtaClick = () => {
     if (isCurrentTier) return;
 
     if (!isAuthenticated) {
-      // Redirect to sign-up
-      window.location.href = '/login';
+      if (isFree) {
+        // Free tier: just sign up/sign in, redirect to videos after
+        window.location.href = `/login?callbackUrl=${encodeURIComponent('/videos')}`;
+      } else {
+        // Paid tiers: redirect to checkout after auth
+        const callbackUrl = `/checkout/start?tier=${tier.tier}`;
+        window.location.href = `/login?callbackUrl=${encodeURIComponent(callbackUrl)}`;
+      }
       return;
     }
 
-    // Trigger upgrade flow
+    // Trigger upgrade flow (for paid tiers)
     if (onUpgrade) {
       onUpgrade(tier.tier);
     }
@@ -118,6 +135,33 @@ export default function PricingCard({
         ))}
       </ul>
 
+      {/* AI Model info */}
+      <div className="border-t border-gray-200 pt-4 mb-4">
+        <div className="flex items-start gap-2">
+          <svg
+            className="w-5 h-5 text-primary flex-shrink-0 mt-0.5"
+            fill="none"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth="2"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+          </svg>
+          <div>
+            <p className="font-medium text-gray-900 text-sm">
+              {isFree ? 'Chat Model' : 'Reasoner Model'}
+            </p>
+            <p className="text-xs text-gray-500">
+              {isFree
+                ? 'Fast responses for quick questions and simple summaries'
+                : 'Thinks step-by-step for complex analysis and finding patterns'}
+            </p>
+          </div>
+        </div>
+      </div>
+
       {/* Quota limits */}
       <div className="border-t border-gray-200 pt-4 mb-6 space-y-2 text-sm text-gray-500">
         <div className="flex justify-between">
@@ -135,7 +179,7 @@ export default function PricingCard({
         <div className="flex justify-between">
           <span>Storage:</span>
           <span className="font-medium text-gray-700">
-            {tier.storage_limit_mb === -1 ? 'Unlimited' : `${tier.storage_limit_mb / 1024} GB`}
+            {tier.storage_limit_mb === -1 ? 'Unlimited' : `${Math.round(tier.storage_limit_mb / 1000)} GB`}
           </span>
         </div>
         <div className="flex justify-between">
@@ -151,7 +195,8 @@ export default function PricingCard({
         variant={isRecommended ? 'primary' : 'outline'}
         size="lg"
         onClick={handleCtaClick}
-        disabled={isCurrentTier}
+        disabled={isCurrentTier || isLoading}
+        isLoading={isLoading && !isCurrentTier && tier.tier !== 'free'}
         className="w-full"
       >
         {getCtaText()}
