@@ -1,10 +1,11 @@
 "use client"
 
+import { Suspense } from "react"
 import { Button } from "@/components/ui/button"
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 
-export default function LoginPage() {
+function LoginContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
 
@@ -42,5 +43,26 @@ export default function LoginPage() {
         </div>
       </div>
     </div>
+  )
+}
+
+function LoginFallback() {
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-background">
+      <div className="w-full max-w-md space-y-8 rounded-2xl border bg-card p-8 shadow-sm">
+        <div className="space-y-2 text-center">
+          <h1 className="text-3xl font-bold">Welcome to RAG Transcript</h1>
+          <p className="text-muted-foreground">Loading...</p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={<LoginFallback />}>
+      <LoginContent />
+    </Suspense>
   )
 }

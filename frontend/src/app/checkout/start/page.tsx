@@ -1,18 +1,12 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { subscriptionsApi } from '@/lib/api/subscriptions';
 import { useSafeAuthState } from '@/lib/auth/safe-hooks';
 import { SubscriptionTier } from '@/lib/types';
 
-/**
- * Checkout Start Page
- *
- * Automatically initiates Stripe checkout after user signs in.
- * Expects ?tier=pro or ?tier=enterprise query parameter.
- */
-export default function CheckoutStartPage() {
+function CheckoutContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const { isAuthenticated } = useSafeAuthState();
@@ -87,5 +81,30 @@ export default function CheckoutStartPage() {
         </p>
       </div>
     </div>
+  );
+}
+
+function CheckoutFallback() {
+  return (
+    <div className="min-h-screen flex items-center justify-center">
+      <div className="text-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4" />
+        <p className="text-gray-600">Loading...</p>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Checkout Start Page
+ *
+ * Automatically initiates Stripe checkout after user signs in.
+ * Expects ?tier=pro or ?tier=enterprise query parameter.
+ */
+export default function CheckoutStartPage() {
+  return (
+    <Suspense fallback={<CheckoutFallback />}>
+      <CheckoutContent />
+    </Suspense>
   );
 }
