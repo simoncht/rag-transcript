@@ -61,6 +61,10 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.cleanup_tasks.reconcile_storage_quotas",
         "schedule": crontab(minute=15, hour=3),  # Daily at 3:15 AM UTC
     },
+    "consolidate-conversation-memory": {
+        "task": "app.tasks.cleanup_tasks.consolidate_conversation_memory",
+        "schedule": crontab(minute=45, hour=4),  # Daily at 4:45 AM UTC
+    },
 }
 
 

@@ -4,6 +4,7 @@ Celery tasks for automatic cleanup of stale/orphaned data.
 Tasks:
 - cleanup_stale_videos: Cancel videos stuck in processing for too long
 - cleanup_orphaned_files: Remove files without matching video records
+- consolidate_conversation_memory: Prune and deduplicate conversation facts
 """
 
 from datetime import datetime, timedelta
@@ -26,6 +27,9 @@ from app.services.storage import storage_service
 
 # How long a video can be in pending/downloading before auto-cancel (hours)
 STALE_THRESHOLD_HOURS = 24
+
+# How long since last message before consolidating conversation memory (hours)
+MEMORY_CONSOLIDATION_STALE_HOURS = 24
 
 
 @celery_app.task
@@ -321,6 +325,48 @@ def reconcile_storage_quotas():
 
     except Exception as e:
         print(f"[reconcile] Storage quota reconciliation task failed: {e}")
+        raise
+
+    finally:
+        db.close()
+
+
+@celery_app.task
+def consolidate_conversation_memory():
+    """
+    Daily task to consolidate and prune conversation facts.
+
+    Based on OpenAI/Anthropic memory best practices:
+    - Deduplicates semantically similar facts
+    - Applies decay to old, unused facts
+    - Prunes low-importance facts when conversations have too many
+
+    Only processes conversations that haven't been active in the last 24 hours
+    to avoid interfering with active sessions.
+    """
+    db = SessionLocal()
+
+    try:
+        from app.services.memory_consolidation import memory_consolidation_service
+
+        stats = memory_consolidation_service.consolidate_all_stale(
+            db=db,
+            stale_hours=MEMORY_CONSOLIDATION_STALE_HOURS,
+            dry_run=False,
+        )
+
+        print(
+            f"[memory] Consolidation complete: "
+            f"conversations={stats['conversations']}, "
+            f"merged={stats['merged']}, "
+            f"decayed={stats['decayed']}, "
+            f"pruned={stats['pruned']}"
+        )
+
+        return stats
+
+    except Exception as e:
+        print(f"[memory] Conversation memory consolidation task failed: {e}")
         raise
 
     finally:

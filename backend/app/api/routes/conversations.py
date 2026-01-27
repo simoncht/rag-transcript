@@ -1146,30 +1146,38 @@ async def send_message(
 
     logger.info(f"[Conversation History] Loaded {len(history_messages)} messages in {history_time:.3f}s")
 
-    # NEW: Phase 2 - Load conversation facts (only for conversations with 15+ messages)
+    # NEW: Phase 2 - Load conversation facts with multi-factor scoring
+    # (only for conversations with 15+ messages)
     facts_start = time.time()
     facts_section = ""
+    selected_fact_ids = []  # Track for access reinforcement
     if conversation.message_count >= 15:
-        from app.models.conversation_fact import ConversationFact
-
-        conversation_facts = (
-            db.query(ConversationFact)
-            .filter(ConversationFact.conversation_id == conversation_id)
-            .order_by(ConversationFact.confidence_score.desc())
-            .limit(10)  # Top 10 facts only
-            .all()
+        from app.services.memory_scoring import (
+            select_facts_multifactor,
+            format_facts_for_prompt,
+            update_fact_access,
         )
 
-        # Build compressed facts section
-        if conversation_facts:
-            # Compressed format: key=value(T1), key2=value2(T2)
-            facts_items = [
-                f"{fact.fact_key}={fact.fact_value}(T{fact.source_turn})"
-                for fact in conversation_facts
-            ]
-            facts_section = f"\n\n**Known Facts**: {', '.join(facts_items)}"
+        # Use multi-factor scoring (importance + recency + category + source_turn)
+        scored_facts = select_facts_multifactor(
+            db=db,
+            conversation_id=conversation_id,
+            limit=15,  # Increased from 10 for better coverage
+            user_query=message_request.content,  # For future relevance scoring
+        )
+
+        # Build formatted facts section (grouped by category)
+        if scored_facts:
+            facts_section = format_facts_for_prompt(scored_facts)
+            selected_fact_ids = [str(fact.id) for fact, _ in scored_facts]
+
             facts_time = time.time() - facts_start
-            logger.info(f"[Conversation Facts] Loaded {len(conversation_facts)} facts in {facts_time:.3f}s")
+            # Log scoring details
+            top_scores = [(f.fact_key, f.category, score) for f, score in scored_facts[:3]]
+            logger.info(
+                f"[Conversation Facts] Selected {len(scored_facts)} facts in {facts_time:.3f}s "
+                f"(top: {top_scores})"
+            )
         else:
             logger.info("[Conversation Facts] No facts found for this conversation")
     else:
@@ -1308,6 +1316,15 @@ async def send_message(
         llm_time = time.time() - llm_start
         logger.error(f"[LLM Generation] Failed after {llm_time:.3f}s: {str(e)}")
         raise HTTPException(status_code=500, detail=f"LLM error: {str(e)}")
+
+    # 8b. Update fact access reinforcement (facts used in this turn get stronger)
+    if selected_fact_ids:
+        try:
+            from app.services.memory_scoring import update_fact_access
+            update_fact_access(db, selected_fact_ids)
+            logger.debug(f"[Memory Scoring] Reinforced {len(selected_fact_ids)} facts")
+        except Exception as e:
+            logger.warning(f"[Memory Scoring] Failed to update fact access: {e}")
 
     # 9. Save assistant message
     assistant_message = MessageModel(
