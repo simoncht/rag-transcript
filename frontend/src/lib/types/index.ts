@@ -734,8 +734,11 @@ export interface PricingTier {
   minutes_limit: number;
 }
 
+export type BillingCycle = "monthly" | "yearly";
+
 export interface CheckoutSessionRequest {
   tier: SubscriptionTier;
+  billing_cycle?: BillingCycle;
   success_url: string;
   cancel_url: string;
 }

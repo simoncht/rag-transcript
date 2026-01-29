@@ -10,7 +10,7 @@ Enhanced with multi-factor scoring based on OpenAI/Anthropic memory best practic
 """
 import json
 import logging
-from typing import List, Dict
+from typing import List, Dict, Optional
 from sqlalchemy.orm import Session
 
 from app.models.conversation_fact import ConversationFact, FactCategory
@@ -447,3 +447,202 @@ def backfill_fact_scores(
         logger.info(f"[Backfill DRY RUN] Would update {updated_count} facts")
 
     return updated_count
+
+
+def backfill_historical_facts(
+    db: Session,
+    conversation_id: str,
+    start_turn: int = 1,
+    end_turn: Optional[int] = None,
+    dry_run: bool = False,
+    batch_size: int = 10,
+) -> dict:
+    """
+    Extract facts from historical message pairs that were missed.
+
+    This function processes message pairs (user question + assistant response)
+    from conversations created before fact extraction was implemented, or for
+    turns that were skipped during processing.
+
+    Args:
+        db: Database session
+        conversation_id: Conversation UUID to backfill
+        start_turn: First turn to process (1-indexed, default: 1)
+        end_turn: Last turn to process (None = all turns)
+        dry_run: If True, log what would be extracted but don't save
+        batch_size: Commit after this many turns (to avoid memory issues)
+
+    Returns:
+        Dict with stats: turns_processed, facts_extracted, turns_skipped, errors
+    """
+    from app.models.conversation import Conversation
+
+    logger.info(
+        f"[Backfill] Starting historical fact extraction for conversation {conversation_id}"
+    )
+    logger.info(f"[Backfill] Range: turn {start_turn} to {end_turn or 'end'}, dry_run={dry_run}")
+
+    # Get conversation
+    conversation = (
+        db.query(Conversation)
+        .filter(Conversation.id == conversation_id)
+        .first()
+    )
+    if not conversation:
+        logger.error(f"[Backfill] Conversation {conversation_id} not found")
+        return {
+            "turns_processed": 0,
+            "facts_extracted": 0,
+            "turns_skipped": 0,
+            "errors": ["Conversation not found"],
+        }
+
+    # Get all messages ordered by created_at ascending
+    messages = (
+        db.query(Message)
+        .filter(Message.conversation_id == conversation_id)
+        .order_by(Message.created_at.asc())
+        .all()
+    )
+
+    logger.info(f"[Backfill] Found {len(messages)} total messages")
+
+    # Get existing fact turns to avoid duplicates
+    existing_turns = set(
+        row[0]
+        for row in db.query(ConversationFact.source_turn)
+        .filter(ConversationFact.conversation_id == conversation_id)
+        .distinct()
+        .all()
+    )
+    logger.info(f"[Backfill] Existing facts at turns: {sorted(existing_turns)}")
+
+    # Initialize service
+    service = FactExtractionService()
+
+    stats = {
+        "turns_processed": 0,
+        "facts_extracted": 0,
+        "turns_skipped": 0,
+        "errors": [],
+    }
+
+    # Process message pairs (user at i, assistant at i+1)
+    i = 0
+
+    while i < len(messages) - 1:
+        user_msg = messages[i]
+        assistant_msg = messages[i + 1]
+
+        # Verify pair structure
+        if user_msg.role != "user":
+            logger.debug(f"[Backfill] Skipping index {i}: not a user message (role={user_msg.role})")
+            i += 1
+            continue
+
+        if assistant_msg.role != "assistant":
+            logger.debug(f"[Backfill] Skipping index {i}: next message not assistant (role={assistant_msg.role})")
+            i += 1
+            continue
+
+        # Calculate turn number (1-indexed)
+        # Turn 1 = messages[0,1], Turn 2 = messages[2,3], etc.
+        turn = (i // 2) + 1
+
+        # Check if turn is in range
+        if turn < start_turn:
+            i += 2
+            continue
+        if end_turn is not None and turn > end_turn:
+            break
+
+        # Skip if turn already has facts
+        if turn in existing_turns:
+            logger.debug(f"[Backfill] Turn {turn} already has facts, skipping")
+            stats["turns_skipped"] += 1
+            i += 2
+            continue
+
+        logger.info(f"[Backfill] Processing turn {turn}: '{user_msg.content[:50]}...'")
+
+        try:
+            # Build extraction prompt and call LLM
+            prompt_messages = service._build_extraction_prompt(
+                user_msg.content, assistant_msg.content
+            )
+
+            response = service.llm_service.complete(
+                messages=prompt_messages,
+                temperature=service.temperature,
+                max_tokens=service.max_tokens,
+                retry=False,
+            )
+
+            # Parse response
+            facts_data = service._parse_facts_response(response.content)
+
+            # Create ConversationFact objects with correct turn
+            turn_facts = []
+            for fact_dict in facts_data:
+                importance = fact_dict.get("importance", 0.5)
+                if not isinstance(importance, (int, float)):
+                    importance = 0.5
+                importance = max(0.0, min(1.0, float(importance)))
+
+                category = fact_dict.get("category", "topic")
+                valid_categories = [c.value for c in FactCategory]
+                if category not in valid_categories:
+                    category = FactCategory.TOPIC.value
+
+                fact = ConversationFact(
+                    conversation_id=conversation.id,
+                    user_id=conversation.user_id,
+                    fact_key=fact_dict["key"],
+                    fact_value=fact_dict["value"],
+                    source_turn=turn,  # Use calculated turn, not conversation.message_count
+                    confidence_score=1.0,
+                    importance=importance,
+                    category=category,
+                )
+                turn_facts.append(fact)
+
+            # Deduplicate against existing facts in DB (only this turn's facts)
+            deduplicated_facts = service._deduplicate_facts(
+                db, conversation_id, turn_facts
+            )
+
+            if dry_run:
+                for fact in deduplicated_facts:
+                    logger.info(
+                        f"[Backfill DRY RUN] Would extract: turn={fact.source_turn}, "
+                        f"key={fact.fact_key}, value={fact.fact_value[:50]}..., "
+                        f"importance={fact.importance:.2f}, category={fact.category}"
+                    )
+                stats["facts_extracted"] += len(deduplicated_facts)
+            else:
+                # Add facts to session and commit immediately for this turn
+                for fact in deduplicated_facts:
+                    db.add(fact)
+                # Commit after each turn to avoid batch issues with duplicate keys
+                db.commit()
+                stats["facts_extracted"] += len(deduplicated_facts)
+                logger.info(f"[Backfill] Turn {turn}: extracted {len(deduplicated_facts)} facts")
+
+            stats["turns_processed"] += 1
+
+        except Exception as e:
+            error_msg = f"Turn {turn}: {str(e)}"
+            logger.warning(f"[Backfill] Error processing turn {turn}: {e}")
+            stats["errors"].append(error_msg)
+            # Rollback any pending changes for this turn
+            db.rollback()
+
+        i += 2  # Move to next pair
+
+    logger.info(
+        f"[Backfill] Complete: processed={stats['turns_processed']}, "
+        f"extracted={stats['facts_extracted']}, skipped={stats['turns_skipped']}, "
+        f"errors={len(stats['errors'])}"
+    )
+
+    return stats

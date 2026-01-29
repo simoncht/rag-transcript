@@ -1369,6 +1369,53 @@ async def get_admin_alerts(
     return AbuseAlertResponse(total=0, alerts=[])
 
 
+@router.post("/backfill-facts/{conversation_id}")
+async def backfill_conversation_facts(
+    conversation_id: UUID,
+    start_turn: int = Query(1, ge=1, description="First turn to process (1-indexed)"),
+    end_turn: Optional[int] = Query(None, ge=1, description="Last turn to process (None = all)"),
+    dry_run: bool = Query(False, description="If true, log but don't save facts"),
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_admin_user),
+):
+    """
+    Backfill facts for a conversation's historical messages.
+
+    Extracts facts from message pairs that were missed because they were
+    created before the fact extraction feature was implemented.
+
+    Admin only. Use dry_run=true to preview what would be extracted.
+    """
+    from app.services.fact_extraction import backfill_historical_facts
+
+    # Verify conversation exists
+    conversation = db.query(Conversation).filter(Conversation.id == conversation_id).first()
+    if not conversation:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Conversation not found",
+        )
+
+    # Run backfill
+    result = backfill_historical_facts(
+        db=db,
+        conversation_id=str(conversation_id),
+        start_turn=start_turn,
+        end_turn=end_turn,
+        dry_run=dry_run,
+    )
+
+    return {
+        "success": True,
+        "conversation_id": str(conversation_id),
+        "dry_run": dry_run,
+        "turns_processed": result["turns_processed"],
+        "facts_extracted": result["facts_extracted"],
+        "turns_skipped": result["turns_skipped"],
+        "errors": result["errors"],
+    }
+
+
 @router.get("/llm-usage")
 async def get_llm_usage(
     db: Session = Depends(get_db),

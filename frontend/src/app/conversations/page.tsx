@@ -1,11 +1,12 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { formatDistanceToNow } from "date-fns";
 import { parseUTCDate } from "@/lib/utils";
 import { useAuthState } from "@/lib/auth";
+import { useSetBreadcrumb } from "@/contexts/BreadcrumbContext";
 import { MainLayout } from "@/components/layout/MainLayout";
 import { conversationsApi } from "@/lib/api/conversations";
 import { videosApi } from "@/lib/api/videos";
@@ -121,6 +122,17 @@ export default function ConversationsPage() {
     setSelectionMode("collection");
   };
 
+  // Breadcrumb: active conversations count
+  const breadcrumbDetail = useMemo(() => {
+    const conversations = conversationsData?.conversations;
+    if (!conversations || conversations.length === 0) return undefined;
+    const activeCount = conversations.filter(c => (c.message_count || 0) > 0).length;
+    if (activeCount > 0) return `${activeCount} active`;
+    return `${conversations.length} total`;
+  }, [conversationsData?.conversations]);
+
+  useSetBreadcrumb("conversations", breadcrumbDetail);
+
   if (!canFetch) {
     return (
       <MainLayout>
@@ -153,6 +165,28 @@ export default function ConversationsPage() {
           <p className="text-sm text-muted-foreground">
             Create focused chats over one or more videos and pick up where you left off.
           </p>
+          {conversationsData?.conversations && conversationsData.conversations.length > 0 && (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground pt-1">
+              <span>{conversationsData.conversations.length} conversation{conversationsData.conversations.length !== 1 ? 's' : ''}</span>
+              <span>•</span>
+              <span>
+                {conversationsData.conversations.reduce((sum, c) => sum + (c.message_count || 0), 0)} message{conversationsData.conversations.reduce((sum, c) => sum + (c.message_count || 0), 0) !== 1 ? 's' : ''}
+              </span>
+              {(() => {
+                const dates = conversationsData.conversations
+                  .map(c => c.last_message_at)
+                  .filter(Boolean)
+                  .sort((a, b) => new Date(b!).getTime() - new Date(a!).getTime());
+                const lastActivity = dates[0];
+                return lastActivity ? (
+                  <>
+                    <span>•</span>
+                    <span>Last active {formatDistanceToNow(parseUTCDate(lastActivity), { addSuffix: true })}</span>
+                  </>
+                ) : null;
+              })()}
+            </div>
+          )}
         </div>
 
         <Card>

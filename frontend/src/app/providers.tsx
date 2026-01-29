@@ -7,6 +7,7 @@ import { SessionProvider } from "next-auth/react"
 import { AuthInitializer } from "@/components/auth-initializer"
 import { ThemeProvider } from "@/components/theme-provider"
 import { AuthProvider } from "@/lib/auth"
+import { BreadcrumbProvider } from "@/contexts/BreadcrumbContext"
 
 export function Providers({ children }: { children: React.ReactNode }) {
   const [queryClient] = useState(
@@ -31,8 +32,10 @@ export function Providers({ children }: { children: React.ReactNode }) {
       <SessionProvider>
         <AuthProvider>
           <QueryClientProvider client={queryClient}>
-            <AuthInitializer />
-            {children}
+            <BreadcrumbProvider>
+              <AuthInitializer />
+              {children}
+            </BreadcrumbProvider>
           </QueryClientProvider>
         </AuthProvider>
       </SessionProvider>

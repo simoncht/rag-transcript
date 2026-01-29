@@ -9,7 +9,7 @@ Handles:
 - Webhook event processing
 """
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
 import stripe
 from sqlalchemy.orm import Session
@@ -79,10 +79,12 @@ class SubscriptionService:
             Video.is_deleted.is_(False)
         ).scalar() or 0
 
-        # Calculate messages used (from usage_events)
+        # Calculate messages used THIS MONTH (from usage_events)
+        period_start = datetime.utcnow() - timedelta(days=30)
         messages_used = db.query(func.count(UsageEvent.id)).filter(
             UsageEvent.user_id == user_id,
-            UsageEvent.event_type == "message"
+            UsageEvent.event_type == "chat_message_sent",  # Match actual event type from usage_tracker.py
+            UsageEvent.event_timestamp >= period_start,     # Rolling 30-day window
         ).scalar() or 0
 
         # Calculate comprehensive storage (disk files + database text + vectors)
@@ -350,6 +352,102 @@ class SubscriptionService:
         db.commit()
 
         logger.info(f"Checkout completed for user {user_id}: upgraded to {tier}")
+
+    def verify_checkout_session(
+        self,
+        session_id: str,
+        user: User,
+        db: Session,
+    ) -> QuotaUsage:
+        """
+        Verify a completed checkout session and return updated quota.
+
+        This method synchronously verifies the checkout session with Stripe
+        and updates the user's subscription, avoiding race conditions with
+        webhook delivery.
+
+        Args:
+            session_id: Stripe checkout session ID
+            user: Current user
+            db: Database session
+
+        Returns:
+            Updated quota information
+
+        Raises:
+            ValueError: If session is invalid or not completed
+        """
+        if not stripe.api_key:
+            raise ValueError("Stripe is not configured")
+
+        # Retrieve the checkout session from Stripe
+        try:
+            session = stripe.checkout.Session.retrieve(
+                session_id,
+                expand=["subscription"],
+            )
+        except stripe.error.InvalidRequestError as e:
+            raise ValueError(f"Invalid session ID: {str(e)}")
+
+        # Verify session belongs to this user
+        session_user_id = session.get("metadata", {}).get("user_id")
+        if session_user_id != str(user.id):
+            raise ValueError("Session does not belong to this user")
+
+        # Check if session is completed
+        if session.get("payment_status") != "paid":
+            raise ValueError("Payment not completed")
+
+        # Get tier from metadata
+        tier = session.get("metadata", {}).get("tier")
+        if not tier:
+            raise ValueError("Tier not found in session metadata")
+
+        # Check if user already has this tier (webhook may have already processed)
+        if user.subscription_tier == tier:
+            logger.info(f"User {user.id} already upgraded to {tier}")
+            return self.get_user_quota(user.id, db)
+
+        # Update user subscription synchronously
+        user.subscription_tier = tier
+        user.subscription_status = "active"
+
+        # Get subscription details from Stripe
+        subscription_id = session.get("subscription")
+        if subscription_id:
+            # Check if subscription record exists (webhook may have created it)
+            existing_sub = db.query(Subscription).filter(
+                Subscription.stripe_subscription_id == subscription_id
+            ).first()
+
+            if not existing_sub:
+                # Fetch subscription details
+                stripe_subscription = (
+                    session.subscription
+                    if hasattr(session, "subscription") and isinstance(session.subscription, dict)
+                    else stripe.Subscription.retrieve(subscription_id)
+                )
+
+                # Create subscription record
+                subscription = Subscription(
+                    user_id=user.id,
+                    stripe_subscription_id=subscription_id,
+                    stripe_customer_id=session["customer"],
+                    stripe_price_id=stripe_subscription["items"]["data"][0]["price"]["id"],
+                    tier=tier,
+                    status="active",
+                    current_period_start=datetime.fromtimestamp(stripe_subscription["current_period_start"]),
+                    current_period_end=datetime.fromtimestamp(stripe_subscription["current_period_end"]),
+                    cancel_at_period_end=0,
+                )
+                db.add(subscription)
+
+        db.commit()
+
+        logger.info(f"Verified checkout and upgraded user {user.id} to {tier}")
+
+        # Return updated quota
+        return self.get_user_quota(user.id, db)
 
     def handle_subscription_updated(
         self,

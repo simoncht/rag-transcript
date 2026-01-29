@@ -40,6 +40,7 @@ export default function PricingComparison({
     try {
       const { checkout_url } = await subscriptionsApi.createCheckoutSession({
         tier,
+        billing_cycle: billingCycle,
         success_url: `${window.location.origin}/checkout/success?session_id={CHECKOUT_SESSION_ID}`,
         cancel_url: `${window.location.origin}/checkout/cancel`,
       });

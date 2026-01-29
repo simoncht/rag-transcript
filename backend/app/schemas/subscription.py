@@ -55,10 +55,15 @@ class SubscriptionDetail(SubscriptionBase):
         from_attributes = True
 
 
+# Billing cycle type
+BillingCycle = Literal["monthly", "yearly"]
+
+
 # Stripe checkout schemas
 class CheckoutSessionRequest(BaseModel):
     """Request to create a Stripe checkout session."""
     tier: SubscriptionTier = Field(..., description="Subscription tier to purchase")
+    billing_cycle: BillingCycle = Field(default="monthly", description="Billing cycle: monthly or yearly")
     success_url: str = Field(..., description="URL to redirect after successful payment")
     cancel_url: str = Field(..., description="URL to redirect if payment is canceled")
 

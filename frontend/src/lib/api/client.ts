@@ -62,6 +62,9 @@ export function clearTokenCache() {
   tokenFetchPromise = null;
 }
 
+// Export getCachedToken for streaming client (which uses fetch instead of axios)
+export { getCachedToken };
+
 export const apiClient = axios.create({
   baseURL: `${API_BASE_URL}${API_V1_PREFIX}`,
   headers: {

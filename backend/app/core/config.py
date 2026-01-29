@@ -161,6 +161,11 @@ class Settings(BaseSettings):
     enable_query_expansion: bool = True
     query_expansion_variants: int = 2  # Number of query variants to generate
 
+    # RAG Query Rewriting (History-Aware Retrieval)
+    enable_query_rewriting: bool = True
+    query_rewrite_history_limit: int = 6  # Messages to include for context
+    query_rewrite_model: str = "deepseek-chat"  # Fast model for rewriting
+
     # Video Processing Limits
     max_video_duration_seconds: int = 14400  # 4 hours
     max_video_file_size_mb: int = 2048  # 2 GB

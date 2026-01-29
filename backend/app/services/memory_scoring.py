@@ -13,8 +13,9 @@ Target: 80%+ early fact recall.
 import logging
 import math
 from datetime import datetime, timedelta
-from typing import List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
+import numpy as np
 from sqlalchemy import case, func, text
 from sqlalchemy.orm import Session
 
@@ -22,11 +23,12 @@ from app.models.conversation_fact import ConversationFact, FactCategory
 
 logger = logging.getLogger(__name__)
 
-# Scoring weights (OpenAI WMR recommendations)
-WEIGHT_IMPORTANCE = 0.40  # LLM-rated significance
-WEIGHT_RECENCY = 0.25     # Time decay factor
-WEIGHT_CATEGORY = 0.20    # Category priority
-WEIGHT_SOURCE_TURN = 0.15 # Earlier identity facts get priority
+# Scoring weights (OpenAI WMR recommendations + query relevance)
+WEIGHT_IMPORTANCE = 0.30      # LLM-rated significance (reduced from 0.40)
+WEIGHT_QUERY_RELEVANCE = 0.25 # NEW: semantic similarity to current query
+WEIGHT_RECENCY = 0.15         # Time decay factor (reduced from 0.25)
+WEIGHT_CATEGORY = 0.15        # Category priority (reduced from 0.20)
+WEIGHT_SOURCE_TURN = 0.15     # Earlier identity facts get priority
 
 # Recency decay factor (0.995 per hour = ~88% after 24h)
 DECAY_RATE = 0.995
@@ -43,6 +45,10 @@ CATEGORY_PRIORITIES = {
 
 # Default limit (can be overridden)
 DEFAULT_FACT_LIMIT = 15
+
+# Maximum facts to embed for query relevance (performance limit)
+# Beyond this, we pre-filter by importance before embedding
+MAX_FACTS_TO_EMBED = 75
 
 
 def calculate_recency_score(
@@ -83,6 +89,28 @@ def calculate_recency_score(
     return score
 
 
+def calculate_query_relevance(
+    query_embedding: np.ndarray,
+    fact_embedding: np.ndarray,
+) -> float:
+    """
+    Calculate cosine similarity between query and fact.
+
+    Since embeddings are already normalized to unit vectors,
+    the dot product equals cosine similarity.
+
+    Args:
+        query_embedding: Normalized query embedding vector
+        fact_embedding: Normalized fact embedding vector
+
+    Returns:
+        Relevance score between 0.0 and 1.0
+    """
+    similarity = np.dot(query_embedding, fact_embedding)
+    # Clamp to [0, 1] - negative similarities treated as irrelevant
+    return max(0.0, float(similarity))
+
+
 def calculate_source_turn_priority(source_turn: int, max_turn: int) -> float:
     """
     Calculate priority based on source turn.
@@ -116,21 +144,24 @@ def calculate_source_turn_priority(source_turn: int, max_turn: int) -> float:
 def calculate_composite_score(
     fact: ConversationFact,
     max_turn: int,
+    query_relevance: float = 0.5,
 ) -> float:
     """
     Calculate composite memory score using multi-factor weighting.
 
-    Formula (OpenAI WMR-inspired):
+    Formula (OpenAI WMR-inspired + query relevance):
     score = (
-        importance * 0.40 +
-        recency_score * 0.25 +
-        category_priority * 0.20 +
+        importance * 0.30 +
+        query_relevance * 0.25 +
+        recency_score * 0.15 +
+        category_priority * 0.15 +
         source_turn_priority * 0.15
     )
 
     Args:
         fact: The ConversationFact to score
         max_turn: Maximum turn number in conversation
+        query_relevance: Semantic similarity to user query (0.0-1.0, default 0.5)
 
     Returns:
         Composite score between 0.0 and 1.0
@@ -138,22 +169,26 @@ def calculate_composite_score(
     # 1. Importance score (LLM-rated, stored in DB)
     importance_score = fact.importance if fact.importance else 0.5
 
-    # 2. Recency score (with decay and reinforcement)
+    # 2. Query relevance (semantic similarity to current query)
+    # Uses provided value or defaults to neutral 0.5 if no query
+
+    # 3. Recency score (with decay and reinforcement)
     recency_score = calculate_recency_score(
         fact.created_at,
         fact.last_accessed,
         fact.access_count if fact.access_count else 0,
     )
 
-    # 3. Category priority
+    # 4. Category priority
     category_score = CATEGORY_PRIORITIES.get(fact.category, 0.5)
 
-    # 4. Source turn priority (earlier turns for identity facts)
+    # 5. Source turn priority (earlier turns for identity facts)
     source_priority = calculate_source_turn_priority(fact.source_turn, max_turn)
 
     # Combine with weights
     composite = (
         importance_score * WEIGHT_IMPORTANCE +
+        query_relevance * WEIGHT_QUERY_RELEVANCE +
         recency_score * WEIGHT_RECENCY +
         category_score * WEIGHT_CATEGORY +
         source_priority * WEIGHT_SOURCE_TURN
@@ -167,18 +202,20 @@ def select_facts_multifactor(
     conversation_id: str,
     limit: int = DEFAULT_FACT_LIMIT,
     user_query: Optional[str] = None,
+    embedding_service: Optional[Any] = None,
 ) -> List[Tuple[ConversationFact, float]]:
     """
-    Select facts using multi-factor scoring algorithm.
+    Select facts using multi-factor scoring algorithm with query-aware retrieval.
 
     This replaces the broken recency-only selection with industry-standard
-    weighted memory retrieval (OpenAI WMR pattern).
+    weighted memory retrieval (OpenAI WMR pattern) plus semantic relevance.
 
     Args:
         db: Database session
         conversation_id: Conversation UUID
         limit: Maximum number of facts to return
-        user_query: Optional query for future relevance scoring
+        user_query: Optional query for relevance scoring
+        embedding_service: Optional embedding service for query relevance
 
     Returns:
         List of (fact, score) tuples, sorted by score descending
@@ -196,10 +233,61 @@ def select_facts_multifactor(
     # Get max turn for source priority calculation
     max_turn = max(f.source_turn for f in facts)
 
+    # Calculate query relevance scores if possible
+    relevance_scores: Dict[str, float] = {}
+    if user_query and embedding_service:
+        try:
+            import time as _time
+            embed_start = _time.time()
+
+            # Embed user query
+            query_embedding = embedding_service.embed_text(user_query, use_cache=False)
+            # Handle tuple return from cached embedding (convert to array)
+            if isinstance(query_embedding, tuple):
+                query_embedding = np.array(query_embedding)
+
+            # Performance optimization: if too many facts, pre-filter by importance
+            # to limit embedding cost while still prioritizing high-importance facts
+            facts_to_embed = facts
+            if len(facts) > MAX_FACTS_TO_EMBED:
+                # Sort by importance and take top N
+                facts_to_embed = sorted(
+                    facts,
+                    key=lambda f: f.importance if f.importance else 0.5,
+                    reverse=True
+                )[:MAX_FACTS_TO_EMBED]
+                logger.info(
+                    f"[Memory Scoring] Pre-filtered to {len(facts_to_embed)}/{len(facts)} facts for embedding"
+                )
+
+            # Batch embed fact texts for efficiency
+            # Combine fact_key and fact_value for richer semantic matching
+            fact_texts = [f"{f.fact_key}: {f.fact_value}" for f in facts_to_embed]
+            fact_embeddings = embedding_service.embed_batch(fact_texts)
+
+            # Calculate relevance for each embedded fact
+            for fact, fact_emb in zip(facts_to_embed, fact_embeddings):
+                # Handle tuple return from cached embedding
+                if isinstance(fact_emb, tuple):
+                    fact_emb = np.array(fact_emb)
+                relevance_scores[str(fact.id)] = calculate_query_relevance(
+                    query_embedding, fact_emb
+                )
+
+            embed_time = (_time.time() - embed_start) * 1000
+            logger.info(
+                f"[Memory Scoring] Calculated query relevance for {len(facts_to_embed)} facts "
+                f"in {embed_time:.0f}ms"
+            )
+        except Exception as e:
+            logger.warning(f"[Memory Scoring] Query relevance calculation failed: {e}")
+            # Fall back to neutral relevance (0.5) for all facts
+
     # Calculate composite score for each fact
     scored_facts = []
     for fact in facts:
-        score = calculate_composite_score(fact, max_turn)
+        relevance = relevance_scores.get(str(fact.id), 0.5)
+        score = calculate_composite_score(fact, max_turn, query_relevance=relevance)
         scored_facts.append((fact, score))
 
     # Sort by score descending
@@ -212,11 +300,19 @@ def select_facts_multifactor(
     )
     if scored_facts:
         top_fact, top_score = scored_facts[0]
-        logger.debug(
-            f"[Memory Scoring] Top fact: {top_fact.fact_key}={top_fact.fact_value[:30]}... "
-            f"(score={top_score:.3f}, importance={top_fact.importance:.2f}, "
-            f"category={top_fact.category}, turn={top_fact.source_turn})"
-        )
+        top_relevance = relevance_scores.get(str(top_fact.id), 0.5)
+        if user_query:
+            logger.info(
+                f"[Memory Scoring] Top fact: {top_fact.fact_key}={top_fact.fact_value[:30]}... "
+                f"(score={top_score:.3f}, relevance={top_relevance:.3f}, "
+                f"importance={top_fact.importance:.2f}, category={top_fact.category})"
+            )
+        else:
+            logger.debug(
+                f"[Memory Scoring] Top fact: {top_fact.fact_key}={top_fact.fact_value[:30]}... "
+                f"(score={top_score:.3f}, importance={top_fact.importance:.2f}, "
+                f"category={top_fact.category}, turn={top_fact.source_turn})"
+            )
 
     return scored_facts[:limit]
 

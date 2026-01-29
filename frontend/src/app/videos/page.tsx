@@ -8,7 +8,7 @@
 
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { formatDistanceToNow } from "date-fns";
 import { useAuth, createParallelQueryFn, useAuthState } from "@/lib/auth";
@@ -72,6 +72,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn, parseUTCDate } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
+import { useSetBreadcrumb } from "@/contexts/BreadcrumbContext";
 import {
   Tooltip,
   TooltipContent,
@@ -441,6 +442,20 @@ export default function VideosPage() {
 
   const videos = data?.videos ?? [];
   const selectedVideos = videos.filter((video) => selectedVideoIds.has(video.id));
+
+  // Breadcrumb: total duration of all videos
+  const breadcrumbDetail = useMemo(() => {
+    if (videos.length === 0) return undefined;
+    const totalSeconds = videos.reduce((sum, v) => sum + (v.duration_seconds || 0), 0);
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    if (hours > 0) return `${hours}h ${minutes}m content`;
+    if (minutes > 0) return `${minutes}m content`;
+    return undefined;
+  }, [videos]);
+
+  useSetBreadcrumb("videos", breadcrumbDetail);
+
   const TranscriptPanel = ({ videoId, isOpen }: { videoId: string; isOpen: boolean }) => {
     const [activeTab, setActiveTab] = useState<"readable" | "timeline">("readable");
     const [search, setSearch] = useState("");
@@ -737,6 +752,30 @@ export default function VideosPage() {
             <p className="text-sm text-muted-foreground">
               Track ingestion, storage, and transcript quality across your workspace.
             </p>
+            {videos.length > 0 && (
+              <div className="flex items-center gap-2 text-xs text-muted-foreground pt-1">
+                <span>{videos.length} video{videos.length !== 1 ? 's' : ''}</span>
+                {(() => {
+                  const processingCount = videos.filter(v => !['completed', 'failed', 'canceled'].includes(v.status)).length;
+                  return processingCount > 0 ? (
+                    <>
+                      <span>•</span>
+                      <span>{processingCount} processing</span>
+                    </>
+                  ) : null;
+                })()}
+                {usageSummary?.storage_breakdown?.total_mb != null && usageSummary.storage_breakdown.total_mb > 0 && (
+                  <>
+                    <span>•</span>
+                    <span>
+                      {usageSummary.storage_breakdown.total_mb >= 1024
+                        ? `${(usageSummary.storage_breakdown.total_mb / 1024).toFixed(1)} GB`
+                        : `${usageSummary.storage_breakdown.total_mb.toFixed(0)} MB`} used
+                    </span>
+                  </>
+                )}
+              </div>
+            )}
           </div>
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
             {quota && (

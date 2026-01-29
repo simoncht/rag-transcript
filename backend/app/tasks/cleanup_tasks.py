@@ -15,7 +15,7 @@ from decimal import Decimal
 from app.core.celery_app import celery_app
 from app.core.config import settings
 from app.db.base import SessionLocal
-from app.models import Video, User, UserQuota, Chunk
+from app.models import Video, User, UserQuota, Chunk, CollectionVideo
 from app.services.job_cancellation import (
     cancel_video_processing,
     CleanupOption,
@@ -243,6 +243,24 @@ def reconcile_storage_quotas():
             print(
                 f"[reconcile] Deleted {orphaned_chunk_count} orphaned chunks "
                 "from soft-deleted videos"
+            )
+
+        # Clean up orphaned CollectionVideo entries from soft-deleted videos
+        # This prevents collection video counts from being stale
+        orphaned_cv_count = (
+            db.query(CollectionVideo)
+            .filter(
+                CollectionVideo.video_id.in_(
+                    db.query(Video.id).filter(Video.is_deleted.is_(True))
+                )
+            )
+            .delete(synchronize_session=False)
+        )
+        if orphaned_cv_count > 0:
+            db.commit()
+            print(
+                f"[reconcile] Deleted {orphaned_cv_count} orphaned collection-video "
+                "associations from soft-deleted videos"
             )
 
         # Get all user quotas

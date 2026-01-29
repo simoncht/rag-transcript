@@ -16,9 +16,9 @@ const metrics: Metric[] = [
     description: 'Answers that connect insights across your library',
   },
   {
-    value: 'Every',
-    label: 'Word Indexed',
-    description: 'Nothing in your videos gets missed',
+    value: 'Nothing',
+    label: 'Missed',
+    description: 'Every piece of your content becomes searchable',
   },
   {
     value: '100%',
@@ -133,26 +133,26 @@ export default function TechnologySection() {
                 </span>
               </div>
               <p className="text-gray-600 mb-4">
-                Unlike typical AI chats that forget everything between sessions, our system automatically extracts and stores key facts after 15+ messages. Return to any conversation days or weeks later and pick up exactly where you left off.
+                Your full conversation is saved—and our AI learns what matters. Key facts are extracted from every exchange, so even when the conversation grows long, important details from earlier aren't forgotten.
               </p>
               <div className="flex flex-wrap gap-4 text-sm">
                 <div className="flex items-center gap-2">
                   <svg className="w-5 h-5 text-green-600" fill="currentColor" viewBox="0 0 20 20">
                     <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
                   </svg>
-                  <span className="text-gray-700">Automatic fact extraction</span>
+                  <span className="text-gray-700">Full history saved</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <svg className="w-5 h-5 text-green-600" fill="currentColor" viewBox="0 0 20 20">
                     <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
                   </svg>
-                  <span className="text-gray-700">Cross-session persistence</span>
+                  <span className="text-gray-700">Key facts extracted every turn</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <svg className="w-5 h-5 text-green-600" fill="currentColor" viewBox="0 0 20 20">
                     <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
                   </svg>
-                  <span className="text-gray-700">Context-aware responses</span>
+                  <span className="text-gray-700">Long conversations stay coherent</span>
                 </div>
               </div>
             </div>

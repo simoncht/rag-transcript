@@ -21,6 +21,7 @@ import type { QuotaUsage } from "@/lib/types";
 import { conversationsApi } from "@/lib/api/conversations";
 import { insightsApi } from "@/lib/api/insights";
 import { videosApi } from "@/lib/api/videos";
+import { useStreamingMessage } from "@/hooks/useStreamingMessage";
 import type {
   ConversationWithMessages,
   Message,
@@ -51,6 +52,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn, formatMessageTime } from "@/lib/utils";
+import { formatDistanceToNow } from "date-fns";
 import { ConversationInsightMap } from "@/components/insights/ConversationInsightMap";
 import {
   ArrowLeft,
@@ -73,6 +75,9 @@ import {
   PanelRightClose,
   PanelRightOpen,
   Info,
+  Square,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 import Link from "next/link";
 import { ThemeToggle } from "@/components/layout/ThemeToggle";
@@ -237,6 +242,7 @@ interface MessageItemProps {
 }
 
 const MessageItem = memo<MessageItemProps>(({ message, highlightedSourceId, onCitationClick }) => {
+  const [sourcesExpanded, setSourcesExpanded] = useState(false);
   const isSystem = message.role === "system";
   const isUser = message.role === "user";
   const isAssistant = message.role === "assistant";
@@ -281,8 +287,12 @@ const MessageItem = memo<MessageItemProps>(({ message, highlightedSourceId, onCi
   const handleSourceClick = useCallback(
     (rank?: number) => {
       if (!rank) return;
-      // Simply trigger the citation click - all sources are now shown equally
-      onCitationClick(message.id, rank);
+      // Expand sources first if collapsed
+      setSourcesExpanded(true);
+      // Use setTimeout to allow DOM to update before scrolling
+      setTimeout(() => {
+        onCitationClick(message.id, rank);
+      }, 50);
     },
     [message.id, onCitationClick]
   );
@@ -385,104 +395,115 @@ const MessageItem = memo<MessageItemProps>(({ message, highlightedSourceId, onCi
           </div>
         )}
 
-        {/* Sources section - grouped by video for multi-video conversations */}
+        {/* Sources section - collapsible, grouped by video for multi-video conversations */}
         {isAssistant && totalSources > 0 && (
-          <div className="space-y-3 rounded-lg border border-border bg-muted/30 p-3">
-            {/* Header with source count and video count */}
-            <div className="flex flex-wrap items-center gap-2">
+          <div className="rounded-lg border border-border bg-muted/30">
+            {/* Clickable header to toggle sources */}
+            <button
+              type="button"
+              onClick={() => setSourcesExpanded(!sourcesExpanded)}
+              className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-muted/50 transition-colors rounded-lg"
+            >
               <p className="text-xs font-medium">
                 Sources ({totalSources}{totalVideos > 1 ? ` from ${totalVideos} videos` : ""})
               </p>
-            </div>
+              {sourcesExpanded ? (
+                <ChevronUp className="h-4 w-4 text-muted-foreground" />
+              ) : (
+                <ChevronDown className="h-4 w-4 text-muted-foreground" />
+              )}
+            </button>
 
-            {/* Sources grouped by video */}
-            <div className="space-y-4">
-              {groupedSources.map((group) => (
-                <div key={group.videoId} className="space-y-2">
-                  {/* Video group header - only shown when multiple videos */}
-                  {totalVideos > 1 && (
-                    <div className="flex items-center gap-2 border-b border-border/50 pb-1.5">
-                      <Video className="h-3.5 w-3.5 text-muted-foreground" />
-                      <span className="text-xs font-medium">{group.videoTitle}</span>
-                      {group.channelName && (
-                        <span className="text-[10px] text-muted-foreground">
-                          {group.channelName}
+            {/* Collapsible sources content */}
+            {sourcesExpanded && (
+              <div className="space-y-4 px-3 pb-3">
+                {groupedSources.map((group) => (
+                  <div key={group.videoId} className="space-y-2">
+                    {/* Video group header - only shown when multiple videos */}
+                    {totalVideos > 1 && (
+                      <div className="flex items-center gap-2 border-b border-border/50 pb-1.5">
+                        <Video className="h-3.5 w-3.5 text-muted-foreground" />
+                        <span className="text-xs font-medium">{group.videoTitle}</span>
+                        {group.channelName && (
+                          <span className="text-[10px] text-muted-foreground">
+                            {group.channelName}
+                          </span>
+                        )}
+                        <span className="ml-auto text-[10px] text-muted-foreground">
+                          {group.sources.length} source{group.sources.length !== 1 ? "s" : ""}
                         </span>
-                      )}
-                      <span className="ml-auto text-[10px] text-muted-foreground">
-                        {group.sources.length} source{group.sources.length !== 1 ? "s" : ""}
-                      </span>
-                    </div>
-                  )}
+                      </div>
+                    )}
 
-                  {/* Individual sources within this video group */}
-                  <div className="space-y-2">
-                    {group.sources.map((chunk, idx) => {
-                      const chunkRank = chunk.rank ?? idx + 1;
-                      const sourceAnchorId = `source-${message.id}-${chunkRank}`;
-                      const jumpUrl = resolveJumpUrl(chunk);
-                      const relevancePct = Math.round((chunk.relevance_score ?? 0) * 100);
-                      return (
-                        <div
-                          key={`${chunk.chunk_id}-${chunkRank}`}
-                          id={sourceAnchorId}
-                          className={cn(
-                            "rounded-md border bg-background/60 px-3 py-2 text-xs transition-shadow",
-                            highlightedSourceId === sourceAnchorId && "ring-2 ring-primary/60 bg-primary/5"
-                          )}
-                        >
-                          <div className="mb-1 flex flex-wrap items-center gap-2">
-                            <Badge variant="outline" className="text-[10px] uppercase">
-                              [{chunkRank}]
-                            </Badge>
-                            <span className="text-muted-foreground">{chunk.timestamp_display}</span>
-                            <span className="ml-auto text-[10px] text-muted-foreground">
-                              {relevancePct}% match
-                            </span>
-                          </div>
-                          {/* Contextual metadata - chapter and speakers (channel shown in group header for multi-video) */}
-                          {(chunk.chapter_title || (chunk.speakers && chunk.speakers.length > 0) || (totalVideos === 1 && chunk.channel_name)) && (
-                            <div className="mb-1.5 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
-                              {totalVideos === 1 && chunk.channel_name && (
-                                <span className="flex items-center gap-1">
-                                  <span className="opacity-60">Channel:</span>
-                                  {chunk.channel_name}
-                                </span>
-                              )}
-                              {chunk.chapter_title && (
-                                <span className="flex items-center gap-1">
-                                  <span className="opacity-60">Chapter:</span>
-                                  {chunk.chapter_title}
-                                </span>
-                              )}
-                              {chunk.speakers && chunk.speakers.length > 0 && (
-                                <span className="flex items-center gap-1">
-                                  <span className="opacity-60">Speaker:</span>
-                                  {chunk.speakers.join(', ')}
-                                </span>
+                    {/* Individual sources within this video group */}
+                    <div className="space-y-2">
+                      {group.sources.map((chunk, idx) => {
+                        const chunkRank = chunk.rank ?? idx + 1;
+                        const sourceAnchorId = `source-${message.id}-${chunkRank}`;
+                        const jumpUrl = resolveJumpUrl(chunk);
+                        const relevancePct = Math.round((chunk.relevance_score ?? 0) * 100);
+                        return (
+                          <div
+                            key={`${chunk.chunk_id}-${chunkRank}`}
+                            id={sourceAnchorId}
+                            className={cn(
+                              "rounded-md border bg-background/60 px-3 py-2 text-xs transition-shadow",
+                              highlightedSourceId === sourceAnchorId && "ring-2 ring-primary/60 bg-primary/5"
+                            )}
+                          >
+                            <div className="mb-1 flex flex-wrap items-center gap-2">
+                              <Badge variant="outline" className="text-[10px] uppercase">
+                                [{chunkRank}]
+                              </Badge>
+                              <span className="text-muted-foreground">{chunk.timestamp_display}</span>
+                              <span className="ml-auto text-[10px] text-muted-foreground">
+                                {relevancePct}% match
+                              </span>
+                            </div>
+                            {/* Contextual metadata - chapter and speakers (channel shown in group header for multi-video) */}
+                            {(chunk.chapter_title || (chunk.speakers && chunk.speakers.length > 0) || (totalVideos === 1 && chunk.channel_name)) && (
+                              <div className="mb-1.5 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
+                                {totalVideos === 1 && chunk.channel_name && (
+                                  <span className="flex items-center gap-1">
+                                    <span className="opacity-60">Channel:</span>
+                                    {chunk.channel_name}
+                                  </span>
+                                )}
+                                {chunk.chapter_title && (
+                                  <span className="flex items-center gap-1">
+                                    <span className="opacity-60">Chapter:</span>
+                                    {chunk.chapter_title}
+                                  </span>
+                                )}
+                                {chunk.speakers && chunk.speakers.length > 0 && (
+                                  <span className="flex items-center gap-1">
+                                    <span className="opacity-60">Speaker:</span>
+                                    {chunk.speakers.join(', ')}
+                                  </span>
+                                )}
+                              </div>
+                            )}
+                            <p className="text-[11px] text-muted-foreground leading-relaxed">
+                              {chunk.text_snippet}
+                            </p>
+                            <div className="mt-2 flex flex-wrap items-center gap-2">
+                              {jumpUrl && (
+                                <Button asChild variant="outline" size="sm" className="gap-1 text-[11px]">
+                                  <a href={jumpUrl} target="_blank" rel="noopener noreferrer">
+                                    <Video className="h-3.5 w-3.5" />
+                                    Jump to video
+                                  </a>
+                                </Button>
                               )}
                             </div>
-                          )}
-                          <p className="text-[11px] text-muted-foreground leading-relaxed">
-                            {chunk.text_snippet}
-                          </p>
-                          <div className="mt-2 flex flex-wrap items-center gap-2">
-                            {jumpUrl && (
-                              <Button asChild variant="outline" size="sm" className="gap-1 text-[11px]">
-                                <a href={jumpUrl} target="_blank" rel="noopener noreferrer">
-                                  <Video className="h-3.5 w-3.5" />
-                                  Jump to video
-                                </a>
-                              </Button>
-                            )}
                           </div>
-                        </div>
-                      );
-                    })}
+                        );
+                      })}
+                    </div>
                   </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -491,6 +512,73 @@ const MessageItem = memo<MessageItemProps>(({ message, highlightedSourceId, onCi
 });
 
 MessageItem.displayName = "MessageItem";
+
+// StreamingMessage component - displays assistant response as it streams
+interface StreamingMessageProps {
+  content: string;
+  isStreaming: boolean;
+  elapsedTime: number | null;
+}
+
+const StreamingMessage = memo<StreamingMessageProps>(
+  ({ content, isStreaming, elapsedTime }) => (
+    <div className="flex w-full justify-start">
+      <div className="flex w-full max-w-[90%] flex-col gap-3 items-start text-left">
+        {/* Header with timing info */}
+        <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+          {isStreaming && !content && (
+            <span className="flex items-center gap-1.5">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              Thinking...
+            </span>
+          )}
+          {isStreaming && content && (
+            <span className="flex items-center gap-1.5">
+              <span className="h-2 w-2 rounded-full bg-primary animate-pulse" />
+              Responding...
+            </span>
+          )}
+          {elapsedTime !== null && elapsedTime > 0 && (
+            <span>{elapsedTime.toFixed(1)}s</span>
+          )}
+        </div>
+
+        {/* Content area */}
+        <div className="w-full rounded-2xl border border-border bg-muted/40 p-4 shadow-sm">
+          {content ? (
+            <div className="relative">
+              <ReactMarkdown
+                className="prose prose-base leading-relaxed max-w-full break-words dark:prose-invert"
+                remarkPlugins={REMARK_PLUGINS}
+                components={MARKDOWN_STATIC_COMPONENTS}
+              >
+                {content}
+              </ReactMarkdown>
+              {/* Blinking cursor at the end while streaming */}
+              {isStreaming && (
+                <span className="inline-block w-2 h-4 bg-primary/60 animate-pulse ml-0.5 align-text-bottom" />
+              )}
+            </div>
+          ) : (
+            <div className="flex items-center gap-2">
+              <div className="h-4 w-4 rounded bg-muted animate-pulse" />
+              <div className="h-4 w-32 rounded bg-muted animate-pulse" />
+            </div>
+          )}
+        </div>
+
+        {/* Sources placeholder */}
+        {isStreaming && (
+          <span className="text-[11px] text-muted-foreground">
+            Sources will appear when complete...
+          </span>
+        )}
+      </div>
+    </div>
+  )
+);
+
+StreamingMessage.displayName = "StreamingMessage";
 
 export default function ConversationDetailPage() {
   const params = useParams();
@@ -515,6 +603,7 @@ export default function ConversationDetailPage() {
   const [selectedMode, setSelectedMode] = useState<ModeId>(MODE_OPTIONS[0].id);
   const [isAdminBackend, setIsAdminBackend] = useState<boolean | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const prevMessageCountRef = useRef<number>(0);
 
   // Get user info for sidebar display
@@ -525,6 +614,17 @@ export default function ConversationDetailPage() {
   // Check if user is admin (stored in auth metadata)
   const isAdmin = user?.metadata?.is_superuser === true;
   const hasAdminAccess = isAdmin || isAdminBackend === true;
+
+  // Streaming message hook for real-time chat responses
+  const {
+    isStreaming,
+    content: streamingContent,
+    sources: streamingSources,
+    error: streamingError,
+    elapsedTime,
+    sendMessage: sendStreamingMessage,
+    cancelStream,
+  } = useStreamingMessage(conversationId || "");
 
   const handleLogout = () => {
     authProvider.signOut("/sign-in");
@@ -597,13 +697,30 @@ export default function ConversationDetailPage() {
   });
 
   const messages = useMemo(() => conversation?.messages ?? EMPTY_MESSAGES, [conversation?.messages]);
+
+  // Helper function to scroll to bottom of messages container
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
+    const container = scrollContainerRef.current;
+    if (container) {
+      container.scrollTo({ top: container.scrollHeight, behavior });
+    }
+  }, []);
+
+  // Auto-scroll when new messages arrive
   useEffect(() => {
     const nextNonSystemLength = messages.filter((m) => m.role !== "system").length;
     if (isAutoScrollEnabled && nextNonSystemLength > prevMessageCountRef.current) {
-      messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+      scrollToBottom("smooth");
     }
     prevMessageCountRef.current = nextNonSystemLength;
-  }, [messages, isAutoScrollEnabled]);
+  }, [messages, isAutoScrollEnabled, scrollToBottom]);
+
+  // Auto-scroll during streaming (when content updates)
+  useEffect(() => {
+    if (isStreaming && isAutoScrollEnabled && streamingContent) {
+      scrollToBottom("smooth");
+    }
+  }, [isStreaming, streamingContent, isAutoScrollEnabled, scrollToBottom]);
 
   // Performance: Parallel fetch for sources
   const { data: sourcesData, isLoading: sourcesLoading } = useQuery({
@@ -838,17 +955,22 @@ export default function ConversationDetailPage() {
   };
 
   // Event handlers (regular functions - no useCallback needed after early returns)
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!messageText.trim() || sendMessageMutation.isPending || !conversationId) {
+    if (!messageText.trim() || isStreaming || !conversationId) {
       return;
     }
     if (selectedSourcesCount === 0) {
       setSendError("Select at least one source to ask a question.");
       return;
     }
+
+    const text = messageText.trim();
+    setMessageText(""); // Clear input immediately for responsiveness
     setSendError(null);
-    sendMessageMutation.mutate(messageText.trim());
+
+    // Use streaming for the message
+    await sendStreamingMessage(text, selectedModelId || undefined, selectedMode);
   };
 
   const handleSelectAllSources = () => {
@@ -991,7 +1113,7 @@ export default function ConversationDetailPage() {
 
 
   return (
-    <div className="flex min-h-screen bg-background">
+    <div className="flex h-screen overflow-hidden bg-background">
       {/* Sidebar - ChatGPT style */}
       <div
         className={cn(
@@ -1202,25 +1324,49 @@ export default function ConversationDetailPage() {
       )}
 
       {/* Main content - Three column layout */}
-      <div className="flex min-h-screen flex-1">
+      <div className="flex h-full flex-1 min-h-0">
         {/* Chat area column */}
-        <div className="flex flex-1 flex-col min-w-0">
+        <div className="flex flex-1 flex-col min-w-0 min-h-0">
           {/* Top navigation bar */}
           <header className="sticky top-0 z-30 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-            <div className="flex h-14 items-center px-4">
-              <div className="flex flex-1 items-center gap-3">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-9 w-9 lg:hidden"
-                  onClick={() => setSidebarOpen(!sidebarOpen)}
-                >
-                  <Menu className="h-5 w-5" />
-                </Button>
-                <Separator orientation="vertical" className="h-6 lg:hidden" />
-                <h1 className="text-sm font-medium truncate">
-                  {conversation.title || "New conversation"}
-                </h1>
+            <div className="flex h-16 items-center px-4">
+              <div className="flex flex-1 flex-col justify-center gap-0.5">
+                {/* Primary: Title with mobile menu */}
+                <div className="flex items-center gap-3">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-9 w-9 lg:hidden"
+                    onClick={() => setSidebarOpen(!sidebarOpen)}
+                  >
+                    <Menu className="h-5 w-5" />
+                  </Button>
+                  <Separator orientation="vertical" className="h-6 lg:hidden" />
+                  <h1 className="text-sm font-medium truncate">
+                    {conversation.title || "New conversation"}
+                  </h1>
+                </div>
+
+                {/* Secondary: Metadata */}
+                <div className="flex items-center gap-2 text-xs text-muted-foreground ml-10 lg:ml-0">
+                  <span>
+                    {selectedSourcesCount} of {totalSourcesCount} video
+                    {totalSourcesCount !== 1 ? "s" : ""}
+                  </span>
+                  <span>•</span>
+                  <span>
+                    {conversation.message_count || messages.length} message
+                    {(conversation.message_count || messages.length) !== 1 ? "s" : ""}
+                  </span>
+                  {conversation.last_message_at && (
+                    <>
+                      <span>•</span>
+                      <span>
+                        Active {formatDistanceToNow(new Date(conversation.last_message_at), { addSuffix: true })}
+                      </span>
+                    </>
+                  )}
+                </div>
               </div>
               <div className="flex items-center gap-2">
                 {/* Insights dialog */}
@@ -1373,7 +1519,7 @@ export default function ConversationDetailPage() {
           </header>
 
           {/* Messages area - clean, focused */}
-          <div className="flex-1 overflow-y-auto">
+          <div ref={scrollContainerRef} className="flex-1 overflow-y-auto">
             <div className="mx-auto max-w-3xl px-4 py-6">
               {selectedSourcesCount === 0 && (
                 <div className="mb-4 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
@@ -1404,6 +1550,22 @@ export default function ConversationDetailPage() {
                       onCitationClick={handleCitationClick}
                     />
                   ))}
+                  {/* Streaming message - shown while AI is responding */}
+                  {isStreaming && (
+                    <StreamingMessage
+                      content={streamingContent}
+                      isStreaming={isStreaming}
+                      elapsedTime={elapsedTime}
+                    />
+                  )}
+                  {/* Error display for streaming errors */}
+                  {streamingError && !isStreaming && (
+                    <div className="flex w-full justify-start">
+                      <div className="w-full max-w-[90%] rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+                        {streamingError}
+                      </div>
+                    </div>
+                  )}
                   <div ref={messagesEndRef} />
                 </div>
               )}
@@ -1462,23 +1624,30 @@ export default function ConversationDetailPage() {
                     placeholder="Ask InsightGuide about the transcript..."
                     value={messageText}
                     onChange={(e) => setMessageText(e.target.value)}
-                    disabled={sendMessageMutation.isPending}
+                    disabled={isStreaming}
                     className="flex-1 rounded-xl border border-border bg-muted/50 px-4 py-3 text-sm shadow-none focus:border-primary focus:ring-0"
                     autoComplete="off"
                   />
-                  <Button
-                    type="submit"
-                    size="icon"
-                    className="h-10 w-10 rounded-xl bg-primary text-primary-foreground hover:bg-primary/90"
-                    disabled={
-                      sendMessageMutation.isPending ||
-                      !messageText.trim() ||
-                      selectedSourcesCount === 0
-                    }
-                  >
-                    {sendMessageMutation.isPending ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
+                  {isStreaming ? (
+                    /* Stop button during streaming */
+                    <Button
+                      type="button"
+                      size="icon"
+                      variant="destructive"
+                      className="h-10 w-10 rounded-xl"
+                      onClick={cancelStream}
+                      title="Stop generating"
+                    >
+                      <Square className="h-4 w-4" />
+                    </Button>
+                  ) : (
+                    /* Send button when not streaming */
+                    <Button
+                      type="submit"
+                      size="icon"
+                      className="h-10 w-10 rounded-xl bg-primary text-primary-foreground hover:bg-primary/90"
+                      disabled={!messageText.trim() || selectedSourcesCount === 0}
+                    >
                       <svg
                         xmlns="http://www.w3.org/2000/svg"
                         viewBox="0 0 24 24"
@@ -1487,8 +1656,8 @@ export default function ConversationDetailPage() {
                       >
                         <path d="M3.478 2.405a.75.75 0 00-.926.94l2.432 7.905H13.5a.75.75 0 010 1.5H4.984l-2.432 7.905a.75.75 0 00.926.94 60.519 60.519 0 0018.445-8.986.75.75 0 000-1.218A60.517 60.517 0 003.478 2.405z" />
                       </svg>
-                    )}
-                  </Button>
+                    </Button>
+                  )}
                 </div>
 
                 {/* Inline sources summary when context panel is collapsed */}

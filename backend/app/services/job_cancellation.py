@@ -18,7 +18,7 @@ from celery import current_app
 from celery.result import AsyncResult
 from sqlalchemy.orm import Session
 
-from app.models import Video, Transcript, Chunk, Job
+from app.models import Video, Transcript, Chunk, Job, CollectionVideo
 from app.services.vector_store import vector_store_service
 from app.services.storage import storage_service
 from app.services.storage_calculator import StorageCalculator, BYTES_PER_VECTOR
@@ -326,6 +326,19 @@ def cancel_video_processing(
         # Hard delete the video record
         video.is_deleted = True
         video.deleted_at = datetime.utcnow()
+
+        # Clean up CollectionVideo entries to maintain count consistency
+        try:
+            deleted_cv = (
+                db.query(CollectionVideo)
+                .filter(CollectionVideo.video_id == video.id)
+                .delete(synchronize_session=False)
+            )
+            if deleted_cv > 0:
+                logger.info(f"Removed video {video.id} from {deleted_cv} collection(s)")
+        except Exception as e:
+            logger.warning(f"Failed to clean up collection associations: {str(e)}")
+
         db.commit()
         new_status = "deleted"
     else:

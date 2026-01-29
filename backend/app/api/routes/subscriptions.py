@@ -55,11 +55,8 @@ async def create_checkout_session(
                 detail="Cannot create checkout session for free tier"
             )
 
-        # Determine billing cycle from tier request
-        # Default to monthly if not specified in success_url
-        billing_cycle = "monthly"
-        if "yearly" in checkout_request.success_url.lower():
-            billing_cycle = "yearly"
+        # Use explicit billing cycle from request
+        billing_cycle = checkout_request.billing_cycle
 
         # Create checkout session
         result = subscription_service.create_checkout_session(
@@ -78,6 +75,9 @@ async def create_checkout_session(
             session_id=result["session_id"],
         )
 
+    except HTTPException:
+        # Re-raise HTTP exceptions as-is (e.g., free tier validation)
+        raise
     except ValueError as e:
         logger.error(f"Error creating checkout session: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e))
@@ -174,6 +174,47 @@ async def get_pricing_tiers(request: Request):
     except Exception as e:
         logger.error(f"Error retrieving pricing tiers: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to retrieve pricing information")
+
+
+@router.get("/verify-checkout", response_model=QuotaUsage)
+@limiter.limit("10/minute")
+async def verify_checkout_session(
+    request: Request,
+    session_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Verify a completed checkout session and return updated quota.
+
+    This endpoint synchronously verifies the checkout session with Stripe
+    and updates the user's subscription, avoiding race conditions with
+    webhook delivery.
+
+    Args:
+        session_id: Stripe checkout session ID
+
+    Returns:
+        Updated quota information
+    """
+    try:
+        # Verify and process the checkout session synchronously
+        quota = subscription_service.verify_checkout_session(
+            session_id=session_id,
+            user=current_user,
+            db=db,
+        )
+
+        logger.info(f"Verified checkout session {session_id} for user {current_user.id}")
+
+        return quota
+
+    except ValueError as e:
+        logger.error(f"Error verifying checkout session: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Unexpected error verifying checkout session: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to verify checkout session")
 
 
 @router.get("/current", response_model=SubscriptionDetail, response_model_exclude_none=True)

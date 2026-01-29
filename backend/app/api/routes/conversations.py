@@ -46,6 +46,7 @@ from app.schemas import (
     Message as MessageSchema,
 )
 from app.services.query_expansion import get_query_expansion_service
+from app.services.query_rewriter import get_query_rewriter_service
 from app.services.audit_logger import log_chat_message
 from app.core.rate_limit import limiter
 from app.core.pricing import resolve_model, get_model_info_for_tier
@@ -919,20 +920,58 @@ async def send_message(
     )
     db.commit()
 
-    # 3. Query Expansion: Generate query variants for improved recall
+    # 3. Load conversation history EARLY for query rewriting
     import logging
     import time
 
     logger = logging.getLogger(__name__)
 
-    query_expansion_service = get_query_expansion_service()
-
     logger.info(f"[RAG Pipeline] Starting retrieval for query: '{message_request.message[:100]}...'")
     logger.info(f"[RAG Config] retrieval_top_k={settings.retrieval_top_k}, reranking_enabled={settings.enable_reranking}, reranking_top_k={settings.reranking_top_k}")
-    logger.info(f"[RAG Config] min_relevance_score={settings.min_relevance_score}, query_expansion_enabled={settings.enable_query_expansion}")
+    logger.info(f"[RAG Config] min_relevance_score={settings.min_relevance_score}, query_expansion_enabled={settings.enable_query_expansion}, query_rewriting_enabled={settings.enable_query_rewriting}")
 
+    # Load history for query rewriting (need this BEFORE vector search)
+    history_start = time.time()
+    history_messages_raw = (
+        db.query(MessageModel)
+        .filter(
+            MessageModel.conversation_id == conversation_id,
+            MessageModel.role != SYSTEM_ROLE,
+        )
+        .order_by(MessageModel.created_at.desc())
+        .limit(10)
+        .all()
+    )
+    history_messages_raw.reverse()  # Oldest first
+    history_time = time.time() - history_start
+    logger.info(f"[Conversation History] Loaded {len(history_messages_raw)} messages in {history_time:.3f}s")
+
+    # Convert to dict format for query rewriter
+    history_for_rewriter = [
+        {"role": msg.role, "content": msg.content}
+        for msg in history_messages_raw[:-1]  # Exclude the message we just added
+    ]
+
+    # 3a. Query Rewriting: Transform follow-up queries into standalone questions
+    query_rewriter_service = get_query_rewriter_service()
+    rewrite_start = time.time()
+    effective_query = query_rewriter_service.rewrite_query(
+        query=message_request.message,
+        conversation_history=history_for_rewriter,
+    )
+    rewrite_time = time.time() - rewrite_start
+
+    if effective_query != message_request.message:
+        logger.info(f"[Query Rewriter] Query rewritten in {rewrite_time:.3f}s")
+        logger.info(f"[Query Rewriter] Original: '{message_request.message[:80]}...'")
+        logger.info(f"[Query Rewriter] Rewritten: '{effective_query[:80]}...'")
+    else:
+        logger.debug(f"[Query Rewriter] No rewriting needed ({rewrite_time:.3f}s)")
+
+    # 3b. Query Expansion: Generate query variants for improved recall
+    query_expansion_service = get_query_expansion_service()
     expansion_start = time.time()
-    query_variants = query_expansion_service.expand_query(message_request.message)
+    query_variants = query_expansion_service.expand_query(effective_query)  # Use rewritten query
     expansion_time = time.time() - expansion_start
 
     logger.info(f"[Query Expansion] Generated {len(query_variants)} query variants in {expansion_time:.3f}s")
@@ -1129,22 +1168,10 @@ async def send_message(
     logger.info(f"[Context Building] Context length: {len(context)} chars, ~{int(context_token_estimate)} tokens")
     logger.info(f"[Context Building] Context quality: {'WEAK' if context_is_weak else 'GOOD'} (max score: {max_score:.4f})")
 
-    # 6. Get conversation history (last 10 messages) - Phase 1 improvement
-    history_start = time.time()
-    history_messages = (
-        db.query(MessageModel)
-        .filter(
-            MessageModel.conversation_id == conversation_id,
-            MessageModel.role != SYSTEM_ROLE,
-        )
-        .order_by(MessageModel.created_at.desc())
-        .limit(10)
-        .all()
-    )
-    history_messages.reverse()  # Oldest first
-    history_time = time.time() - history_start
-
-    logger.info(f"[Conversation History] Loaded {len(history_messages)} messages in {history_time:.3f}s")
+    # 6. Reuse conversation history loaded earlier (for query rewriting)
+    # history_messages_raw was loaded before query expansion
+    history_messages = history_messages_raw
+    logger.debug(f"[Conversation History] Reusing {len(history_messages)} messages from earlier load")
 
     # NEW: Phase 2 - Load conversation facts with multi-factor scoring
     # (only for conversations with 15+ messages)
@@ -1157,13 +1184,22 @@ async def send_message(
             format_facts_for_prompt,
             update_fact_access,
         )
+        from app.services.embeddings import EmbeddingService
 
-        # Use multi-factor scoring (importance + recency + category + source_turn)
+        # Create embedding service for query-aware fact retrieval
+        try:
+            embedding_service = EmbeddingService()
+        except Exception as e:
+            logger.warning(f"[Conversation Facts] Failed to init embedding service: {e}")
+            embedding_service = None
+
+        # Use multi-factor scoring (importance + query_relevance + recency + category + source_turn)
         scored_facts = select_facts_multifactor(
             db=db,
             conversation_id=conversation_id,
             limit=15,  # Increased from 10 for better coverage
-            user_query=message_request.content,  # For future relevance scoring
+            user_query=message_request.message,
+            embedding_service=embedding_service,  # Enable query-aware retrieval
         )
 
         # Build formatted facts section (grouped by category)
@@ -1478,6 +1514,18 @@ async def send_message(
     db.commit()
     db.refresh(assistant_message)
 
+    # Track chat message for usage quota
+    from app.services.usage_tracker import UsageTracker
+    usage_tracker = UsageTracker(db)
+    usage_tracker.track_chat_message(
+        user_id=current_user.id,
+        conversation_id=conversation_id,
+        message_id=assistant_message.id,
+        tokens_in=prompt_tokens or 0,
+        tokens_out=completion_tokens or 0,
+        chunks_retrieved=len(chunk_refs_response),
+    )
+
     # NEW: Phase 2 - Extract facts from conversation turn
     try:
         from app.services.fact_extraction import fact_extraction_service
@@ -1510,6 +1558,8 @@ async def send_message(
     logger.info("=" * 80)
     logger.info("[RAG Pipeline Complete]")
     logger.info(f"  Total Time: {response_time:.3f}s")
+    if effective_query != message_request.message:
+        logger.info(f"  Query Rewriting: {rewrite_time:.3f}s (rewrote query)")
     logger.info(f"  Query Expansion: {expansion_time:.3f}s ({len(query_variants)} variants)")
     logger.info(f"  Embedding + Search: {embedding_time:.3f}s")
     if settings.enable_reranking:
@@ -1606,8 +1656,35 @@ async def send_message_stream(
     db.add(user_message)
     db.commit()
 
-    # Prepare context (simplified version of main endpoint)
-    query_embedding = embedding_service.embed_text(message_request.message)
+    # Load history FIRST for query rewriting (before vector search)
+    history_messages = (
+        db.query(MessageModel)
+        .filter(
+            MessageModel.conversation_id == conversation_id,
+            MessageModel.role != SYSTEM_ROLE,
+        )
+        .order_by(MessageModel.created_at.desc())
+        .limit(10)
+        .all()
+    )
+    history_messages.reverse()  # Oldest first
+
+    # Query rewriting: Transform follow-up queries into standalone questions
+    query_rewriter_service = get_query_rewriter_service()
+    history_for_rewriter = [
+        {"role": msg.role, "content": msg.content}
+        for msg in history_messages[:-1]  # Exclude the message we just added
+    ]
+    effective_query = query_rewriter_service.rewrite_query(
+        query=message_request.message,
+        conversation_history=history_for_rewriter,
+    )
+
+    if effective_query != message_request.message:
+        logger.info(f"[Stream] Query rewritten: '{message_request.message[:50]}...' -> '{effective_query[:50]}...'")
+
+    # Prepare context using rewritten query
+    query_embedding = embedding_service.embed_text(effective_query)  # Use rewritten query
     if isinstance(query_embedding, tuple):
         query_embedding = np.array(query_embedding, dtype=np.float32)
 
@@ -1656,18 +1733,7 @@ async def send_message_stream(
         )
     context = "\n---\n".join(context_parts) if context_parts else "No relevant context found."
 
-    # Build conversation history
-    history_messages = (
-        db.query(MessageModel)
-        .filter(
-            MessageModel.conversation_id == conversation_id,
-            MessageModel.role != SYSTEM_ROLE,
-        )
-        .order_by(MessageModel.created_at.desc())
-        .limit(10)
-        .all()
-    )
-    history_messages.reverse()
+    # history_messages already loaded above for query rewriting
 
     # Build LLM messages
     system_prompt = textwrap.dedent("""
@@ -1762,6 +1828,18 @@ async def send_message_stream(
             conversation.last_message_at = assistant_message.created_at
 
             db.commit()
+
+            # Track chat message for usage quota
+            from app.services.usage_tracker import UsageTracker
+            usage_tracker = UsageTracker(db)
+            usage_tracker.track_chat_message(
+                user_id=current_user.id,
+                conversation_id=conversation_id,
+                message_id=message_id,
+                tokens_in=len(user_message_with_context.split()),  # Approximate
+                tokens_out=len(assistant_content.split()),  # Approximate
+                chunks_retrieved=len(chunk_refs_response),
+            )
 
             # Send final metadata
             yield f"data: {json.dumps({'type': 'done', 'message_id': str(message_id), 'sources': chunk_refs_response, 'token_count': len(assistant_content.split()), 'response_time_seconds': time.time() - start_time})}\n\n"

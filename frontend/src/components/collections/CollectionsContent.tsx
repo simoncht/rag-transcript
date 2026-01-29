@@ -31,6 +31,7 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 import { useAuth, useAuthState, createParallelQueryFn } from "@/lib/auth";
+import { useSetBreadcrumb } from "@/contexts/BreadcrumbContext";
 import Link from "next/link";
 
 /**
@@ -133,6 +134,12 @@ export function CollectionsContent() {
     return `${minutes}m`;
   };
 
+  const collections = data?.collections ?? [];
+
+  // Breadcrumb: collection count (must be called before early returns)
+  const breadcrumbDetail = collections.length > 0 ? `${collections.length} group${collections.length !== 1 ? 's' : ''}` : undefined;
+  useSetBreadcrumb("collections", breadcrumbDetail);
+
   if (!canFetch) {
     return (
       <div className="flex h-64 flex-col items-center justify-center gap-3 text-center text-muted-foreground">
@@ -165,8 +172,6 @@ export function CollectionsContent() {
     );
   }
 
-  const collections = data?.collections ?? [];
-
   return (
     <>
       <div className="space-y-6">
@@ -177,6 +182,15 @@ export function CollectionsContent() {
             <p className="text-sm text-muted-foreground">
               Group related videos by course, instructor, or topic to make retrieval easier.
             </p>
+            {collections.length > 0 && (
+              <div className="flex items-center gap-2 text-xs text-muted-foreground pt-1">
+                <span>{collections.length} collection{collections.length !== 1 ? 's' : ''}</span>
+                <span>•</span>
+                <span>
+                  {collections.reduce((sum, c) => sum + (c.video_count || 0), 0)} video{collections.reduce((sum, c) => sum + (c.video_count || 0), 0) !== 1 ? 's' : ''} total
+                </span>
+              </div>
+            )}
           </div>
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
             <Button variant="outline" size="sm" className="gap-2" disabled>

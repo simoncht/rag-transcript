@@ -151,3 +151,124 @@ def db():
     finally:
         session.close()
         Base.metadata.drop_all(bind=engine)
+
+
+@pytest.fixture
+def free_user(db):
+    """Create a free tier user for testing."""
+    from app.models import User
+
+    user = User(
+        email="free@test.com",
+        full_name="Free User",
+        oauth_provider="google",
+        oauth_provider_id="free_oauth_id",
+        is_superuser=False,
+        is_active=True,
+        subscription_tier="free",
+        subscription_status="active",
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+@pytest.fixture
+def pro_user(db):
+    """Create a pro tier user for testing."""
+    from app.models import User
+
+    user = User(
+        email="pro@test.com",
+        full_name="Pro User",
+        oauth_provider="google",
+        oauth_provider_id="pro_oauth_id",
+        is_superuser=False,
+        is_active=True,
+        subscription_tier="pro",
+        subscription_status="active",
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+@pytest.fixture
+def enterprise_user(db):
+    """Create an enterprise tier user for testing."""
+    from app.models import User
+
+    user = User(
+        email="enterprise@test.com",
+        full_name="Enterprise User",
+        oauth_provider="google",
+        oauth_provider_id="enterprise_oauth_id",
+        is_superuser=False,
+        is_active=True,
+        subscription_tier="enterprise",
+        subscription_status="active",
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+@pytest.fixture
+def admin_user(db):
+    """Create an admin (superuser) for testing."""
+    from app.models import User
+
+    user = User(
+        email="admin@test.com",
+        full_name="Admin User",
+        oauth_provider="google",
+        oauth_provider_id="admin_oauth_id",
+        is_superuser=True,
+        is_active=True,
+        subscription_tier="free",  # Admin bypasses quotas regardless of tier
+        subscription_status="active",
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+@pytest.fixture
+def mock_stripe():
+    """Mock all Stripe API calls for testing."""
+    from unittest.mock import patch, MagicMock
+
+    with patch("stripe.checkout.Session.create") as mock_create, \
+         patch("stripe.checkout.Session.retrieve") as mock_retrieve, \
+         patch("stripe.Customer.create") as mock_customer, \
+         patch("stripe.Subscription.retrieve") as mock_sub:
+
+        mock_create.return_value = MagicMock(
+            id="cs_test_123",
+            url="https://checkout.stripe.com/test",
+        )
+        mock_retrieve.return_value = MagicMock(
+            id="cs_test_123",
+            payment_status="paid",
+            metadata={"user_id": "test", "tier": "pro"},
+            customer="cus_123",
+            subscription="sub_123",
+        )
+        mock_customer.return_value = MagicMock(id="cus_123")
+        mock_sub.return_value = MagicMock(
+            id="sub_123",
+            items={"data": [{"price": {"id": "price_123"}}]},
+            current_period_start=1234567890,
+            current_period_end=1237246290,
+        )
+
+        yield {
+            "create": mock_create,
+            "retrieve": mock_retrieve,
+            "customer": mock_customer,
+            "subscription": mock_sub,
+        }

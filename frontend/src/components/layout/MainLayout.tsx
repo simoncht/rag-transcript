@@ -29,6 +29,7 @@ import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { QuotaUsage } from "@/lib/types";
 import QuotaDisplay from "../subscription/QuotaDisplay";
+import { useBreadcrumb } from "@/contexts/BreadcrumbContext";
 
 const navigation = [
   { name: "Videos", href: "/videos", icon: Video },
@@ -46,6 +47,7 @@ export const MainLayout = ({ children }: { children: React.ReactNode }) => {
   const authProvider = useAuth();
   const { user, isAuthenticated } = useAuthState();
   const [isAdminBackend, setIsAdminBackend] = useState<boolean | null>(null);
+  const { metadata: breadcrumbMetadata } = useBreadcrumb();
 
   const displayName = user?.displayName || user?.email;
   const email = user?.email;
@@ -211,8 +213,16 @@ export const MainLayout = ({ children }: { children: React.ReactNode }) => {
           </Sheet>
           <Separator orientation="vertical" className="mr-2 hidden h-6 lg:block" />
           <div className="flex flex-1 items-center justify-between">
-            <div className="text-sm text-muted-foreground">
-              {pathname === "/" ? "Overview" : pathname.replace("/", "").split("/")[0]}
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <span>
+                {breadcrumbMetadata?.label || (pathname === "/" ? "Overview" : pathname.replace("/", "").split("/")[0])}
+              </span>
+              {breadcrumbMetadata?.detail && (
+                <>
+                  <span>•</span>
+                  <span>{breadcrumbMetadata.detail}</span>
+                </>
+              )}
             </div>
             <div className="flex items-center gap-2">
               <ThemeToggle />

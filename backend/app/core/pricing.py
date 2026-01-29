@@ -176,15 +176,16 @@ PRICING_TIERS: Dict[str, Dict[str, Any]] = {
         "stripe_price_id_monthly": None,
         "stripe_price_id_yearly": None,
         "features": [
-            "2 videos",
-            "50 messages per month",
+            "10 videos",
+            "200 messages per month",
             "1GB storage",
             "1000 minutes of video per month",
-            "DeepSeek Chat model (fast responses)",
+            "AI-powered summaries",
+            "Conversation memory for long chats",
             "Community support",
         ],
-        "video_limit": 2,
-        "message_limit": 50,
+        "video_limit": 10,
+        "message_limit": 200,
         "storage_limit_mb": 1000,
         "minutes_limit": 1000,
         "model_tier": "free",
@@ -192,16 +193,17 @@ PRICING_TIERS: Dict[str, Dict[str, Any]] = {
     "pro": {
         "name": "Pro",
         "description": "For power users and professionals",
-        "price_monthly": 2000,  # $20.00 in cents
-        "price_yearly": 20000,  # $200.00 in cents ($16.67/month)
-        "stripe_price_id_monthly": "price_1Sr9hZRmTkZwB6fL9IH117SW",
-        "stripe_price_id_yearly": "price_1Sr9hgRmTkZwB6fLEex5Pf6S",
+        "price_monthly": 2399,  # $23.99 in cents
+        "price_yearly": 22999,  # $229.99 in cents ($19.17/month, 20% off)
+        "stripe_price_id_monthly": "price_1SugDfRmTkZwB6fLSa2jHi9B",
+        "stripe_price_id_yearly": "price_1SugDlRmTkZwB6fLQRsvGWqN",
         "features": [
             "Unlimited videos",
             "Unlimited messages",
+            "Unlimited video minutes",
             "50GB storage",
-            "1,000 minutes of video per month",
-            "DeepSeek Reasoner (advanced reasoning)",
+            "AI with step-by-step reasoning",
+            "Conversation memory for long chats",
             "Priority support",
             "Advanced analytics",
             "Export conversations",
@@ -209,21 +211,22 @@ PRICING_TIERS: Dict[str, Dict[str, Any]] = {
         "video_limit": -1,  # -1 means unlimited
         "message_limit": -1,
         "storage_limit_mb": 50000,
-        "minutes_limit": 1000,
+        "minutes_limit": -1,
         "model_tier": "pro",
     },
     "enterprise": {
         "name": "Enterprise",
         "description": "For teams and organizations",
-        "price_monthly": 10000,  # $100.00 in cents
-        "price_yearly": 100000,  # $1,000.00 in cents ($83.33/month)
-        "stripe_price_id_monthly": "price_1Sr9hxRmTkZwB6fL2zacqIkU",
-        "stripe_price_id_yearly": "price_1Sr9i3RmTkZwB6fLi01443us",
+        "price_monthly": 7999,  # $79.99 in cents
+        "price_yearly": 79999,  # $799.99 in cents ($66.67/month, 17% off)
+        "stripe_price_id_monthly": "price_1SugDnRmTkZwB6fLFOyPjWIK",
+        "stripe_price_id_yearly": "price_1SugDoRmTkZwB6fLgO05P9wH",
         "features": [
             "Everything in Pro",
             "Unlimited storage",
             "Unlimited video minutes",
-            "DeepSeek Reasoner (enterprise SLA)",
+            "AI with step-by-step reasoning",
+            "Conversation memory for long chats",
             "Custom integrations",
             "Dedicated account manager",
             "SLA guarantee (99.9% uptime)",
@@ -345,3 +348,187 @@ def get_usage_percentage(used: int, limit: int) -> float:
 QUOTA_WARNING_THRESHOLD_LOW = 80.0  # Send warning at 80%
 QUOTA_WARNING_THRESHOLD_HIGH = 90.0  # Send urgent warning at 90%
 QUOTA_WARNING_THRESHOLD_CRITICAL = 100.0  # Send critical warning at 100%
+
+
+# =============================================================================
+# Cost Tracking Configuration (Internal)
+# =============================================================================
+#
+# These values are used for internal cost monitoring and profitability analysis.
+# Updated based on Railway and DeepSeek pricing as of January 2025.
+#
+# Sources:
+# - Railway: https://docs.railway.com/reference/pricing/plans
+# - DeepSeek: https://api-docs.deepseek.com/quick_start/pricing
+
+COST_CONFIG: Dict[str, Any] = {
+    # Railway infrastructure costs
+    "infrastructure": {
+        "cpu_per_vcpu_month": 20.00,  # $0.000463/vCPU/min ≈ $20/vCPU/month
+        "memory_per_gb_month": 10.00,  # $0.000231/GB/min ≈ $10/GB/month
+        "storage_per_gb_month": 0.15,  # $0.15/GB/month
+        "egress_per_gb": 0.05,  # $0.05/GB
+    },
+    # DeepSeek API costs (per million tokens)
+    "deepseek": {
+        "input_per_million": 0.28,  # $0.28/M tokens
+        "input_cache_hit_per_million": 0.028,  # $0.028/M tokens (90% cheaper)
+        "output_per_million": 0.42,  # $0.42/M tokens
+    },
+    # Estimated per-unit costs
+    "per_unit": {
+        "message_no_cache": 0.0016,  # ~$0.0016/message (5100 in + 500 out, no cache)
+        "message_with_cache": 0.0010,  # ~$0.0010/message (50% cache hit rate)
+        "video_processing": 0.05,  # ~$0.05/video (transcription + chunking + embedding)
+        "storage_per_gb_month": 0.15,  # Railway volume storage
+    },
+    # Stripe fees
+    "stripe": {
+        "percentage_fee": 0.029,  # 2.9%
+        "fixed_fee": 0.30,  # $0.30 per transaction
+    },
+    # Base infrastructure cost (7 containers)
+    "base_infrastructure_monthly": 100.00,  # ~$100/month fixed costs
+}
+
+
+# =============================================================================
+# Heavy User Monitoring Thresholds
+# =============================================================================
+#
+# Thresholds for identifying heavy users who may exceed cost targets.
+# Users exceeding these thresholds should be reviewed for fair use compliance.
+#
+# Based on profitability analysis:
+# - Pro tier costs ~$7.30/month for medium usage
+# - Heavy users (2000+ messages) cost ~$23.70/month (exceeds $20 price)
+
+HEAVY_USER_THRESHOLDS: Dict[str, Dict[str, int]] = {
+    "pro": {
+        "messages_per_month": 2000,  # Flag users with >2000 messages/month
+        "videos_per_month": 200,  # Flag users processing >200 videos/month
+        "storage_used_gb": 40,  # Flag users using >40GB (80% of limit)
+    },
+    "enterprise": {
+        "messages_per_month": 10000,  # Higher threshold for enterprise
+        "videos_per_month": 1000,
+        "storage_used_gb": 200,
+    },
+}
+
+
+# Per-tier profitability targets (monthly)
+# Updated January 2025: Pro tier increased to $23.99, Enterprise to $99.99
+TIER_COST_TARGETS: Dict[str, Dict[str, float]] = {
+    "free": {
+        "max_cost_per_user": 1.25,  # Acceptable as loss-leader (updated for 200 messages)
+        "expected_cost": 0.91,  # Typical free user cost with 200 messages
+    },
+    "pro": {
+        "max_cost_per_user": 23.99,  # Should not exceed subscription price
+        "expected_cost_light": 2.41,  # Light user (20 videos, 100 messages) - 90% margin
+        "expected_cost_medium": 7.30,  # Medium user (50 videos, 500 messages) - 70% margin
+        "expected_cost_heavy": 23.70,  # Heavy user (200 videos, 2000 messages) - ~break-even
+        "target_margin_percent": 50.0,  # Target 50% margin
+    },
+    "enterprise": {
+        "max_cost_per_user": 79.99,
+        "expected_cost": 50.00,  # Higher usage expected
+        "target_margin_percent": 50.0,
+    },
+}
+
+
+def estimate_user_cost(
+    messages: int,
+    videos: int,
+    storage_gb: float,
+    cache_hit_rate: float = 0.5,
+) -> float:
+    """
+    Estimate monthly cost for a user based on usage.
+
+    Args:
+        messages: Number of messages sent
+        videos: Number of videos processed
+        storage_gb: Storage used in GB
+        cache_hit_rate: Estimated DeepSeek cache hit rate (0-1)
+
+    Returns:
+        Estimated cost in dollars
+    """
+    per_unit = COST_CONFIG["per_unit"]
+
+    # Message cost (weighted by cache hit rate)
+    message_cost = messages * (
+        per_unit["message_no_cache"] * (1 - cache_hit_rate)
+        + per_unit["message_with_cache"] * cache_hit_rate
+    )
+
+    # Video processing cost (one-time per video)
+    video_cost = videos * per_unit["video_processing"]
+
+    # Storage cost
+    storage_cost = storage_gb * per_unit["storage_per_gb_month"]
+
+    # Infrastructure share (simplified allocation)
+    # Assumes costs are distributed across active users
+    infra_share = 0.50  # Base allocation per active user
+
+    return message_cost + video_cost + storage_cost + infra_share
+
+
+def check_heavy_user(
+    tier: str,
+    messages: int,
+    videos: int,
+    storage_gb: float,
+) -> Dict[str, bool]:
+    """
+    Check if user exceeds heavy usage thresholds.
+
+    Args:
+        tier: User's subscription tier
+        messages: Messages sent this month
+        videos: Videos processed this month
+        storage_gb: Storage used in GB
+
+    Returns:
+        Dictionary with exceeded flags for each metric
+    """
+    if tier not in HEAVY_USER_THRESHOLDS:
+        return {"messages": False, "videos": False, "storage": False}
+
+    thresholds = HEAVY_USER_THRESHOLDS[tier]
+
+    return {
+        "messages": messages > thresholds["messages_per_month"],
+        "videos": videos > thresholds["videos_per_month"],
+        "storage": storage_gb > thresholds["storage_used_gb"],
+        "any_exceeded": (
+            messages > thresholds["messages_per_month"]
+            or videos > thresholds["videos_per_month"]
+            or storage_gb > thresholds["storage_used_gb"]
+        ),
+    }
+
+
+def calculate_stripe_net(gross_amount: float) -> float:
+    """
+    Calculate net amount after Stripe fees.
+
+    Args:
+        gross_amount: Gross payment amount in dollars
+
+    Returns:
+        Net amount after Stripe fees
+    """
+    fees = COST_CONFIG["stripe"]
+    stripe_fee = (gross_amount * fees["percentage_fee"]) + fees["fixed_fee"]
+    return gross_amount - stripe_fee
+
+
+def get_pro_net_revenue() -> float:
+    """Get net revenue from Pro subscription after Stripe fees."""
+    pro_price = PRICING_TIERS["pro"]["price_monthly"] / 100  # Convert cents to dollars
+    return calculate_stripe_net(pro_price)

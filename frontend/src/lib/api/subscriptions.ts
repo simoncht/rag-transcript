@@ -53,4 +53,13 @@ export const subscriptionsApi = {
     const response = await apiClient.post("/subscriptions/portal", request);
     return response.data;
   },
+
+  /**
+   * Verify a completed checkout session and get updated quota.
+   * This synchronously verifies the session with Stripe, avoiding webhook race conditions.
+   */
+  async verifyCheckout(sessionId: string): Promise<QuotaUsage> {
+    const response = await apiClient.get(`/subscriptions/verify-checkout?session_id=${sessionId}`);
+    return response.data;
+  },
 };

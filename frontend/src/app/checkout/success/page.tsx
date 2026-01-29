@@ -18,11 +18,14 @@ function CheckoutSuccessContent() {
   const queryClient = useQueryClient();
   const [showConfetti, setShowConfetti] = useState(false);
 
-  // Fetch updated quota to confirm upgrade
+  // Verify checkout and fetch updated quota
+  // This synchronously verifies the session with Stripe, avoiding webhook race conditions
   const { data: quota, isLoading } = useQuery({
-    queryKey: ['subscription-quota'],
-    queryFn: subscriptionsApi.getQuota,
+    queryKey: ['verify-checkout', sessionId],
+    queryFn: () => subscriptionsApi.verifyCheckout(sessionId!),
     enabled: !!sessionId,
+    retry: 3,
+    retryDelay: 1000,
   });
 
   // Invalidate queries to refresh subscription data

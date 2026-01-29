@@ -97,10 +97,15 @@ async def ingest_video(
             )
 
         # Check user quotas
-        from app.core.quota import check_video_quota, check_minutes_quota
+        from app.core.quota import check_video_quota, check_minutes_quota, check_storage_quota
         await check_video_quota(current_user, db)
         duration_minutes = int(video_info["duration_seconds"] / 60)
         await check_minutes_quota(current_user, duration_minutes, db)
+
+        # Estimate storage impact for quota check
+        # ~100MB average per video (transcript + chunks + vectors)
+        estimated_storage_mb = 100.0
+        await check_storage_quota(current_user, estimated_storage_mb, db)
 
         # Create video record
         video = Video(
@@ -449,6 +454,18 @@ async def reprocess_video(
     if not video:
         raise HTTPException(status_code=404, detail="Video not found")
 
+    # Check user quotas before reprocessing
+    # Note: Video already exists so we don't check video count quota
+    # But we do check minutes and storage since reprocessing regenerates artifacts
+    from app.core.quota import check_minutes_quota, check_storage_quota
+
+    duration_minutes = int((video.duration_seconds or 0) / 60)
+    await check_minutes_quota(current_user, duration_minutes, db)
+
+    # Estimate storage impact for quota check (~100MB per video)
+    estimated_storage_mb = 100.0
+    await check_storage_quota(current_user, estimated_storage_mb, db)
+
     reset_video_processing(db, video=video, delete_files=False, delete_vectors=True)
 
     job = Job(
@@ -775,6 +792,18 @@ async def delete_videos(
         if request.remove_from_library:
             video.is_deleted = True
             video.deleted_at = None  # Will be set by model
+
+            # Clean up CollectionVideo entries to maintain count consistency
+            try:
+                deleted_cv = (
+                    db.query(CollectionVideo)
+                    .filter(CollectionVideo.video_id == video.id)
+                    .delete(synchronize_session=False)
+                )
+                if deleted_cv > 0:
+                    print(f"Removed video {video.id} from {deleted_cv} collection(s)")
+            except Exception as e:
+                print(f"Warning: Failed to clean up collection associations: {str(e)}")
 
         total_savings += total_size
 

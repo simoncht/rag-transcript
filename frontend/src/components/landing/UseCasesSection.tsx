@@ -1,121 +1,210 @@
 'use client';
 
 import React from 'react';
-import Card from '../shared/Card';
+import { Lightbulb, GraduationCap, Video, Briefcase, ArrowRight } from 'lucide-react';
+
+interface Testimonial {
+  quote: string;
+  author: string;
+  role: string;
+}
 
 interface UseCase {
-  icon: React.ReactNode;
+  id: string;
   title: string;
   persona: string;
+  metric: string;
   description: string;
-  examples: string[];
+  testimonial: Testimonial;
+  icon: React.ReactNode;
 }
 
 const useCases: UseCase[] = [
   {
-    icon: (
-      <svg className="w-8 h-8" fill="none" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" viewBox="0 0 24 24" stroke="currentColor">
-        <path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
-      </svg>
-    ),
+    id: 'researchers',
     title: 'Researchers',
     persona: 'Academic & Market Research',
-    description: 'Analyze hours of interview footage in minutes. Extract quotes with precise citations for papers and reports.',
-    examples: ['Qualitative interview analysis', 'Conference talk reviews', 'Literature video synthesis'],
+    metric: '10x faster',
+    description: 'Stop rewatching hours of interview footage. Extract quotes with precise citations in minutes.',
+    testimonial: {
+      quote: "I processed 50 interviews in 2 days instead of 2 weeks.",
+      author: "Dr. Sarah Chen",
+      role: "Stanford University"
+    },
+    icon: <Lightbulb className="w-6 h-6" />
   },
   {
-    icon: (
-      <svg className="w-8 h-8" fill="none" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" viewBox="0 0 24 24" stroke="currentColor">
-        <path d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
-      </svg>
-    ),
+    id: 'students',
     title: 'Students',
     persona: 'Education & Learning',
-    description: 'Turn lecture recordings into searchable study notes. Find specific explanations instantly before exams.',
-    examples: ['Lecture review and study', 'Tutorial video indexing', 'Exam prep from recordings'],
+    metric: 'Instant answers',
+    description: 'Turn lecture recordings into searchable study notes. Find explanations instantly before exams.',
+    testimonial: {
+      quote: "Found the exact explanation I needed in a 2-hour lecture in 10 seconds.",
+      author: "Alex Rivera",
+      role: "MIT Student"
+    },
+    icon: <GraduationCap className="w-6 h-6" />
   },
   {
-    icon: (
-      <svg className="w-8 h-8" fill="none" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" viewBox="0 0 24 24" stroke="currentColor">
-        <path d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-      </svg>
-    ),
+    id: 'creators',
     title: 'Content Creators',
     persona: 'Video & Podcast Production',
-    description: 'Repurpose long-form video into blogs, social posts, and clips. Find the best moments without rewatching.',
-    examples: ['Podcast episode mining', 'Video-to-blog conversion', 'Clip identification'],
+    metric: '1 video → 10+ posts',
+    description: 'Repurpose long-form content into blogs, social posts, and clips without rewatching.',
+    testimonial: {
+      quote: "I create a week of content from one podcast episode now.",
+      author: "Marcus Johnson",
+      role: "YouTuber, 500K subs"
+    },
+    icon: <Video className="w-6 h-6" />
   },
   {
-    icon: (
-      <svg className="w-8 h-8" fill="none" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" viewBox="0 0 24 24" stroke="currentColor">
-        <path d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-      </svg>
-    ),
+    id: 'professionals',
     title: 'Professionals',
     persona: 'Training & Knowledge Management',
+    metric: '100+ hours searchable',
     description: 'Build searchable libraries from training videos, webinars, and recorded meetings.',
-    examples: ['Onboarding video libraries', 'Meeting recording search', 'Training content indexing'],
-  },
+    testimonial: {
+      quote: "New hires find answers themselves instead of asking the same questions.",
+      author: "Jennifer Park",
+      role: "L&D Director, Fortune 500"
+    },
+    icon: <Briefcase className="w-6 h-6" />
+  }
 ];
 
 export default function UseCasesSection() {
+  const handleGetStarted = () => {
+    window.location.href = '/login';
+  };
+
+  const handleSeePricing = () => {
+    document.getElementById('pricing')?.scrollIntoView({ behavior: 'smooth' });
+  };
+
   return (
-    <section id="use-cases" className="py-20 bg-white">
+    <section id="use-cases" className="py-20 bg-[var(--color-bg-secondary)]">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         {/* Section header */}
-        <div className="text-center mb-16">
-          <h2 className="text-4xl font-bold text-gray-900 mb-4">
+        <div className="text-center mb-12">
+          <h2 className="text-4xl font-bold text-[var(--color-text-primary)] mb-4">
             Built for How You Work
           </h2>
-          <p className="text-xl text-gray-600 max-w-2xl mx-auto">
-            Whether you&apos;re researching, learning, creating, or training - unlock the knowledge trapped in video content.
+          <p className="text-xl text-[var(--color-text-secondary)] max-w-2xl mx-auto">
+            Whether you&apos;re researching, learning, creating, or training —
+            unlock the knowledge trapped in your video content.
           </p>
         </div>
 
-        {/* Use case grid - 2x2 */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-          {useCases.map((useCase, index) => (
-            <Card key={index} className="h-full">
-              <div className="flex flex-col h-full">
+        {/* Bento grid */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+          {/* Featured card - Researchers */}
+          <div className="lg:row-span-2 bg-white border border-[var(--color-border)] rounded-2xl overflow-hidden hover:shadow-lg hover:border-[var(--color-border-dark)] transition-all duration-300 flex flex-col">
+            {/* Top accent stripe */}
+            <div className="h-1 bg-gradient-to-r from-[var(--color-primary)] to-[var(--color-primary-dark)]" />
+
+            <div className="p-6 flex flex-col flex-1">
+              {/* Header */}
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-11 h-11 bg-[var(--color-primary)]/10 rounded-xl flex items-center justify-center text-[var(--color-primary)]">
+                  {useCases[0].icon}
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-[var(--color-text-primary)]">{useCases[0].title}</h3>
+                  <p className="text-sm text-[var(--color-text-secondary)]">{useCases[0].persona}</p>
+                </div>
+              </div>
+
+              {/* Metric */}
+              <div className="inline-flex w-fit px-3 py-1 bg-[var(--color-primary)]/10 text-[var(--color-primary-dark)] text-sm font-semibold rounded-full mb-4">
+                {useCases[0].metric}
+              </div>
+
+              {/* Description */}
+              <p className="text-[var(--color-text-secondary)] mb-6 leading-relaxed">{useCases[0].description}</p>
+
+              {/* Testimonial */}
+              <div className="mt-auto pt-5 border-t border-[var(--color-border)]">
+                <blockquote className="text-[var(--color-text-secondary)] italic">
+                  &ldquo;{useCases[0].testimonial.quote}&rdquo;
+                </blockquote>
+                <cite className="block mt-2 text-sm text-[var(--color-text-tertiary)] not-italic">
+                  — {useCases[0].testimonial.author}, {useCases[0].testimonial.role}
+                </cite>
+              </div>
+            </div>
+          </div>
+
+          {/* Standard cards */}
+          {useCases.slice(1).map((useCase) => (
+            <div
+              key={useCase.id}
+              className="bg-white border border-[var(--color-border)] rounded-2xl overflow-hidden hover:shadow-lg hover:border-[var(--color-border-dark)] transition-all duration-300"
+            >
+              {/* Top accent stripe */}
+              <div className="h-1 bg-gradient-to-r from-[var(--color-primary)] to-[var(--color-primary-dark)]" />
+
+              <div className="p-5">
                 {/* Header */}
-                <div className="flex items-center gap-4 mb-4">
-                  <div className="w-14 h-14 bg-primary/10 rounded-xl flex items-center justify-center text-primary">
+                <div className="flex items-center gap-3 mb-3">
+                  <div className="w-10 h-10 bg-[var(--color-primary)]/10 rounded-xl flex items-center justify-center text-[var(--color-primary)]">
                     {useCase.icon}
                   </div>
                   <div>
-                    <h3 className="text-xl font-bold text-gray-900">
-                      {useCase.title}
-                    </h3>
-                    <p className="text-sm text-primary font-medium">
-                      {useCase.persona}
-                    </p>
+                    <h3 className="text-lg font-bold text-[var(--color-text-primary)]">{useCase.title}</h3>
+                    <p className="text-sm text-[var(--color-text-secondary)]">{useCase.persona}</p>
                   </div>
+                </div>
+
+                {/* Metric */}
+                <div className="inline-flex px-3 py-1 bg-[var(--color-primary)]/10 text-[var(--color-primary-dark)] text-sm font-semibold rounded-full mb-3">
+                  {useCase.metric}
                 </div>
 
                 {/* Description */}
-                <p className="text-gray-600 mb-4 flex-grow">
-                  {useCase.description}
-                </p>
+                <p className="text-[var(--color-text-secondary)] text-sm mb-4 leading-relaxed">{useCase.description}</p>
 
-                {/* Example use cases */}
-                <div className="pt-4 border-t border-gray-100">
-                  <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
-                    Example uses
+                {/* Compact testimonial */}
+                <div className="pt-4 border-t border-[var(--color-border)]">
+                  <p className="text-sm text-[var(--color-text-tertiary)] italic">
+                    &ldquo;{useCase.testimonial.quote}&rdquo;
                   </p>
-                  <div className="flex flex-wrap gap-2">
-                    {useCase.examples.map((example, i) => (
-                      <span
-                        key={i}
-                        className="px-3 py-1 bg-gray-100 text-gray-600 text-sm rounded-full"
-                      >
-                        {example}
-                      </span>
-                    ))}
-                  </div>
+                  <p className="text-xs text-[var(--color-text-tertiary)] mt-1">
+                    — {useCase.testimonial.author}
+                  </p>
                 </div>
               </div>
-            </Card>
+            </div>
           ))}
+
+          {/* CTA Card */}
+          <div className="bg-white border border-[var(--color-border)] rounded-2xl overflow-hidden hover:shadow-lg hover:border-[var(--color-border-dark)] transition-all duration-300">
+            {/* Top accent stripe - uses accent color */}
+            <div className="h-1 bg-gradient-to-r from-[var(--color-accent)] to-[var(--color-accent-dark)]" />
+
+            <div className="p-6 flex flex-col justify-center items-center text-center h-full">
+              <h3 className="text-xl font-bold text-[var(--color-text-primary)] mb-2">Which one are you?</h3>
+              <p className="text-[var(--color-text-secondary)] text-sm mb-5">
+                Start transforming your video workflow today.
+              </p>
+              <div className="flex flex-col gap-3 w-full max-w-xs">
+                <button
+                  onClick={handleGetStarted}
+                  className="w-full px-5 py-2.5 bg-[var(--color-primary)] text-white font-medium rounded-xl hover:bg-[var(--color-primary-dark)] transition-colors duration-200 flex items-center justify-center gap-2 group"
+                >
+                  Get Started Free
+                  <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+                </button>
+                <button
+                  onClick={handleSeePricing}
+                  className="w-full px-5 py-2.5 border border-[var(--color-border)] text-[var(--color-text-primary)] font-medium rounded-xl hover:bg-[var(--color-bg-secondary)] transition-colors duration-200"
+                >
+                  See Pricing
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </section>

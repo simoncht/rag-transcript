@@ -32,10 +32,13 @@ export default function PricingCard({
 }: PricingCardProps) {
   const isCurrentTier = currentTier === tier.tier;
   const isFree = tier.tier === 'free';
+  const isEnterprise = tier.tier === 'enterprise';
 
   // Calculate display price
   const price = billingCycle === 'monthly' ? tier.price_monthly : tier.price_yearly;
-  const displayPrice = price === 0 ? 'Free' : `$${(price / 100).toFixed(0)}`;
+  // Format price with cents (e.g., $23.99) - remove trailing .00 for round numbers
+  const priceValue = price / 100;
+  const displayPrice = price === 0 ? 'Free' : `$${priceValue % 1 === 0 ? priceValue.toFixed(0) : priceValue.toFixed(2)}`;
   const priceInterval = billingCycle === 'monthly' ? '/month' : '/year';
 
   // Determine CTA text and action
@@ -134,6 +137,31 @@ export default function PricingCard({
           </li>
         ))}
       </ul>
+
+      {/* Enterprise onboarding note */}
+      {isEnterprise && !isCurrentTier && (
+        <div className="border-t border-gray-200 pt-4 pb-4">
+          <div className="flex items-start gap-2">
+            <svg
+              className="w-5 h-5 text-primary flex-shrink-0 mt-0.5"
+              fill="none"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth="2"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+            </svg>
+            <div>
+              <p className="font-medium text-gray-900 text-sm">Dedicated Onboarding</p>
+              <p className="text-xs text-gray-500">
+                An onboarding manager will reach out to guide you through setup
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* AI Model info */}
       <div className="border-t border-gray-200 pt-4 mb-4">
