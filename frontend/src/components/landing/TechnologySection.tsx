@@ -133,7 +133,7 @@ export default function TechnologySection() {
                 </span>
               </div>
               <p className="text-gray-600 mb-4">
-                Your full conversation is saved—and our AI learns what matters. Key facts are extracted from every exchange, so even when the conversation grows long, important details from earlier aren't forgotten.
+                Your full conversation is saved—and our AI learns what matters. Key facts are extracted from every exchange, so even when the conversation grows long, important details from earlier aren&apos;t forgotten.
               </p>
               <div className="flex flex-wrap gap-4 text-sm">
                 <div className="flex items-center gap-2">
