@@ -47,6 +47,9 @@ from app.schemas import (
 )
 from app.services.query_expansion import get_query_expansion_service
 from app.services.query_rewriter import get_query_rewriter_service
+from app.services.query_router import get_query_router_service, RetrievalStrategy
+from app.services.intent_classifier import get_intent_classifier, QueryIntent
+from app.services.two_level_retriever import get_two_level_retriever
 from app.services.audit_logger import log_chat_message
 from app.core.rate_limit import limiter
 from app.core.pricing import resolve_model, get_model_info_for_tier
@@ -58,6 +61,143 @@ MAX_CHUNK_REFERENCES = 4
 CONTEXT_CHUNK_LIMIT = MAX_CHUNK_REFERENCES
 SNIPPET_PREVIEW_MAX_CHARS = 240
 REFERENCE_DEDUP_BUCKET_SECONDS = 30
+
+# Diversity-aware retrieval constants
+DEFAULT_DIVERSITY = 0.4
+MAX_DIVERSITY = 0.7
+DEFAULT_CHUNK_LIMIT = 4
+MAX_CHUNK_LIMIT = 12
+MMR_PREFETCH_LIMIT = 100
+
+
+def _get_diversity_factor(num_videos: int, mode: str) -> float:
+    """
+    Calculate diversity factor based on video count and conversation mode.
+
+    Higher diversity for:
+    - More videos (need cross-video representation)
+    - Synthesis modes (summarize, compare_sources)
+
+    Args:
+        num_videos: Number of videos selected for the conversation
+        mode: Conversation mode (summarize, deep_dive, etc.)
+
+    Returns:
+        Diversity factor between 0.0 (relevance only) and 0.7 (max diversity)
+    """
+    # Base diversity by mode
+    mode_diversity = {
+        "summarize": 0.5,
+        "compare_sources": 0.6,
+        "deep_dive": 0.3,
+        "timeline": 0.5,
+        "extract_actions": 0.4,
+        "quiz_me": 0.5,
+    }
+    base = mode_diversity.get(mode, DEFAULT_DIVERSITY)
+
+    # Scale up for multi-video (add 0.05 per video beyond 3, cap at MAX_DIVERSITY)
+    if num_videos > 3:
+        base = min(base + (num_videos - 3) * 0.05, MAX_DIVERSITY)
+
+    return base
+
+
+def _get_chunk_limit(num_videos: int, mode: str) -> int:
+    """
+    Calculate chunk limit based on video count and conversation mode.
+
+    More videos and synthesis modes get higher limits to ensure
+    adequate representation across sources.
+
+    Args:
+        num_videos: Number of videos selected for the conversation
+        mode: Conversation mode (summarize, deep_dive, etc.)
+
+    Returns:
+        Chunk limit between DEFAULT_CHUNK_LIMIT and MAX_CHUNK_LIMIT
+    """
+    # Base limits by mode
+    base_limits = {
+        "summarize": 6,
+        "compare_sources": 8,
+        "deep_dive": 4,
+        "timeline": 6,
+        "extract_actions": 5,
+        "quiz_me": 6,
+    }
+    base = base_limits.get(mode, DEFAULT_CHUNK_LIMIT)
+
+    # Scale up for multi-video (max MAX_CHUNK_LIMIT)
+    if num_videos > 3:
+        return min(base + (num_videos - 3), MAX_CHUNK_LIMIT)
+
+    return base
+
+
+def _build_context_from_summaries(
+    db: Session,
+    video_ids: List[uuid.UUID],
+    max_videos: int = 50,
+) -> tuple[str, List[Video], bool]:
+    """
+    Build context from video-level summaries for coverage queries.
+
+    This implements the NotebookLM-style approach where high-level queries
+    use pre-computed source summaries instead of chunk retrieval.
+
+    Args:
+        db: Database session
+        video_ids: List of selected video IDs
+        max_videos: Maximum number of video summaries to include
+
+    Returns:
+        Tuple of (context_string, videos_used, had_missing_summaries)
+    """
+    # Fetch videos with summaries
+    videos = (
+        db.query(Video)
+        .filter(Video.id.in_(video_ids))
+        .order_by(Video.created_at.desc())
+        .limit(max_videos)
+        .all()
+    )
+
+    context_parts = []
+    videos_with_summaries = []
+    missing_summaries = 0
+
+    for i, video in enumerate(videos, 1):
+        if video.summary:
+            # Use video-level summary
+            topics_str = ""
+            if video.key_topics:
+                topics_str = f"\nKey Topics: {', '.join(video.key_topics[:5])}"
+
+            context_parts.append(
+                f'[Source {i}] "{video.title}"\n'
+                f"Channel: {video.channel_name or 'Unknown'}{topics_str}\n"
+                f"---\n{video.summary}\n"
+            )
+            videos_with_summaries.append(video)
+        else:
+            missing_summaries += 1
+
+    had_missing = missing_summaries > 0
+
+    if not context_parts:
+        return "No video summaries available.", [], True
+
+    context = "\n---\n".join(context_parts)
+
+    # Add note if some summaries were missing
+    if had_missing:
+        context = (
+            f"NOTE: {missing_summaries} video(s) don't have summaries yet and are not included.\n\n"
+            + context
+        )
+
+    return context, videos_with_summaries, had_missing
 
 
 def _format_timestamp_display(start: float, end: float) -> str:
@@ -852,6 +992,57 @@ async def send_message(
 
     selected_video_ids = [src.video_id for src in selected_sources]
 
+    # Calculate adaptive diversity and chunk limit based on video count and mode
+    num_videos = len(selected_video_ids)
+    diversity_factor = _get_diversity_factor(num_videos, message_request.mode)
+    adaptive_chunk_limit = _get_chunk_limit(num_videos, message_request.mode)
+
+    # Check if videos have summaries for two-level retrieval
+    videos_with_summaries = (
+        db.query(Video)
+        .filter(Video.id.in_(selected_video_ids), Video.summary.isnot(None))
+        .count()
+    )
+    has_summaries = videos_with_summaries > 0
+    summary_coverage = videos_with_summaries / num_videos if num_videos > 0 else 0
+
+    # Load conversation history EARLY for intent classification
+    history_messages_raw = (
+        db.query(MessageModel)
+        .filter(
+            MessageModel.conversation_id == conversation_id,
+            MessageModel.role != SYSTEM_ROLE,
+        )
+        .order_by(MessageModel.created_at.desc())
+        .limit(10)
+        .all()
+    )
+    history_messages_raw.reverse()  # Oldest first
+
+    # Convert to dict format for intent classifier and query rewriter
+    history_for_classifier = [
+        {"role": msg.role, "content": msg.content}
+        for msg in history_messages_raw
+    ]
+
+    # Classify query intent using LLM-based classifier
+    intent_classifier = get_intent_classifier()
+    intent_classification = intent_classifier.classify_sync(
+        query=message_request.message,
+        mode=message_request.mode,
+        num_videos=num_videos,
+        recent_messages=history_for_classifier[:-1] if history_for_classifier else None,
+    )
+
+    # Route query using legacy router for backward compatibility (fallback stats)
+    query_router = get_query_router_service()
+    routing_decision = query_router.route_query(
+        query=message_request.message,
+        num_videos=num_videos,
+        mode=message_request.mode,
+        videos_have_summaries=has_summaries and summary_coverage > 0.5,
+    )
+
     previous_user_message = (
         db.query(MessageModel)
         .filter(
@@ -920,7 +1111,7 @@ async def send_message(
     )
     db.commit()
 
-    # 3. Load conversation history EARLY for query rewriting
+    # 3. Configure logging and RAG pipeline
     import logging
     import time
 
@@ -929,28 +1120,30 @@ async def send_message(
     logger.info(f"[RAG Pipeline] Starting retrieval for query: '{message_request.message[:100]}...'")
     logger.info(f"[RAG Config] retrieval_top_k={settings.retrieval_top_k}, reranking_enabled={settings.enable_reranking}, reranking_top_k={settings.reranking_top_k}")
     logger.info(f"[RAG Config] min_relevance_score={settings.min_relevance_score}, query_expansion_enabled={settings.enable_query_expansion}, query_rewriting_enabled={settings.enable_query_rewriting}")
+    logger.info(f"[RAG Config] Diversity: num_videos={num_videos}, diversity_factor={diversity_factor:.2f}, chunk_limit={adaptive_chunk_limit}")
+    logger.info(f"[Intent Classifier] Intent: {intent_classification.intent.value}, Confidence: {intent_classification.confidence:.2f}, Reason: {intent_classification.reasoning}")
+    logger.info(f"[Query Router] Strategy: {routing_decision.strategy.value}, Reason: {routing_decision.reason}, Confidence: {routing_decision.confidence:.2f}")
+    logger.info(f"[Query Router] Summary coverage: {videos_with_summaries}/{num_videos} videos ({summary_coverage:.0%})")
 
-    # Load history for query rewriting (need this BEFORE vector search)
-    history_start = time.time()
-    history_messages_raw = (
-        db.query(MessageModel)
-        .filter(
-            MessageModel.conversation_id == conversation_id,
-            MessageModel.role != SYSTEM_ROLE,
-        )
-        .order_by(MessageModel.created_at.desc())
-        .limit(10)
-        .all()
-    )
-    history_messages_raw.reverse()  # Oldest first
-    history_time = time.time() - history_start
-    logger.info(f"[Conversation History] Loaded {len(history_messages_raw)} messages in {history_time:.3f}s")
+    # Initialize variables that may be set by either branch
+    context = ""
+    context_is_weak = False
+    top_chunks = []
+    video_map: Dict[uuid.UUID, Video] = {}
+    chunk_refs_response = []
+    rerank_time = 0.0
 
-    # Convert to dict format for query rewriter
-    history_for_rewriter = [
-        {"role": msg.role, "content": msg.content}
-        for msg in history_messages_raw[:-1]  # Exclude the message we just added
-    ]
+    # Determine query intent from the LLM-based classifier
+    # COVERAGE: Use video summaries for "summarize all", "key themes" queries
+    # PRECISION: Use chunk retrieval for "what did X say", "why" queries
+    # HYBRID: Use both for "summarize with quotes" queries
+    is_coverage_query = intent_classification.intent == QueryIntent.COVERAGE
+    is_hybrid_query = intent_classification.intent == QueryIntent.HYBRID
+
+    logger.info(f"[Intent] is_coverage={is_coverage_query}, is_hybrid={is_hybrid_query}")
+
+    # Convert to dict format for query rewriter (history already loaded above)
+    history_for_rewriter = history_for_classifier[:-1] if history_for_classifier else []
 
     # 3a. Query Rewriting: Transform follow-up queries into standalone questions
     query_rewriter_service = get_query_rewriter_service()
@@ -968,40 +1161,86 @@ async def send_message(
     else:
         logger.debug(f"[Query Rewriter] No rewriting needed ({rewrite_time:.3f}s)")
 
-    # 3b. Query Expansion: Generate query variants for improved recall
-    query_expansion_service = get_query_expansion_service()
-    expansion_start = time.time()
-    query_variants = query_expansion_service.expand_query(effective_query)  # Use rewritten query
-    expansion_time = time.time() - expansion_start
+    # 3b. Query Expansion and Chunk Retrieval (based on intent classification)
+    expansion_time = 0.0
+    embedding_time = 0.0
+    query_variants = []
+    scored_chunks = []
+    high_quality_chunks = []
+    deduped_chunks = []
+    video_distribution = {}
 
-    logger.info(f"[Query Expansion] Generated {len(query_variants)} query variants in {expansion_time:.3f}s")
-    for idx, variant in enumerate(query_variants):
-        logger.debug(f"[Query Expansion] Variant {idx}: '{variant[:100]}...'")
+    # Use chunk retrieval path based on intent:
+    # - PRECISION: Always use chunks (let relevance determine sources)
+    # - HYBRID: Use chunks for evidence
+    # - COVERAGE: Use video summaries unless unavailable, then fall back to video-guarantee chunks
+    use_chunk_retrieval = (
+        intent_classification.intent == QueryIntent.PRECISION or
+        intent_classification.intent == QueryIntent.HYBRID or
+        (intent_classification.intent == QueryIntent.COVERAGE and summary_coverage < 0.5)
+    )
 
-    # 4. Multi-Query Retrieval: Embed and search with each query variant
-    embedding_start = time.time()
-    all_scored_chunks: Dict[uuid.UUID, Any] = {}  # chunk_id -> best ScoredChunk
+    if use_chunk_retrieval:
+        # ========== CHUNK RETRIEVAL PATH ==========
+        if is_coverage_query:
+            path_reason = "coverage query with video guarantee (summaries unavailable)"
+        elif is_hybrid_query:
+            path_reason = "hybrid query (chunks for evidence)"
+        else:
+            path_reason = "precision query"
+        logger.info(f"[Two-Level Retrieval] Using chunk retrieval for {path_reason}")
 
-    for idx, query_text in enumerate(query_variants):
-        variant_embed_start = time.time()
-        query_embedding = embedding_service.embed_text(query_text)
-        if isinstance(query_embedding, tuple):
-            query_embedding = np.array(query_embedding, dtype=np.float32)
-        variant_embed_time = time.time() - variant_embed_start
+        query_expansion_service = get_query_expansion_service()
+        expansion_start = time.time()
+        query_variants = query_expansion_service.expand_query(effective_query)  # Use rewritten query
+        expansion_time = time.time() - expansion_start
+
+        logger.info(f"[Query Expansion] Generated {len(query_variants)} query variants in {expansion_time:.3f}s")
+        for idx, variant in enumerate(query_variants):
+            logger.debug(f"[Query Expansion] Variant {idx}: '{variant[:100]}...'")
+
+        # 4. Multi-Query Retrieval: Embed and search with each query variant
+        embedding_start = time.time()
+        all_scored_chunks: Dict[uuid.UUID, Any] = {}  # chunk_id -> best ScoredChunk
+
+        for idx, query_text in enumerate(query_variants):
+            variant_embed_start = time.time()
+            query_embedding = embedding_service.embed_text(query_text)
+            if isinstance(query_embedding, tuple):
+                query_embedding = np.array(query_embedding, dtype=np.float32)
+            variant_embed_time = time.time() - variant_embed_start
 
         logger.debug(f"[Embedding] Query variant {idx} embedded in {variant_embed_time:.3f}s")
 
-        # Search with this query variant
+        # Search with appropriate strategy based on intent
         variant_search_start = time.time()
-        variant_chunks = vector_store_service.search_chunks(
-            query_embedding=query_embedding,
-            user_id=current_user.id,
-            video_ids=selected_video_ids,
-            top_k=settings.retrieval_top_k,
-        )
-        variant_search_time = time.time() - variant_search_start
 
-        logger.info(f"[Vector Search] Query variant {idx} retrieved {len(variant_chunks)} chunks in {variant_search_time:.3f}s")
+        if is_coverage_query and num_videos > 1:
+            # Use video guarantee search for coverage queries with multiple videos
+            # This ensures at least 1 chunk per video is included
+            logger.info(f"[Video Guarantee] Using guaranteed video representation for {num_videos} videos")
+            variant_chunks = vector_store_service.search_with_video_guarantee(
+                query_embedding=query_embedding,
+                video_ids=selected_video_ids,
+                user_id=current_user.id,
+                top_k=adaptive_chunk_limit,
+                prefetch_limit=MMR_PREFETCH_LIMIT,
+            )
+            search_type = "video guarantee"
+        else:
+            # Standard diversity-aware search for precision and hybrid queries
+            # Let relevance determine which videos are represented
+            variant_chunks = vector_store_service.search_with_diversity(
+                query_embedding=query_embedding,
+                user_id=current_user.id,
+                video_ids=selected_video_ids,
+                top_k=settings.retrieval_top_k,
+                diversity=diversity_factor,
+                prefetch_limit=MMR_PREFETCH_LIMIT,
+            )
+            search_type = f"diversity={diversity_factor:.2f}"
+        variant_search_time = time.time() - variant_search_start
+        logger.info(f"[Vector Search] Query variant {idx} retrieved {len(variant_chunks)} chunks ({search_type}) in {variant_search_time:.3f}s")
         logger.debug(f"[Vector Search] Query variant {idx} score range: {variant_chunks[0].score:.4f} to {variant_chunks[-1].score:.4f}" if variant_chunks else "No chunks")
 
         # Merge results: Keep highest score for each chunk
@@ -1015,158 +1254,207 @@ async def send_message(
             if chunk_id not in all_scored_chunks or chunk.score > all_scored_chunks[chunk_id].score:
                 all_scored_chunks[chunk_id] = chunk
 
-    embedding_time = time.time() - embedding_start
+        embedding_time = time.time() - embedding_start
 
-    # Convert merged results back to list, sorted by score
-    scored_chunks = sorted(all_scored_chunks.values(), key=lambda c: c.score, reverse=True)
+        # Convert merged results back to list, sorted by score
+        scored_chunks = sorted(all_scored_chunks.values(), key=lambda c: c.score, reverse=True)
 
-    logger.info(f"[Multi-Query Retrieval] Total embedding + search time: {embedding_time:.3f}s")
-    logger.info(f"[Multi-Query Retrieval] Merged results: {len(scored_chunks)} unique chunks from {len(query_variants)} queries")
-    if scored_chunks:
-        logger.info(f"[Multi-Query Retrieval] Score range: {scored_chunks[0].score:.4f} to {scored_chunks[-1].score:.4f}")
+        logger.info(f"[Multi-Query Retrieval] Total embedding + search time: {embedding_time:.3f}s")
+        logger.info(f"[Multi-Query Retrieval] Merged results: {len(scored_chunks)} unique chunks from {len(query_variants)} queries")
+        if scored_chunks:
+            logger.info(f"[Multi-Query Retrieval] Score range: {scored_chunks[0].score:.4f} to {scored_chunks[-1].score:.4f}")
 
-    # 4a. Re-rank chunks if enabled (Phase 2 improvement)
-    if settings.enable_reranking and scored_chunks:
-        from app.services.reranker import reranker_service
+        # 4a. Re-rank chunks if enabled (Phase 2 improvement)
+        if settings.enable_reranking and scored_chunks:
+            from app.services.reranker import reranker_service
 
-        rerank_start = time.time()
-        logger.info(f"[Reranking] Starting reranking of {len(scored_chunks)} chunks (top_k={settings.reranking_top_k})")
-        logger.debug(f"[Reranking] Pre-rerank score range: {scored_chunks[0].score:.4f} to {scored_chunks[-1].score:.4f}")
+            rerank_start = time.time()
+            logger.info(f"[Reranking] Starting reranking of {len(scored_chunks)} chunks (top_k={settings.reranking_top_k})")
+            logger.debug(f"[Reranking] Pre-rerank score range: {scored_chunks[0].score:.4f} to {scored_chunks[-1].score:.4f}")
 
-        reranked_chunks = reranker_service.rerank_chunks(
-            query=message_request.message, chunks=scored_chunks, top_k=settings.reranking_top_k
+            reranked_chunks = reranker_service.rerank_chunks(
+                query=message_request.message, chunks=scored_chunks, top_k=settings.reranking_top_k
+            )
+            rerank_time = time.time() - rerank_start
+
+            logger.info(f"[Reranking] Completed in {rerank_time:.3f}s, returned {len(reranked_chunks)} chunks")
+            if reranked_chunks:
+                logger.debug(f"[Reranking] Post-rerank score range: {reranked_chunks[0].score:.4f} to {reranked_chunks[-1].score:.4f}")
+            scored_chunks = reranked_chunks
+        else:
+            logger.info("[Reranking] Disabled or no chunks to rank")
+
+        # 4b. Apply relevance threshold filtering (Phase 1 improvement)
+        # For coverage queries, skip strict filtering - video guarantee already selected best per video
+        filter_start = time.time()
+        if is_coverage_query:
+            high_quality_chunks = scored_chunks
+            logger.info(
+                f"[Relevance Filter] Coverage query - skipping threshold filtering, keeping all {len(scored_chunks)} chunks"
+            )
+        else:
+            high_quality_chunks = [
+                c for c in scored_chunks if c.score >= settings.min_relevance_score
+            ]
+            filter_time = time.time() - filter_start
+
+            logger.info(
+                f"[Relevance Filter] Processed {len(scored_chunks)} chunks in {filter_time:.3f}s"
+            )
+            logger.info(
+                f"[Relevance Filter] {len(high_quality_chunks)} chunks above primary threshold ({settings.min_relevance_score}), "
+                f"{len(scored_chunks) - len(high_quality_chunks)} filtered out"
+            )
+
+            # 4c. Check if we have sufficient context
+            if not high_quality_chunks:
+                # Fallback: use lower threshold if no high-quality chunks
+                high_quality_chunks = [
+                    c for c in scored_chunks if c.score >= settings.fallback_relevance_score
+                ]
+                logger.warning(
+                    f"[Relevance Filter] No chunks above primary threshold ({settings.min_relevance_score})"
+                )
+                logger.warning(
+                    f"[Relevance Filter] Using fallback threshold ({settings.fallback_relevance_score}): {len(high_quality_chunks)} chunks"
+                )
+                if not high_quality_chunks:
+                    logger.error("[Relevance Filter] No chunks even with fallback threshold - no context available")
+
+        # Determine context quality for warning
+        max_score = (
+            max([c.score for c in high_quality_chunks]) if high_quality_chunks else 0.0
         )
-        rerank_time = time.time() - rerank_start
+        context_is_weak = max_score < settings.weak_context_threshold
 
-        logger.info(f"[Reranking] Completed in {rerank_time:.3f}s, returned {len(reranked_chunks)} chunks")
-        if reranked_chunks:
-            logger.debug(f"[Reranking] Post-rerank score range: {reranked_chunks[0].score:.4f} to {reranked_chunks[-1].score:.4f}")
-        scored_chunks = reranked_chunks
-    else:
-        logger.info("[Reranking] Disabled or no chunks to rank")
-
-    # 4b. Apply relevance threshold filtering (Phase 1 improvement)
-    filter_start = time.time()
-    high_quality_chunks = [
-        c for c in scored_chunks if c.score >= settings.min_relevance_score
-    ]
-    filter_time = time.time() - filter_start
-
-    logger.info(
-        f"[Relevance Filter] Processed {len(scored_chunks)} chunks in {filter_time:.3f}s"
-    )
-    logger.info(
-        f"[Relevance Filter] {len(high_quality_chunks)} chunks above primary threshold ({settings.min_relevance_score}), "
-        f"{len(scored_chunks) - len(high_quality_chunks)} filtered out"
-    )
-
-    # 4c. Check if we have sufficient context
-    if not high_quality_chunks:
-        # Fallback: use lower threshold if no high-quality chunks
-        high_quality_chunks = [
-            c for c in scored_chunks if c.score >= settings.fallback_relevance_score
-        ]
-        logger.warning(
-            f"[Relevance Filter] No chunks above primary threshold ({settings.min_relevance_score})"
+        logger.info(
+            f"[Context Quality] Max relevance score: {max_score:.4f}, "
+            f"weak_threshold: {settings.weak_context_threshold}, "
+            f"context_is_weak: {context_is_weak}"
         )
-        logger.warning(
-            f"[Relevance Filter] Using fallback threshold ({settings.fallback_relevance_score}): {len(high_quality_chunks)} chunks"
+
+        # 4d. Deduplicate nearby chunks from the same video to avoid redundant citations
+        # For coverage queries, dedupe by video_id only (keep 1 chunk per video)
+        dedup_start = time.time()
+        deduped_chunks = []
+        seen_context_keys: Set = set()
+        for chunk in high_quality_chunks:
+            if is_coverage_query:
+                # For coverage queries, dedupe by video_id only (keep 1 chunk per video)
+                key = chunk.video_id
+            else:
+                bucket = int(chunk.start_timestamp // REFERENCE_DEDUP_BUCKET_SECONDS)
+                key = (chunk.video_id, bucket)
+            if key in seen_context_keys:
+                continue
+            seen_context_keys.add(key)
+            deduped_chunks.append(chunk)
+        dedup_time = time.time() - dedup_start
+
+        logger.info(
+            f"[Deduplication] Processed {len(high_quality_chunks)} chunks in {dedup_time:.3f}s"
         )
+        logger.info(
+            f"[Deduplication] Removed {len(high_quality_chunks) - len(deduped_chunks)} duplicate chunks, "
+            f"{len(deduped_chunks)} remaining"
+        )
+
+        # 5. Build enhanced context from retrieved chunks (Phase 1 improvement)
+        # Use adaptive chunk limit based on video count and mode
+        context_build_start = time.time()
+        context_parts = []
+        top_chunks = deduped_chunks[:adaptive_chunk_limit]
+        video_map: Dict[uuid.UUID, Video] = {}
+        if top_chunks:
+            unique_video_ids = list({c.video_id for c in top_chunks})
+            if unique_video_ids:
+                video_rows = db.query(Video).filter(Video.id.in_(unique_video_ids)).all()
+                video_map = {v.id: v for v in video_rows}
+
+        # Log video diversity in retrieved chunks
+        video_distribution = {}
+        for chunk in top_chunks:
+            video_distribution[chunk.video_id] = video_distribution.get(chunk.video_id, 0) + 1
+        logger.info(f"[Context Building] Using top {len(top_chunks)} chunks (adaptive limit: {adaptive_chunk_limit})")
+        logger.info(f"[Context Building] Video diversity: {len(video_distribution)} unique videos from {num_videos} selected")
+
         if not high_quality_chunks:
-            logger.error("[Relevance Filter] No chunks even with fallback threshold - no context available")
+            # No relevant context found - explicit warning
+            context = "WARNING: No relevant content found in the selected transcripts for this query."
+            context_is_weak = True
+            max_score = 0.0
+            logger.warning("[Context Building] No chunks found for query, even with fallback threshold")
+        else:
+            # Build enhanced context with metadata
+            for i, chunk in enumerate(top_chunks, 1):
+                # Get video for title
+                video = video_map.get(chunk.video_id)
+                video_title = video.title if video else "Unknown Video"
 
-    # Determine context quality for warning
-    max_score = (
-        max([c.score for c in high_quality_chunks]) if high_quality_chunks else 0.0
-    )
-    context_is_weak = max_score < settings.weak_context_threshold
+                # Format timestamps as HH:MM:SS or MM:SS
+                timestamp_display = _format_timestamp_display(
+                    chunk.start_timestamp, chunk.end_timestamp
+                )
 
-    logger.info(
-        f"[Context Quality] Max relevance score: {max_score:.4f}, "
-        f"weak_threshold: {settings.weak_context_threshold}, "
-        f"context_is_weak: {context_is_weak}"
-    )
+                # Extract speaker and topic information
+                speaker = chunk.speakers[0] if chunk.speakers else "Unknown"
+                topic = chunk.chapter_title or chunk.title or "General"
 
-    # 4d. Deduplicate nearby chunks from the same video to avoid redundant citations
-    dedup_start = time.time()
-    deduped_chunks: List[Any] = []
-    seen_context_keys: Set[tuple[uuid.UUID, int]] = set()
-    for chunk in high_quality_chunks:
-        bucket = int(chunk.start_timestamp // REFERENCE_DEDUP_BUCKET_SECONDS)
-        key = (chunk.video_id, bucket)
-        if key in seen_context_keys:
-            continue
-        seen_context_keys.add(key)
-        deduped_chunks.append(chunk)
-    dedup_time = time.time() - dedup_start
+                # Build enhanced context entry
+                context_parts.append(
+                    f'[Source {i}] from "{video_title}"\n'
+                    f"Speaker: {speaker}\n"
+                    f"Topic: {topic}\n"
+                    f"Time: {timestamp_display}\n"
+                    f"Relevance: {(chunk.score * 100):.0f}%\n"
+                    f"---\n"
+                    f"{chunk.text}\n"
+                )
 
-    logger.info(
-        f"[Deduplication] Processed {len(high_quality_chunks)} chunks in {dedup_time:.3f}s"
-    )
-    logger.info(
-        f"[Deduplication] Removed {len(high_quality_chunks) - len(deduped_chunks)} duplicate chunks, "
-        f"{len(deduped_chunks)} remaining"
-    )
+            context = "\n---\n".join(context_parts)
 
-    # 5. Build enhanced context from retrieved chunks (Phase 1 improvement)
-    context_build_start = time.time()
-    context_parts = []
-    top_chunks = deduped_chunks[:CONTEXT_CHUNK_LIMIT]
-    video_map: Dict[uuid.UUID, Video] = {}
-    if top_chunks:
-        unique_video_ids = list({c.video_id for c in top_chunks})
-        if unique_video_ids:
-            video_rows = db.query(Video).filter(Video.id.in_(unique_video_ids)).all()
-            video_map = {v.id: v for v in video_rows}
+            # Add warning prefix if context quality is weak
+            if context_is_weak:
+                context = (
+                    f"NOTE: Retrieved context has low relevance (max {(max_score * 100):.0f}%). "
+                    f"The response may be speculative.\n\n{context}"
+                )
 
-    logger.info(f"[Context Building] Using top {len(top_chunks)} chunks (limit: {CONTEXT_CHUNK_LIMIT})")
+        context_build_time = time.time() - context_build_start
+        context_token_estimate = len(context.split()) * 1.3  # Rough token estimate
 
-    if not high_quality_chunks:
-        # No relevant context found - explicit warning
-        context = "WARNING: No relevant content found in the selected transcripts for this query."
-        logger.warning("[Context Building] No chunks found for query, even with fallback threshold")
+        logger.info(f"[Context Building] Completed in {context_build_time:.3f}s")
+        logger.info(f"[Context Building] Context length: {len(context)} chars, ~{int(context_token_estimate)} tokens")
+        logger.info(f"[Context Building] Context quality: {'WEAK' if context_is_weak else 'GOOD'} (max score: {max_score:.4f})")
+
     else:
-        # Build enhanced context with metadata
-        for i, chunk in enumerate(top_chunks, 1):  # Use top 5 for context
-            # Get video for title
-            video = video_map.get(chunk.video_id)
-            video_title = video.title if video else "Unknown Video"
+        # ========== VIDEO SUMMARIES PATH ==========
+        # For coverage queries, use pre-computed video summaries
+        logger.info(f"[Two-Level Retrieval] Using video summaries for coverage query (intent={intent_classification.intent.value})")
 
-            # Format timestamps as HH:MM:SS or MM:SS
-            timestamp_display = _format_timestamp_display(
-                chunk.start_timestamp, chunk.end_timestamp
-            )
+        context_build_start = time.time()
+        context, videos_used, had_missing = _build_context_from_summaries(
+            db=db,
+            video_ids=selected_video_ids,
+            max_videos=50,
+        )
+        context_build_time = time.time() - context_build_start
 
-            # Extract speaker and topic information
-            speaker = chunk.speakers[0] if chunk.speakers else "Unknown"
-            topic = chunk.chapter_title or chunk.title or "General"
+        # Log summary usage
+        logger.info(f"[Video Summaries] Built context from {len(videos_used)} video summaries in {context_build_time:.3f}s")
+        if had_missing:
+            logger.warning(f"[Video Summaries] Some videos missing summaries, falling back to available summaries")
 
-            # Build enhanced context entry
-            context_parts.append(
-                f'[Source {i}] from "{video_title}"\n'
-                f"Speaker: {speaker}\n"
-                f"Topic: {topic}\n"
-                f"Time: {timestamp_display}\n"
-                f"Relevance: {(chunk.score * 100):.0f}%\n"
-                f"---\n"
-                f"{chunk.text}\n"
-            )
+        # Set context quality indicators for summary path
+        context_is_weak = len(videos_used) == 0
+        max_score = 1.0 if videos_used else 0.0  # Summaries are always "relevant" when available
+        context_token_estimate = len(context.split()) * 1.3
 
-        context = "\n---\n".join(context_parts)
+        # Update video distribution for logging
+        video_distribution = {v.id: 1 for v in videos_used}
 
-        # Add warning prefix if context quality is weak
-        if context_is_weak:
-            context = (
-                f"NOTE: Retrieved context has low relevance (max {(max_score * 100):.0f}%). "
-                f"The response may be speculative.\n\n{context}"
-            )
-
-    context_build_time = time.time() - context_build_start
-    context_token_estimate = len(context.split()) * 1.3  # Rough token estimate
-
-    logger.info(f"[Context Building] Completed in {context_build_time:.3f}s")
-    logger.info(f"[Context Building] Context length: {len(context)} chars, ~{int(context_token_estimate)} tokens")
-    logger.info(f"[Context Building] Context quality: {'WEAK' if context_is_weak else 'GOOD'} (max score: {max_score:.4f})")
+        logger.info(f"[Context Building] Context length: {len(context)} chars, ~{int(context_token_estimate)} tokens")
+        logger.info(f"[Context Building] Videos with summaries: {len(videos_used)} / {num_videos} selected")
 
     # 6. Reuse conversation history loaded earlier (for query rewriting)
     # history_messages_raw was loaded before query expansion
@@ -1453,9 +1741,9 @@ async def send_message(
         db.add(ref)
         resolved_entries.append((rank, scored_chunk, chunk_db))
 
-    # Build user-facing chunk reference payload (capped to match context)
+    # Build user-facing chunk reference payload (capped to match adaptive context limit)
     chunk_refs_response = []
-    for rank, scored_chunk, chunk_db in resolved_entries[:MAX_CHUNK_REFERENCES]:
+    for rank, scored_chunk, chunk_db in resolved_entries[:adaptive_chunk_limit]:
         video = video_map.get(scored_chunk.video_id)
         timestamp_display = _format_timestamp_display(
             scored_chunk.start_timestamp, scored_chunk.end_timestamp
@@ -1558,15 +1846,24 @@ async def send_message(
     logger.info("=" * 80)
     logger.info("[RAG Pipeline Complete]")
     logger.info(f"  Total Time: {response_time:.3f}s")
+    logger.info(f"  Intent: {intent_classification.intent.value} (confidence={intent_classification.confidence:.2f})")
     if effective_query != message_request.message:
         logger.info(f"  Query Rewriting: {rewrite_time:.3f}s (rewrote query)")
     logger.info(f"  Query Expansion: {expansion_time:.3f}s ({len(query_variants)} variants)")
-    logger.info(f"  Embedding + Search: {embedding_time:.3f}s")
+    # Determine search mode based on intent
+    if is_coverage_query and num_videos > 1:
+        search_mode = "video_guarantee"
+    elif not use_chunk_retrieval:
+        search_mode = "video_summaries"
+    else:
+        search_mode = f"diversity={diversity_factor:.2f}"
+    logger.info(f"  Embedding + Search: {embedding_time:.3f}s ({search_mode})")
     if settings.enable_reranking:
         logger.info(f"  Reranking: {rerank_time:.3f}s")
     logger.info(f"  Context Building: {context_build_time:.3f}s")
     logger.info(f"  LLM Generation: {llm_time:.3f}s")
-    logger.info(f"  Retrieved Chunks: {len(scored_chunks)} → {len(high_quality_chunks)} filtered → {len(deduped_chunks)} deduped → {len(top_chunks)} used")
+    logger.info(f"  Retrieved Chunks: {len(scored_chunks)} → {len(high_quality_chunks)} filtered → {len(deduped_chunks)} deduped → {len(top_chunks)} used (limit={adaptive_chunk_limit})")
+    logger.info(f"  Video Diversity: {len(video_distribution)} unique videos from {num_videos} selected")
     logger.info(f"  Response Tokens: {token_count}")
     logger.info(f"  Citations Returned: {len(chunk_refs_response)}")
     logger.info("=" * 80)
@@ -1640,6 +1937,41 @@ async def send_message_stream(
 
     selected_video_ids = [src.video_id for src in selected_sources]
 
+    # Calculate adaptive diversity and chunk limit based on video count and mode
+    num_videos = len(selected_video_ids)
+    diversity_factor = _get_diversity_factor(num_videos, message_request.mode)
+    adaptive_chunk_limit = _get_chunk_limit(num_videos, message_request.mode)
+
+    logger.info(f"[Stream] Diversity config: num_videos={num_videos}, diversity={diversity_factor:.2f}, chunk_limit={adaptive_chunk_limit}")
+
+    # Load history for intent classification
+    history_messages_for_intent = (
+        db.query(MessageModel)
+        .filter(
+            MessageModel.conversation_id == conversation_id,
+            MessageModel.role != SYSTEM_ROLE,
+        )
+        .order_by(MessageModel.created_at.desc())
+        .limit(10)
+        .all()
+    )
+    history_messages_for_intent.reverse()
+
+    history_for_classifier = [
+        {"role": msg.role, "content": msg.content}
+        for msg in history_messages_for_intent
+    ]
+
+    # Classify query intent using LLM-based classifier
+    intent_classifier = get_intent_classifier()
+    intent_classification = intent_classifier.classify_sync(
+        query=message_request.message,
+        mode=message_request.mode,
+        num_videos=num_videos,
+        recent_messages=history_for_classifier[:-1] if len(history_for_classifier) > 1 else None,
+    )
+    logger.info(f"[Stream] Intent: {intent_classification.intent.value} (confidence={intent_classification.confidence:.2f})")
+
     # Save user message
     user_message = MessageModel(
         id=uuid.uuid4(),
@@ -1656,25 +1988,12 @@ async def send_message_stream(
     db.add(user_message)
     db.commit()
 
-    # Load history FIRST for query rewriting (before vector search)
-    history_messages = (
-        db.query(MessageModel)
-        .filter(
-            MessageModel.conversation_id == conversation_id,
-            MessageModel.role != SYSTEM_ROLE,
-        )
-        .order_by(MessageModel.created_at.desc())
-        .limit(10)
-        .all()
-    )
-    history_messages.reverse()  # Oldest first
+    # Reuse history already loaded for intent classification
+    history_messages = history_messages_for_intent
 
     # Query rewriting: Transform follow-up queries into standalone questions
     query_rewriter_service = get_query_rewriter_service()
-    history_for_rewriter = [
-        {"role": msg.role, "content": msg.content}
-        for msg in history_messages[:-1]  # Exclude the message we just added
-    ]
+    history_for_rewriter = history_for_classifier[:-1] if history_for_classifier else []
     effective_query = query_rewriter_service.rewrite_query(
         query=message_request.message,
         conversation_history=history_for_rewriter,
@@ -1688,29 +2007,59 @@ async def send_message_stream(
     if isinstance(query_embedding, tuple):
         query_embedding = np.array(query_embedding, dtype=np.float32)
 
-    scored_chunks = vector_store_service.search_chunks(
-        query_embedding=query_embedding,
-        user_id=current_user.id,
-        video_ids=selected_video_ids,
-        top_k=settings.retrieval_top_k,
-    )
+    # Determine query intent from the LLM-based classifier
+    is_coverage_query = intent_classification.intent == QueryIntent.COVERAGE
+    is_hybrid_query = intent_classification.intent == QueryIntent.HYBRID
+
+    if is_coverage_query and num_videos > 1:
+        # Use video guarantee search for coverage queries with multiple videos
+        logger.info(f"[Stream] Using video guarantee search for {num_videos} videos (coverage query)")
+        scored_chunks = vector_store_service.search_with_video_guarantee(
+            query_embedding=query_embedding,
+            video_ids=selected_video_ids,
+            user_id=current_user.id,
+            top_k=adaptive_chunk_limit,
+            prefetch_limit=MMR_PREFETCH_LIMIT,
+        )
+    else:
+        # Standard diversity-aware search for precision/hybrid queries
+        # Let relevance determine which videos are represented
+        scored_chunks = vector_store_service.search_with_diversity(
+            query_embedding=query_embedding,
+            user_id=current_user.id,
+            video_ids=selected_video_ids,
+            top_k=settings.retrieval_top_k,
+            diversity=diversity_factor,
+            prefetch_limit=MMR_PREFETCH_LIMIT,
+        )
 
     # Filter and dedupe chunks
-    high_quality_chunks = [c for c in scored_chunks if c.score >= settings.min_relevance_score]
-    if not high_quality_chunks:
-        high_quality_chunks = [c for c in scored_chunks if c.score >= settings.fallback_relevance_score]
+    # For coverage queries, use lower threshold since we want representation from all videos
+    if is_coverage_query:
+        # Skip strict relevance filtering for coverage queries - the video guarantee
+        # already selected the best chunk from each video
+        high_quality_chunks = scored_chunks
+    else:
+        high_quality_chunks = [c for c in scored_chunks if c.score >= settings.min_relevance_score]
+        if not high_quality_chunks:
+            high_quality_chunks = [c for c in scored_chunks if c.score >= settings.fallback_relevance_score]
 
-    # Dedupe
+    # Dedupe (but for coverage queries, keep one per video not per time bucket)
     deduped_chunks = []
     seen_keys = set()
     for chunk in high_quality_chunks:
-        bucket = int(chunk.start_timestamp // REFERENCE_DEDUP_BUCKET_SECONDS)
-        key = (chunk.video_id, bucket)
+        if is_coverage_query:
+            # For coverage queries, dedupe by video_id only (keep 1 chunk per video)
+            key = chunk.video_id
+        else:
+            bucket = int(chunk.start_timestamp // REFERENCE_DEDUP_BUCKET_SECONDS)
+            key = (chunk.video_id, bucket)
         if key not in seen_keys:
             seen_keys.add(key)
             deduped_chunks.append(chunk)
 
-    top_chunks = deduped_chunks[:CONTEXT_CHUNK_LIMIT]
+    # Use adaptive chunk limit based on video count and mode
+    top_chunks = deduped_chunks[:adaptive_chunk_limit]
 
     # Build context
     video_map = {}
