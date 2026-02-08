@@ -1,0 +1,106 @@
+{
+  "version": "1.0",
+  "description": "Golden dataset for RAG retrieval evaluation. Chunk IDs and video IDs are placeholders — populate with real IDs from your database after indexing test content.",
+  "queries": [
+    {
+      "id": "q001",
+      "query": "What does the speaker say about machine learning?",
+      "intent": "precision",
+      "expected_chunk_ids": [],
+      "expected_video_ids": [],
+      "expected_answer_contains": ["machine learning"],
+      "difficulty": "easy",
+      "tags": ["single-video", "specific-fact"]
+    },
+    {
+      "id": "q002",
+      "query": "Summarize the main points discussed across all videos",
+      "intent": "coverage",
+      "expected_chunk_ids": [],
+      "expected_video_ids": [],
+      "expected_answer_contains": [],
+      "difficulty": "hard",
+      "tags": ["multi-video", "summary"]
+    },
+    {
+      "id": "q003",
+      "query": "What are the key differences between the two approaches mentioned?",
+      "intent": "precision",
+      "expected_chunk_ids": [],
+      "expected_video_ids": [],
+      "expected_answer_contains": ["difference"],
+      "difficulty": "medium",
+      "tags": ["single-video", "comparison"]
+    },
+    {
+      "id": "q004",
+      "query": "How does the speaker define success?",
+      "intent": "precision",
+      "expected_chunk_ids": [],
+      "expected_video_ids": [],
+      "expected_answer_contains": ["success"],
+      "difficulty": "easy",
+      "tags": ["single-video", "specific-fact"]
+    },
+    {
+      "id": "q005",
+      "query": "What practical advice is given about productivity?",
+      "intent": "hybrid",
+      "expected_chunk_ids": [],
+      "expected_video_ids": [],
+      "expected_answer_contains": ["productivity"],
+      "difficulty": "medium",
+      "tags": ["single-video", "advice"]
+    },
+    {
+      "id": "q006",
+      "query": "What themes appear in multiple videos?",
+      "intent": "coverage",
+      "expected_chunk_ids": [],
+      "expected_video_ids": [],
+      "expected_answer_contains": [],
+      "difficulty": "hard",
+      "tags": ["multi-video", "themes"]
+    },
+    {
+      "id": "q007",
+      "query": "What statistics or numbers were mentioned?",
+      "intent": "precision",
+      "expected_chunk_ids": [],
+      "expected_video_ids": [],
+      "expected_answer_contains": [],
+      "difficulty": "medium",
+      "tags": ["single-video", "specific-fact", "numbers"]
+    },
+    {
+      "id": "q008",
+      "query": "Explain the concept of neural networks as discussed",
+      "intent": "hybrid",
+      "expected_chunk_ids": [],
+      "expected_video_ids": [],
+      "expected_answer_contains": ["neural network"],
+      "difficulty": "medium",
+      "tags": ["single-video", "conceptual"]
+    },
+    {
+      "id": "q009",
+      "query": "What was said about the future of technology?",
+      "intent": "coverage",
+      "expected_chunk_ids": [],
+      "expected_video_ids": [],
+      "expected_answer_contains": ["future", "technology"],
+      "difficulty": "medium",
+      "tags": ["multi-video", "conceptual"]
+    },
+    {
+      "id": "q010",
+      "query": "Who are the speakers and what are their backgrounds?",
+      "intent": "precision",
+      "expected_chunk_ids": [],
+      "expected_video_ids": [],
+      "expected_answer_contains": [],
+      "difficulty": "easy",
+      "tags": ["single-video", "metadata"]
+    }
+  ]
+}
