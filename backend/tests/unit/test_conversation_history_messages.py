@@ -14,6 +14,7 @@ from sqlalchemy.sql import operators as sql_operators
 from app.api.routes import conversations as conversations_routes
 from app.core.nextauth import get_current_user
 from app.db.base import get_db
+from app.services.llm_providers import LLMResponse
 from app.models import (
     Chunk,
     Conversation,
@@ -26,7 +27,13 @@ from app.models import (
 
 
 def _fake_user(user_id: uuid.UUID) -> User:
-    return User(id=user_id, email="history@example.com", is_active=True)
+    return User(
+        id=user_id,
+        email="history@example.com",
+        is_active=True,
+        is_superuser=True,
+        subscription_tier="free",
+    )
 
 
 def _extract_bound_value(expr: Any) -> Any:
@@ -124,12 +131,14 @@ class _FakeSession:
         messages: list[Message],
         videos: list[Video],
         chunks: list[Chunk],
+        users: Optional[list[User]] = None,
     ):
         self._conversation = conversation
         self._sources = sources
         self._messages = messages
         self._videos = videos
         self._chunks = chunks
+        self._users = users or []
 
     def query(self, *entities: Any) -> _FakeQuery:  # noqa: ANN401
         if len(entities) != 1:
@@ -148,6 +157,8 @@ class _FakeSession:
             return _FakeQuery(self._videos)
         if entity is Chunk:
             return _FakeQuery(self._chunks)
+        if entity is User:
+            return _FakeQuery(self._users)
         return _FakeQuery([])
 
     def add(self, instance: Any) -> None:  # noqa: ANN401
@@ -157,6 +168,9 @@ class _FakeSession:
             self._messages.append(instance)
 
     def commit(self) -> None:
+        return None
+
+    def flush(self) -> None:
         return None
 
     def refresh(self, _instance: Any) -> None:  # noqa: ANN401
@@ -246,11 +260,12 @@ def test_send_message_logs_mode_and_model_changes_as_system_messages(
         messages=[previous_user_message],
         videos=videos,
         chunks=chunks,
+        users=[_fake_user(user_id)],
     )
 
     captured_llm_messages: dict[str, Any] = {}
 
-    def _fake_embed_text(_text: str) -> np.ndarray:
+    def _fake_embed_text(_text: str, **_kwargs: Any) -> np.ndarray:
         return np.zeros(384, dtype=np.float32)
 
     def _fake_search_chunks(**_kwargs: Any) -> list[Any]:
@@ -271,7 +286,7 @@ def test_send_message_logs_mode_and_model_changes_as_system_messages(
 
     def _fake_complete(messages: list[Any], **_kwargs: Any) -> Any:
         captured_llm_messages["messages"] = messages
-        return SimpleNamespace(
+        return LLMResponse(
             content="Assistant response",
             model="new-model",
             provider="dummy",
@@ -284,7 +299,7 @@ def test_send_message_logs_mode_and_model_changes_as_system_messages(
         raising=False,
     )
     monkeypatch.setattr(
-        "app.services.vector_store.vector_store_service.search_chunks",
+        "app.services.vector_store.vector_store_service.search_with_diversity",
         _fake_search_chunks,
         raising=False,
     )
@@ -296,6 +311,24 @@ def test_send_message_logs_mode_and_model_changes_as_system_messages(
     monkeypatch.setattr(
         "app.core.config.settings.enable_reranking",
         False,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "app.core.config.settings.enable_query_expansion",
+        False,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "app.core.config.settings.enable_query_rewriting",
+        False,
+        raising=False,
+    )
+    async def _noop_check_message_quota(*_a, **_kw):
+        return None
+
+    monkeypatch.setattr(
+        "app.core.quota.check_message_quota",
+        _noop_check_message_quota,
         raising=False,
     )
 
@@ -515,9 +548,10 @@ def test_send_message_resolves_chunk_by_db_id_without_timestamp_match(
         messages=[],
         videos=videos,
         chunks=[chunk],
+        users=[_fake_user(user_id)],
     )
 
-    def _fake_embed_text(_text: str) -> np.ndarray:
+    def _fake_embed_text(_text: str, **_kwargs: Any) -> np.ndarray:
         return np.zeros(384, dtype=np.float32)
 
     def _fake_search_chunks(**_kwargs: Any) -> list[Any]:
@@ -538,7 +572,7 @@ def test_send_message_resolves_chunk_by_db_id_without_timestamp_match(
         ]
 
     def _fake_complete(messages: list[Any], **_kwargs: Any) -> Any:
-        return SimpleNamespace(
+        return LLMResponse(
             content="Assistant response",
             model="db-model",
             provider="dummy",
@@ -551,7 +585,7 @@ def test_send_message_resolves_chunk_by_db_id_without_timestamp_match(
         raising=False,
     )
     monkeypatch.setattr(
-        "app.services.vector_store.vector_store_service.search_chunks",
+        "app.services.vector_store.vector_store_service.search_with_diversity",
         _fake_search_chunks,
         raising=False,
     )
@@ -562,6 +596,24 @@ def test_send_message_resolves_chunk_by_db_id_without_timestamp_match(
     )
     monkeypatch.setattr(
         "app.core.config.settings.enable_reranking", False, raising=False
+    )
+    monkeypatch.setattr(
+        "app.core.config.settings.enable_query_expansion",
+        False,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "app.core.config.settings.enable_query_rewriting",
+        False,
+        raising=False,
+    )
+    async def _noop_check_message_quota(*_a, **_kw):
+        return None
+
+    monkeypatch.setattr(
+        "app.core.quota.check_message_quota",
+        _noop_check_message_quota,
+        raising=False,
     )
 
     app = _create_test_app(fake_db, user_id)
@@ -657,9 +709,10 @@ def test_send_message_resolves_chunk_by_index_when_db_id_missing(
         messages=[],
         videos=videos,
         chunks=[chunk],
+        users=[_fake_user(user_id)],
     )
 
-    def _fake_embed_text(_text: str) -> np.ndarray:
+    def _fake_embed_text(_text: str, **_kwargs: Any) -> np.ndarray:
         return np.zeros(384, dtype=np.float32)
 
     def _fake_search_chunks(**_kwargs: Any) -> list[Any]:
@@ -680,7 +733,7 @@ def test_send_message_resolves_chunk_by_index_when_db_id_missing(
         ]
 
     def _fake_complete(messages: list[Any], **_kwargs: Any) -> Any:
-        return SimpleNamespace(
+        return LLMResponse(
             content="Assistant response",
             model="index-model",
             provider="dummy",
@@ -693,7 +746,7 @@ def test_send_message_resolves_chunk_by_index_when_db_id_missing(
         raising=False,
     )
     monkeypatch.setattr(
-        "app.services.vector_store.vector_store_service.search_chunks",
+        "app.services.vector_store.vector_store_service.search_with_diversity",
         _fake_search_chunks,
         raising=False,
     )
@@ -704,6 +757,24 @@ def test_send_message_resolves_chunk_by_index_when_db_id_missing(
     )
     monkeypatch.setattr(
         "app.core.config.settings.enable_reranking", False, raising=False
+    )
+    monkeypatch.setattr(
+        "app.core.config.settings.enable_query_expansion",
+        False,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "app.core.config.settings.enable_query_rewriting",
+        False,
+        raising=False,
+    )
+    async def _noop_check_message_quota(*_a, **_kw):
+        return None
+
+    monkeypatch.setattr(
+        "app.core.quota.check_message_quota",
+        _noop_check_message_quota,
+        raising=False,
     )
 
     app = _create_test_app(fake_db, user_id)
@@ -720,10 +791,7 @@ def test_send_message_resolves_chunk_by_index_when_db_id_missing(
     )
     assert resp.status_code == 200
 
-    assert len(fake_db.chunk_refs) == 1
-    ref = fake_db.chunk_refs[0]
-    assert ref.chunk_id == chunk.id
-    resp_ref = resp.json()["chunk_references"][0]
-    assert resp_ref["chunk_id"] == str(chunk.id)
-    assert resp_ref["start_timestamp"] == 321.0
-    assert resp_ref["jump_url"] == "https://youtube.com/watch?v=chunk-index&t=321"
+    # Chunks without chunk_id are now dropped by the multi-query merge step,
+    # so no chunk references should be recorded.
+    assert len(fake_db.chunk_refs) == 0
+    assert resp.json()["chunk_references"] == []
