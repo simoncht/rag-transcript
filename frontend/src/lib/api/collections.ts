@@ -5,7 +5,9 @@ import type {
   CollectionListResponse,
   CollectionCreateRequest,
   CollectionUpdateRequest,
-  CollectionAddVideosRequest,
+  CollectionAddContentRequest,
+  CollectionThemesResponse,
+  ClusteredThemesResponse,
 } from "../types";
 
 /**
@@ -17,7 +19,7 @@ export async function getCollections(): Promise<CollectionListResponse> {
 }
 
 /**
- * Get a single collection by ID with all videos
+ * Get a single collection by ID with all content
  */
 export async function getCollection(id: string): Promise<CollectionDetail> {
   const response = await apiClient.get(`/collections/${id}`);
@@ -53,11 +55,11 @@ export async function deleteCollection(id: string): Promise<void> {
 }
 
 /**
- * Add videos to a collection
+ * Add content to a collection
  */
-export async function addVideosToCollection(
+export async function addContentToCollection(
   collectionId: string,
-  data: CollectionAddVideosRequest
+  data: CollectionAddContentRequest
 ): Promise<CollectionDetail> {
   const response = await apiClient.post(
     `/collections/${collectionId}/videos`,
@@ -67,11 +69,49 @@ export async function addVideosToCollection(
 }
 
 /**
- * Remove a video from a collection
+ * Remove content from a collection
  */
-export async function removeVideoFromCollection(
+export async function removeItemFromCollection(
   collectionId: string,
   videoId: string
 ): Promise<void> {
   await apiClient.delete(`/collections/${collectionId}/videos/${videoId}`);
+}
+
+/**
+ * Get aggregated themes/topics for a collection
+ */
+export async function getCollectionThemes(
+  collectionId: string,
+  refresh: boolean = false
+): Promise<CollectionThemesResponse> {
+  const response = await apiClient.get(
+    `/collections/${collectionId}/themes`,
+    { params: { refresh } }
+  );
+  return response.data;
+}
+
+/**
+ * Get clustered themes for a collection
+ */
+export async function getClusteredThemes(
+  collectionId: string
+): Promise<ClusteredThemesResponse> {
+  const response = await apiClient.get(
+    `/collections/${collectionId}/themes/clustered`
+  );
+  return response.data;
+}
+
+/**
+ * Trigger async regeneration of clustered themes
+ */
+export async function regenerateCollectionThemes(
+  collectionId: string
+): Promise<{ message: string; task_id: string; collection_id: string }> {
+  const response = await apiClient.post(
+    `/collections/${collectionId}/themes/regenerate`
+  );
+  return response.data;
 }

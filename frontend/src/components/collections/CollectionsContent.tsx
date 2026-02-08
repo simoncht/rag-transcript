@@ -15,16 +15,17 @@
 import { useState, Suspense } from "react";
 import Image from "next/image";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Folder, Trash2, Edit, MessageSquare, Video as VideoIcon, MinusCircle } from "lucide-react";
+import { Plus, Folder, Trash2, Edit, MessageSquare, MinusCircle } from "lucide-react";
 import {
   getCollections,
   deleteCollection,
   getCollection,
-  removeVideoFromCollection,
+  removeItemFromCollection,
 } from "@/lib/api/collections";
 import type { Collection, CollectionVideoInfo } from "@/lib/types";
 import { CollectionModal } from "./CollectionModal";
-import { CollectionAddVideosModal } from "./CollectionAddVideosModal";
+import { CollectionAddContentModal } from "./CollectionAddVideosModal";
+import { CollectionThemes } from "./CollectionThemes";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -49,7 +50,7 @@ export function CollectionsContent() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [editingCollection, setEditingCollection] = useState<Collection | null>(null);
   const [expandedCollectionId, setExpandedCollectionId] = useState<string | null>(null);
-  const [collectionForVideoModal, setCollectionForVideoModal] = useState<Collection | null>(null);
+  const [collectionForAddModal, setCollectionForAddModal] = useState<Collection | null>(null);
 
   // Performance: Parallel auth + data fetch
   // Auth and getCollections() run concurrently instead of sequentially
@@ -67,17 +68,17 @@ export function CollectionsContent() {
     },
   });
 
-  const removeVideoMutation = useMutation({
+  const removeItemMutation = useMutation({
     mutationFn: ({ collectionId, videoId }: { collectionId: string; videoId: string }) =>
-      removeVideoFromCollection(collectionId, videoId),
+      removeItemFromCollection(collectionId, videoId),
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ["collection", variables.collectionId] });
       queryClient.invalidateQueries({ queryKey: ["collections"] });
       queryClient.invalidateQueries({ queryKey: ["videos"] });
     },
     onError: (error) => {
-      console.error("Failed to remove video from collection:", error);
-      alert("Failed to remove video from collection. Please try again.");
+      console.error("Failed to remove item from collection:", error);
+      alert("Failed to remove item from collection. Please try again.");
     },
   });
 
@@ -95,7 +96,7 @@ export function CollectionsContent() {
       return;
     }
 
-    if (confirm(`Are you sure you want to delete the collection "${name}"? Videos will not be deleted.`)) {
+    if (confirm(`Are you sure you want to delete the collection "${name}"? Content will not be deleted.`)) {
       try {
         await deleteMutation.mutateAsync(id);
       } catch (err) {
@@ -105,19 +106,19 @@ export function CollectionsContent() {
     }
   };
 
-  const handleRemoveVideo = async (collection: Collection, video: CollectionVideoInfo) => {
+  const handleRemoveItem = async (collection: Collection, video: CollectionVideoInfo) => {
     if (!confirm(`Remove "${video.title}" from "${collection.name}"?`)) {
       return;
     }
 
     try {
-      await removeVideoMutation.mutateAsync({
+      await removeItemMutation.mutateAsync({
         collectionId: collection.id,
         videoId: video.id,
       });
     } catch (err) {
-      console.error("Failed to remove video from collection:", err);
-      alert("Failed to remove video from collection. Please try again.");
+      console.error("Failed to remove item from collection:", err);
+      alert("Failed to remove item from collection. Please try again.");
     }
   };
 
@@ -180,14 +181,14 @@ export function CollectionsContent() {
             <p className="text-sm font-medium text-muted-foreground">Library organization</p>
             <h1 className="text-3xl font-semibold tracking-tight">Collections</h1>
             <p className="text-sm text-muted-foreground">
-              Group related videos by course, instructor, or topic to make retrieval easier.
+              Group related content by course, instructor, or topic to make retrieval easier.
             </p>
             {collections.length > 0 && (
               <div className="flex items-center gap-2 text-xs text-muted-foreground pt-1">
                 <span>{collections.length} collection{collections.length !== 1 ? 's' : ''}</span>
                 <span>•</span>
                 <span>
-                  {collections.reduce((sum, c) => sum + (c.video_count || 0), 0)} video{collections.reduce((sum, c) => sum + (c.video_count || 0), 0) !== 1 ? 's' : ''} total
+                  {collections.reduce((sum, c) => sum + (c.video_count || 0), 0)} item{collections.reduce((sum, c) => sum + (c.video_count || 0), 0) !== 1 ? 's' : ''} total
                 </span>
               </div>
             )}
@@ -210,7 +211,7 @@ export function CollectionsContent() {
               <Folder className="mb-3 h-10 w-10 text-muted-foreground" />
               <CardTitle>No collections yet</CardTitle>
               <CardDescription>
-                Create your first collection to organize your videos into courses, cohorts, or topics.
+                Create your first collection to organize your content into courses, cohorts, or topics.
               </CardDescription>
             </CardHeader>
             <CardContent className="flex justify-center pb-6">
@@ -249,9 +250,8 @@ export function CollectionsContent() {
                             </Badge>
                           )}
                           {collection.video_count > 0 && (
-                            <Badge variant="secondary" className="flex items-center gap-1 text-xs">
-                              <VideoIcon className="h-3 w-3" />
-                              {collection.video_count} {collection.video_count === 1 ? "video" : "videos"}
+                            <Badge variant="secondary" className="text-xs">
+                              {collection.video_count} {collection.video_count === 1 ? "item" : "items"}
                             </Badge>
                           )}
                           {collection.total_duration_seconds > 0 && (
@@ -289,6 +289,12 @@ export function CollectionsContent() {
                             ))}
                           </div>
                         )}
+                        {collection.video_count > 0 && (
+                          <CollectionThemes
+                            collectionId={collection.id}
+                            enabled={canFetch}
+                          />
+                        )}
                       </div>
                     </div>
                     <div className="flex flex-col items-end gap-2">
@@ -298,7 +304,7 @@ export function CollectionsContent() {
                         className="gap-1"
                         onClick={() => handleToggleExpand(collection.id)}
                       >
-                        {isExpanded ? "Hide videos" : "Show videos"}
+                        {isExpanded ? "Hide content" : "Show content"}
                       </Button>
                       {!collection.is_default && (
                         <div className="flex gap-1">
@@ -334,21 +340,21 @@ export function CollectionsContent() {
                         <div className="space-y-3 pt-3">
                           <div className="flex items-center justify-between gap-4">
                             <p className="text-sm font-medium text-foreground">
-                              Videos in this collection
+                              Content in this collection
                             </p>
                             <Button
                               variant="outline"
                               size="sm"
                               className="gap-1"
-                              onClick={() => setCollectionForVideoModal(collection)}
+                              onClick={() => setCollectionForAddModal(collection)}
                             >
                               <Plus className="h-3 w-3" />
-                              Add videos
+                              Add content
                             </Button>
                           </div>
                           {collectionDetails.videos.length === 0 ? (
                             <p className="text-center text-sm text-muted-foreground">
-                              No videos in this collection yet.
+                              No content in this collection yet.
                             </p>
                           ) : (
                             <div className="space-y-2">
@@ -401,12 +407,12 @@ export function CollectionsContent() {
                                     variant="ghost"
                                     size="icon"
                                     className="text-muted-foreground hover:text-destructive"
-                                    onClick={() => handleRemoveVideo(collection, video)}
-                                    disabled={removeVideoMutation.isPending}
-                                    title="Remove video from collection"
+                                    onClick={() => handleRemoveItem(collection, video)}
+                                    disabled={removeItemMutation.isPending}
+                                    title="Remove from collection"
                                   >
                                     <MinusCircle className="h-4 w-4" />
-                                    <span className="sr-only">Remove video</span>
+                                    <span className="sr-only">Remove item</span>
                                   </Button>
                                 </div>
                               ))}
@@ -423,15 +429,15 @@ export function CollectionsContent() {
         )}
       </div>
 
-      {collectionForVideoModal &&
-        expandedCollectionId === collectionForVideoModal.id &&
+      {collectionForAddModal &&
+        expandedCollectionId === collectionForAddModal.id &&
         expandedCollection && (
-          <CollectionAddVideosModal
+          <CollectionAddContentModal
             open
-            collectionId={collectionForVideoModal.id}
-            collectionName={collectionForVideoModal.name}
-            existingVideoIds={expandedCollection.videos.map((video) => video.id)}
-            onClose={() => setCollectionForVideoModal(null)}
+            collectionId={collectionForAddModal.id}
+            collectionName={collectionForAddModal.name}
+            existingItemIds={expandedCollection.videos.map((video) => video.id)}
+            onClose={() => setCollectionForAddModal(null)}
           />
         )}
 

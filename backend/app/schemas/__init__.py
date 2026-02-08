@@ -51,6 +51,12 @@ from app.schemas.collection import (
     CollectionDetail,
     CollectionList,
     VideoWithCollections,
+    ThemeItem,
+    CollectionThemesResponse,
+    SimilarVideoItem,
+    SimilarVideosResponse,
+    ClusteredThemeItem,
+    ClusteredThemesResponse,
 )
 from app.schemas.usage import (
     UsageSummary,
@@ -112,6 +118,63 @@ from app.schemas.subscription import (
     PricingTier,
 )
 
+# Discovery schemas
+from app.schemas.discovery import (
+    YouTubeSearchRequest,
+    YouTubeSearchResult,
+    YouTubeSearchResponse,
+    YouTubeBatchImportRequest,
+    BatchImportResultItem,
+    YouTubeBatchImportResponse,
+    DiscoverySourceCreate,
+    DiscoverySourceUpdate,
+    DiscoverySourceResponse,
+    DiscoverySourceList,
+    DiscoveredContentResponse,
+    DiscoveredContentList,
+    DiscoveredContentAction,
+    BulkDiscoveredContentAction,
+    ChannelInfoRequest,
+    ChannelInfoResponse,
+    RecommendationItem,
+    RecommendationResponse,
+)
+
+# Quota schemas
+from app.schemas.quota import (
+    QuotaTypeInfo,
+    QuotaUsageInfo,
+    QuotaCheckResult,
+    AllQuotasResponse,
+    TierQuotaLimitsResponse,
+    AdminQuotaOverride,
+)
+
+# Notification schemas
+from app.schemas.notification import (
+    NotificationResponse,
+    NotificationList,
+    NotificationMarkReadRequest,
+    NotificationDismissRequest,
+    UnreadCountResponse,
+    NotificationEventTypeInfo,
+    UserPreferenceResponse,
+    UserPreferencesResponse,
+    UpdatePreferenceRequest,
+    UpdatePreferencesRequest,
+    NotificationSettingsResponse,
+    UpdateNotificationSettingsRequest,
+)
+
+# Content schemas
+from app.schemas.content import (
+    ContentUploadResponse,
+    ContentDetail,
+    ContentList,
+    ContentDeleteResponse,
+    ContentStatusUpdate,
+)
+
 __all__ = [
     # Video
     "VideoIngestRequest",
@@ -159,6 +222,12 @@ __all__ = [
     "CollectionDetail",
     "CollectionList",
     "VideoWithCollections",
+    "ThemeItem",
+    "CollectionThemesResponse",
+    "SimilarVideoItem",
+    "SimilarVideosResponse",
+    "ClusteredThemeItem",
+    "ClusteredThemesResponse",
     # Usage
     "UsageSummary",
     "StorageBreakdown",
@@ -214,4 +283,49 @@ __all__ = [
     "CustomerPortalResponse",
     "QuotaUsage",
     "PricingTier",
+    # Discovery
+    "YouTubeSearchRequest",
+    "YouTubeSearchResult",
+    "YouTubeSearchResponse",
+    "YouTubeBatchImportRequest",
+    "BatchImportResultItem",
+    "YouTubeBatchImportResponse",
+    "DiscoverySourceCreate",
+    "DiscoverySourceUpdate",
+    "DiscoverySourceResponse",
+    "DiscoverySourceList",
+    "DiscoveredContentResponse",
+    "DiscoveredContentList",
+    "DiscoveredContentAction",
+    "BulkDiscoveredContentAction",
+    "ChannelInfoRequest",
+    "ChannelInfoResponse",
+    "RecommendationItem",
+    "RecommendationResponse",
+    # Quota
+    "QuotaTypeInfo",
+    "QuotaUsageInfo",
+    "QuotaCheckResult",
+    "AllQuotasResponse",
+    "TierQuotaLimitsResponse",
+    "AdminQuotaOverride",
+    # Notification
+    "NotificationResponse",
+    "NotificationList",
+    "NotificationMarkReadRequest",
+    "NotificationDismissRequest",
+    "UnreadCountResponse",
+    "NotificationEventTypeInfo",
+    "UserPreferenceResponse",
+    "UserPreferencesResponse",
+    "UpdatePreferenceRequest",
+    "UpdatePreferencesRequest",
+    "NotificationSettingsResponse",
+    "UpdateNotificationSettingsRequest",
+    # Content
+    "ContentUploadResponse",
+    "ContentDetail",
+    "ContentList",
+    "ContentDeleteResponse",
+    "ContentStatusUpdate",
 ]

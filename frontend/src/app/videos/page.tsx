@@ -16,6 +16,7 @@ import { MainLayout } from "@/components/layout/MainLayout";
 import { videosApi } from "@/lib/api/videos";
 import { usageApi } from "@/lib/api/usage";
 import { subscriptionsApi } from "@/lib/api/subscriptions";
+import { conversationsApi } from "@/lib/api/conversations";
 import { Video, VideoDeleteRequest, VideoListResponse, UsageSummary, QuotaUsage, CleanupOption } from "@/lib/types";
 import UpgradePromptModal from "@/components/subscription/UpgradePromptModal";
 import QuotaDisplay from "@/components/subscription/QuotaDisplay";
@@ -23,6 +24,7 @@ import { DeleteConfirmationModal } from "@/components/videos/DeleteConfirmationM
 import { CancelConfirmationModal } from "@/components/videos/CancelConfirmationModal";
 import { AddToCollectionModal } from "@/components/videos/AddToCollectionModal";
 import { ManageTagsModal } from "@/components/videos/ManageTagsModal";
+import { SimilarVideos } from "@/components/videos/SimilarVideos";
 import {
   Plus,
   Trash2,
@@ -38,6 +40,7 @@ import {
   ChevronUp,
   StopCircle,
   RefreshCw,
+  MessageSquare,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -48,6 +51,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -59,15 +63,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Progress } from "@/components/ui/progress";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
+import { AddContentPanel } from "@/components/videos/AddContentPanel";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn, parseUTCDate } from "@/lib/utils";
@@ -85,7 +81,7 @@ export default function VideosPage() {
   const authState = useAuthState();
   const canFetch = authState.isAuthenticated;
   const { toast } = useToast();
-  const [youtubeUrl, setYoutubeUrl] = useState("");
+  const router = useRouter();
   const [addToCollectionVideos, setAddToCollectionVideos] = useState<Video[]>([]);
   const [manageTagsVideo, setManageTagsVideo] = useState<Video | null>(null);
   const [selectedVideoIds, setSelectedVideoIds] = useState<Set<string>>(new Set());
@@ -97,6 +93,7 @@ export default function VideosPage() {
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [showStorageBreakdown, setShowStorageBreakdown] = useState(false);
+  const [isCreatingChat, setIsCreatingChat] = useState(false);
   const queryClient = useQueryClient();
 
   // Performance: Parallel auth + data fetch (no blocking on auth)
@@ -132,30 +129,6 @@ export default function VideosPage() {
         (video: Video) => !["completed", "failed"].includes(video.status)
       );
       return hasInFlight ? 10000 : false; // 10 seconds when processing
-    },
-  });
-
-  const ingestMutation = useMutation({
-    mutationFn: videosApi.ingest,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["videos"] });
-      setYoutubeUrl("");
-      setIsAddDialogOpen(false);
-    },
-    onError: (error: unknown) => {
-      console.error("Video ingest failed:", error);
-      // Handle quota exceeded errors where detail is an object with message property
-      const detail = (error as any)?.response?.data?.detail;
-      const message =
-        typeof detail === 'string' ? detail :
-        typeof detail === 'object' && detail?.message ? detail.message :
-        (error as any)?.message ??
-        "Failed to ingest video. Please try again.";
-      toast({
-        title: "Ingest failed",
-        description: message,
-        variant: "destructive",
-      });
     },
   });
 
@@ -256,27 +229,41 @@ export default function VideosPage() {
     },
   });
 
-  const handleIngest = (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (!youtubeUrl.trim()) {
-      return;
-    }
-    // Check quota before ingesting
-    if (quota && quota.videos_remaining <= 0) {
-      setShowUpgradeModal(true);
-      setIsAddDialogOpen(false);
-      return;
-    }
-    ingestMutation.mutate(youtubeUrl.trim());
-  };
-
-  const handleOpenIngestDialog = () => {
-    // Check quota before opening dialog
+  const handleOpenAddPanel = () => {
+    // Check quota before opening panel
     if (quota && quota.videos_remaining <= 0) {
       setShowUpgradeModal(true);
       return;
     }
     setIsAddDialogOpen(true);
+  };
+
+  const handleQuickChat = async (video: Video) => {
+    if (video.status !== "completed") {
+      toast({
+        title: "Video not ready",
+        description: "Please wait for the video to finish processing.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsCreatingChat(true);
+    try {
+      const conversation = await conversationsApi.create(
+        `Chat: ${video.title}`,
+        { selectedVideoIds: [video.id] }
+      );
+      router.push(`/conversations/${conversation.id}`);
+    } catch (error) {
+      toast({
+        title: "Failed to create conversation",
+        description: error instanceof Error ? error.message : "Unknown error",
+        variant: "destructive",
+      });
+    } finally {
+      setIsCreatingChat(false);
+    }
   };
 
   const isDeletable = (video: Video) => ["completed", "failed", "canceled"].includes(video.status);
@@ -738,6 +725,8 @@ export default function VideosPage() {
             )}
           </div>
         )}
+
+        <SimilarVideos videoId={videoId} enabled={isOpen} />
       </div>
     );
   };
@@ -788,52 +777,23 @@ export default function VideosPage() {
                 />
               </div>
             )}
-            <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
-              <Button
-                className="gap-2"
-                onClick={handleOpenIngestDialog}
-                disabled={quota ? quota.videos_remaining <= 0 : false}
-              >
-                <Plus className="h-4 w-4" />
-                Ingest video
-              </Button>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>Ingest a YouTube video</DialogTitle>
-                  <DialogDescription>
-                    We&apos;ll fetch the media, transcribe it, and index the transcript for search.
-                  </DialogDescription>
-                </DialogHeader>
-                <form onSubmit={handleIngest} className="space-y-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="youtube-url">YouTube URL</Label>
-                    <Input
-                      id="youtube-url"
-                      type="url"
-                      placeholder="https://www.youtube.com/watch?v=..."
-                      value={youtubeUrl}
-                      onChange={(e) => setYoutubeUrl(e.target.value)}
-                      required
-                    />
-                  </div>
-                  <DialogFooter>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      onClick={() => setIsAddDialogOpen(false)}
-                    >
-                      Cancel
-                    </Button>
-                    <Button type="submit" disabled={ingestMutation.isPending} className="gap-2">
-                      {ingestMutation.isPending && (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      )}
-                      Ingest video
-                    </Button>
-                  </DialogFooter>
-                </form>
-              </DialogContent>
-            </Dialog>
+            <Button
+              className="gap-2"
+              onClick={handleOpenAddPanel}
+              disabled={quota ? quota.videos_remaining <= 0 : false}
+            >
+              <Plus className="h-4 w-4" />
+              Add video
+            </Button>
+            <AddContentPanel
+              isOpen={isAddDialogOpen}
+              onClose={() => setIsAddDialogOpen(false)}
+              onSuccess={() => {
+                queryClient.invalidateQueries({ queryKey: ["videos"] });
+                queryClient.invalidateQueries({ queryKey: ["subscription-quota"] });
+              }}
+              quotaRemaining={quota?.videos_remaining}
+            />
           </div>
         </div>
 
@@ -917,7 +877,7 @@ export default function VideosPage() {
                 <div>
                   <p className="text-xs uppercase tracking-wide">Minutes</p>
                   <p className="text-lg font-semibold text-foreground">
-                    {usageSummary.minutes.limit === -1
+                    {usageSummary.minutes.limit === -1 || usageSummary.minutes.limit >= 999999
                       ? `${usageSummary.minutes.used.toFixed(1)} / Unlimited`
                       : `${usageSummary.minutes.used.toFixed(1)} / ${usageSummary.minutes.limit.toFixed(1)}`}
                   </p>
@@ -925,7 +885,7 @@ export default function VideosPage() {
                 <div>
                   <p className="text-xs uppercase tracking-wide">Messages</p>
                   <p className="text-lg font-semibold text-foreground">
-                    {usageSummary.messages.limit === -1
+                    {usageSummary.messages.limit === -1 || usageSummary.messages.limit >= 999999
                       ? `${usageSummary.messages.used} / Unlimited`
                       : `${usageSummary.messages.used} / ${usageSummary.messages.limit}`}
                   </p>
@@ -1165,7 +1125,7 @@ export default function VideosPage() {
                               </TooltipContent>
                             </Tooltip>
                           </TableCell>
-                          <TableCell className="text-right">
+                          <TableCell className="text-right align-middle">
                             <div className="flex flex-wrap items-center justify-end gap-2 sm:flex-nowrap">
                               <Button
                                 variant="outline"
@@ -1185,6 +1145,23 @@ export default function VideosPage() {
                                 <TagIcon className="h-3.5 w-3.5" />
                                 Tags
                               </Button>
+                              {/* Quick Chat Button */}
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    onClick={() => handleQuickChat(video)}
+                                    disabled={video.status !== "completed" || isCreatingChat}
+                                    className="h-8 w-8"
+                                  >
+                                    <MessageSquare className="h-4 w-4" />
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  <p>Chat with this video</p>
+                                </TooltipContent>
+                              </Tooltip>
                               <Button
                                 variant="ghost"
                                 size="sm"
@@ -1214,19 +1191,22 @@ export default function VideosPage() {
                                   <span className="sr-only">Cancel</span>
                                 </Button>
                               )}
-                              {isReprocessable(video) && (
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="text-muted-foreground hover:text-blue-600"
-                                  onClick={() => reprocessMutation.mutate(video.id)}
-                                  disabled={reprocessMutation.isPending}
-                                  title="Reprocess video"
-                                >
-                                  <RefreshCw className={`h-4 w-4 ${reprocessMutation.isPending ? "animate-spin" : ""}`} />
-                                  <span className="sr-only">Reprocess</span>
-                                </Button>
-                              )}
+                              {isReprocessable(video) && (() => {
+                                const isThisVideoReprocessing = reprocessMutation.isPending && reprocessMutation.variables === video.id;
+                                return (
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className={`${isThisVideoReprocessing ? "text-orange-600" : "text-muted-foreground hover:text-blue-600"}`}
+                                    onClick={() => reprocessMutation.mutate(video.id)}
+                                    disabled={reprocessMutation.isPending}
+                                    title={isThisVideoReprocessing ? "Reprocessing..." : "Reprocess video"}
+                                  >
+                                    <RefreshCw className={`h-4 w-4 ${isThisVideoReprocessing ? "animate-spin" : ""}`} />
+                                    <span className="sr-only">Reprocess</span>
+                                  </Button>
+                                );
+                              })()}
                               <Button
                                 variant="ghost"
                                 size="icon"

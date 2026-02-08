@@ -27,6 +27,8 @@ from app.schemas import (
     CollectionList,
     CollectionSummary,
     CollectionVideoInfo,
+    CollectionThemesResponse,
+    ClusteredThemesResponse,
 )
 
 router = APIRouter()
@@ -47,16 +49,7 @@ async def create_collection(
     Returns:
         CollectionDetail with created collection
     """
-    # Check if name already exists for this user (optional - we allow duplicates for now)
-    # You can uncomment this if you want unique names per user
-    # existing = db.query(Collection).filter(
-    #     Collection.user_id == current_user.id,
-    #     Collection.name == request.name
-    # ).first()
-    # if existing:
-    #     raise HTTPException(status_code=400, detail="Collection with this name already exists")
-
-    # Create collection
+    # Note: Duplicate collection names are allowed per user
     collection = Collection(
         user_id=current_user.id,
         name=request.name,
@@ -101,7 +94,10 @@ async def list_collections(
     Returns:
         CollectionList with collections and total count
     """
-    query = db.query(Collection).filter(Collection.user_id == current_user.id)
+    query = db.query(Collection).filter(
+        Collection.user_id == current_user.id,
+        Collection.is_deleted.is_(False),
+    )
 
     total = query.count()
 
@@ -169,7 +165,11 @@ async def get_collection(
     """
     collection = (
         db.query(Collection)
-        .filter(Collection.id == collection_id, Collection.user_id == current_user.id)
+        .filter(
+            Collection.id == collection_id,
+            Collection.user_id == current_user.id,
+            Collection.is_deleted.is_(False),
+        )
         .first()
     )
 
@@ -196,6 +196,7 @@ async def get_collection(
                 id=video.id,
                 title=video.title,
                 youtube_id=video.youtube_id,
+                content_type=getattr(video, "content_type", "youtube"),
                 duration_seconds=video.duration_seconds,
                 status=video.status,
                 thumbnail_url=video.thumbnail_url,
@@ -241,7 +242,11 @@ async def update_collection(
     """
     collection = (
         db.query(Collection)
-        .filter(Collection.id == collection_id, Collection.user_id == current_user.id)
+        .filter(
+            Collection.id == collection_id,
+            Collection.user_id == current_user.id,
+            Collection.is_deleted.is_(False),
+        )
         .first()
     )
 
@@ -277,7 +282,7 @@ async def delete_collection(
     current_user: User = Depends(get_current_user),
 ):
     """
-    Delete a collection (videos are kept, just the collection is removed).
+    Delete a collection (soft delete - videos are kept).
 
     Args:
         collection_id: Collection UUID
@@ -287,7 +292,11 @@ async def delete_collection(
     """
     collection = (
         db.query(Collection)
-        .filter(Collection.id == collection_id, Collection.user_id == current_user.id)
+        .filter(
+            Collection.id == collection_id,
+            Collection.user_id == current_user.id,
+            Collection.is_deleted.is_(False),
+        )
         .first()
     )
 
@@ -300,7 +309,9 @@ async def delete_collection(
             status_code=400, detail="Cannot delete default 'Uncategorized' collection"
         )
 
-    db.delete(collection)
+    # Soft delete instead of hard delete
+    collection.is_deleted = True
+    collection.deleted_at = datetime.utcnow()
     db.commit()
 
     return {
@@ -328,7 +339,11 @@ async def add_videos_to_collection(
     """
     collection = (
         db.query(Collection)
-        .filter(Collection.id == collection_id, Collection.user_id == current_user.id)
+        .filter(
+            Collection.id == collection_id,
+            Collection.user_id == current_user.id,
+            Collection.is_deleted.is_(False),
+        )
         .first()
     )
 
@@ -397,7 +412,11 @@ async def remove_video_from_collection(
     """
     collection = (
         db.query(Collection)
-        .filter(Collection.id == collection_id, Collection.user_id == current_user.id)
+        .filter(
+            Collection.id == collection_id,
+            Collection.user_id == current_user.id,
+            Collection.is_deleted.is_(False),
+        )
         .first()
     )
 
@@ -427,4 +446,184 @@ async def remove_video_from_collection(
         "message": "Video removed from collection successfully",
         "collection_id": str(collection_id),
         "video_id": str(video_id),
+    }
+
+
+@router.get("/{collection_id}/themes", response_model=CollectionThemesResponse)
+async def get_collection_themes(
+    collection_id: uuid.UUID,
+    refresh: bool = Query(False, description="Force regenerate themes"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Get aggregated themes/topics for a collection.
+
+    Aggregates key_topics from all videos in the collection,
+    ranked by frequency. Results are cached for 1 hour.
+
+    Args:
+        collection_id: Collection UUID
+        refresh: Force regenerate instead of using cache
+
+    Returns:
+        CollectionThemesResponse with ranked themes
+    """
+    # Verify collection exists and belongs to user
+    collection = (
+        db.query(Collection)
+        .filter(
+            Collection.id == collection_id,
+            Collection.user_id == current_user.id,
+            Collection.is_deleted.is_(False),
+        )
+        .first()
+    )
+
+    if not collection:
+        raise HTTPException(status_code=404, detail="Collection not found")
+
+    from app.services.theme_service import get_theme_service
+
+    theme_service = get_theme_service()
+    themes = theme_service.aggregate_collection_themes(
+        db=db,
+        collection_id=collection_id,
+        user_id=current_user.id,
+        force_refresh=refresh,
+    )
+
+    # Count total videos and those with topics
+    total_videos = (
+        db.query(func.count(CollectionVideo.video_id))
+        .join(Video, CollectionVideo.video_id == Video.id)
+        .filter(
+            CollectionVideo.collection_id == collection_id,
+            Video.is_deleted.is_(False),
+        )
+        .scalar()
+        or 0
+    )
+
+    videos_with_topics = (
+        db.query(func.count(CollectionVideo.video_id))
+        .join(Video, CollectionVideo.video_id == Video.id)
+        .filter(
+            CollectionVideo.collection_id == collection_id,
+            Video.is_deleted.is_(False),
+            Video.key_topics.isnot(None),
+        )
+        .scalar()
+        or 0
+    )
+
+    # Determine if result was cached (themes list matches what's in meta)
+    meta = collection.meta or {}
+    cached = not refresh and meta.get("cached_themes") is not None
+
+    return CollectionThemesResponse(
+        collection_id=collection_id,
+        themes=themes,
+        total_videos=total_videos,
+        videos_with_topics=videos_with_topics,
+        cached=cached,
+    )
+
+
+@router.get("/{collection_id}/themes/clustered", response_model=ClusteredThemesResponse)
+async def get_clustered_themes(
+    collection_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Get LLM-clustered themes for a collection.
+
+    Returns previously generated clustered themes from the database.
+    Use POST /themes/regenerate to generate or refresh.
+
+    Args:
+        collection_id: Collection UUID
+
+    Returns:
+        ClusteredThemesResponse with clustered themes
+    """
+    collection = (
+        db.query(Collection)
+        .filter(
+            Collection.id == collection_id,
+            Collection.user_id == current_user.id,
+            Collection.is_deleted.is_(False),
+        )
+        .first()
+    )
+
+    if not collection:
+        raise HTTPException(status_code=404, detail="Collection not found")
+
+    from app.models.collection_theme import CollectionTheme
+
+    themes = (
+        db.query(CollectionTheme)
+        .filter(CollectionTheme.collection_id == collection_id)
+        .order_by(CollectionTheme.relevance_score.desc().nullslast())
+        .all()
+    )
+
+    return ClusteredThemesResponse(
+        collection_id=collection_id,
+        themes=[
+            {
+                "theme_label": t.theme_label,
+                "theme_description": t.theme_description,
+                "video_ids": t.video_ids or [],
+                "relevance_score": t.relevance_score,
+                "topic_keywords": t.topic_keywords or [],
+            }
+            for t in themes
+        ],
+    )
+
+
+@router.post("/{collection_id}/themes/regenerate")
+async def regenerate_themes(
+    collection_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Trigger async regeneration of clustered themes for a collection.
+
+    Uses embedding-based clustering + LLM labeling.
+    Runs as a Celery background task.
+
+    Args:
+        collection_id: Collection UUID
+
+    Returns:
+        Task ID for tracking progress
+    """
+    collection = (
+        db.query(Collection)
+        .filter(
+            Collection.id == collection_id,
+            Collection.user_id == current_user.id,
+            Collection.is_deleted.is_(False),
+        )
+        .first()
+    )
+
+    if not collection:
+        raise HTTPException(status_code=404, detail="Collection not found")
+
+    from app.tasks.video_tasks import regenerate_collection_themes
+
+    task = regenerate_collection_themes.delay(
+        str(collection_id), str(current_user.id)
+    )
+
+    return {
+        "message": "Theme regeneration started",
+        "task_id": task.id,
+        "collection_id": str(collection_id),
     }

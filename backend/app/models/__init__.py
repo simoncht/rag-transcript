@@ -19,6 +19,31 @@ from app.models.job import Job
 from app.models.admin_audit_log import AdminAuditLog
 from app.models.subscription import Subscription
 
+# Discovery and content source models
+from app.models.discovery import (
+    DiscoverySource,
+    DiscoveredContent,
+    UserInterestProfile,
+)
+
+# Quota registry models
+from app.models.quota import (
+    QuotaType,
+    TierQuotaLimit,
+    UserQuotaUsage,
+)
+
+# Collection theme models
+from app.models.collection_theme import CollectionTheme
+
+# Notification models
+from app.models.notification import (
+    NotificationEventType,
+    UserNotificationPreference,
+    Notification,
+    NotificationDelivery,
+)
+
 __all__ = [
     "User",
     "Video",
@@ -40,4 +65,19 @@ __all__ = [
     "Job",
     "AdminAuditLog",
     "Subscription",
+    # Discovery models
+    "DiscoverySource",
+    "DiscoveredContent",
+    "UserInterestProfile",
+    # Quota models
+    "QuotaType",
+    "TierQuotaLimit",
+    "UserQuotaUsage",
+    # Notification models
+    "NotificationEventType",
+    "UserNotificationPreference",
+    "Notification",
+    "NotificationDelivery",
+    # Collection theme models
+    "CollectionTheme",
 ]

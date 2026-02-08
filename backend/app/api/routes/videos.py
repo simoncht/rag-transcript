@@ -7,9 +7,12 @@ Endpoints:
 - GET /videos/{video_id} - Get video details
 - DELETE /videos/{video_id} - Delete video
 """
+import logging
 import uuid
 from typing import List, Optional
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 
@@ -34,6 +37,7 @@ from app.schemas import (
     BulkCancelRequest,
     BulkCancelResponse,
     BulkCancelResultItem,
+    SimilarVideosResponse,
 )
 from app.services.youtube import youtube_service, YouTubeDownloadError
 from app.services.video_processing import reset_video_processing
@@ -190,7 +194,9 @@ async def list_videos(
         VideoList with videos and total count
     """
     query = db.query(Video).filter(
-        Video.user_id == current_user.id, Video.is_deleted.is_(False)
+        Video.user_id == current_user.id,
+        Video.is_deleted.is_(False),
+        Video.content_type == "youtube",
     )
 
     # Apply status filter
@@ -300,6 +306,7 @@ async def get_video(
             Video.id == video_id,
             Video.user_id == current_user.id,
             Video.is_deleted.is_(False),
+            Video.content_type == "youtube",
         )
         .first()
     )
@@ -759,7 +766,7 @@ async def delete_videos(
                 if audio_path.exists():
                     audio_path.unlink()
             except Exception as e:
-                print(f"Warning: Failed to delete audio file: {str(e)}")
+                logger.warning(f"Failed to delete audio file: {str(e)}")
 
         if request.delete_transcript and video.transcript_file_path:
             try:
@@ -767,14 +774,14 @@ async def delete_videos(
                 if transcript_path.exists():
                     transcript_path.unlink()
             except Exception as e:
-                print(f"Warning: Failed to delete transcript file: {str(e)}")
+                logger.warning(f"Failed to delete transcript file: {str(e)}")
 
         # Delete from vector store and clean up chunks if requested
         if request.delete_search_index:
             try:
                 vector_store_service.delete_video(video.id)
             except Exception as e:
-                print(f"Warning: Failed to delete video from vector store: {str(e)}")
+                logger.warning(f"Failed to delete video from vector store: {str(e)}")
 
             # Also delete chunk rows from PostgreSQL to avoid orphaned data
             try:
@@ -784,9 +791,9 @@ async def delete_videos(
                     .delete(synchronize_session=False)
                 )
                 if deleted_chunks > 0:
-                    print(f"Deleted {deleted_chunks} chunks for video {video.id}")
+                    logger.debug(f"Deleted {deleted_chunks} chunks for video {video.id}")
             except Exception as e:
-                print(f"Warning: Failed to delete chunks from database: {str(e)}")
+                logger.warning(f"Failed to delete chunks from database: {str(e)}")
 
         # Soft delete from database if requested
         if request.remove_from_library:
@@ -801,9 +808,9 @@ async def delete_videos(
                     .delete(synchronize_session=False)
                 )
                 if deleted_cv > 0:
-                    print(f"Removed video {video.id} from {deleted_cv} collection(s)")
+                    logger.debug(f"Removed video {video.id} from {deleted_cv} collection(s)")
             except Exception as e:
-                print(f"Warning: Failed to clean up collection associations: {str(e)}")
+                logger.warning(f"Failed to clean up collection associations: {str(e)}")
 
         total_savings += total_size
 
@@ -879,3 +886,53 @@ async def update_video_tags(
     db.refresh(video)
 
     return VideoDetail.model_validate(video)
+
+
+@router.get("/{video_id}/similar", response_model=SimilarVideosResponse)
+async def get_similar_videos(
+    video_id: uuid.UUID,
+    limit: int = Query(5, ge=1, le=20, description="Max similar videos to return"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Find videos similar to the given video based on shared topics.
+
+    Uses Jaccard similarity on key_topics arrays.
+    Scoped to the current user's videos only.
+
+    Args:
+        video_id: Source video UUID
+        limit: Maximum number of similar videos to return
+
+    Returns:
+        SimilarVideosResponse with ranked similar videos
+    """
+    # Verify video exists and belongs to user
+    video = (
+        db.query(Video)
+        .filter(
+            Video.id == video_id,
+            Video.user_id == current_user.id,
+            Video.is_deleted.is_(False),
+        )
+        .first()
+    )
+
+    if not video:
+        raise HTTPException(status_code=404, detail="Video not found")
+
+    from app.services.theme_service import get_theme_service
+
+    theme_service = get_theme_service()
+    similar = theme_service.find_similar_videos(
+        db=db,
+        video_id=video_id,
+        user_id=current_user.id,
+        limit=limit,
+    )
+
+    return SimilarVideosResponse(
+        source_video_id=video_id,
+        similar_videos=similar,
+    )

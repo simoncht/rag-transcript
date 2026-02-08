@@ -11,6 +11,7 @@ import {
   BulkCancelRequest,
   BulkCancelResponse,
   CleanupOption,
+  SimilarVideosResponse,
 } from "../types";
 
 const VIDEO_LIST_TIMEOUT_MS = 15000;
@@ -81,6 +82,13 @@ export const videosApi = {
   async cancelBulk(videoIds: string[], cleanupOption: CleanupOption = "keep_video"): Promise<BulkCancelResponse> {
     const request: BulkCancelRequest = { video_ids: videoIds, cleanup_option: cleanupOption };
     const response = await apiClient.post("/videos/cancel-bulk", request);
+    return response.data;
+  },
+
+  async getSimilar(videoId: string, limit: number = 5): Promise<SimilarVideosResponse> {
+    const response = await apiClient.get(`/videos/${videoId}/similar`, {
+      params: { limit },
+    });
     return response.data;
   },
 };

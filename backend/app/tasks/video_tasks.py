@@ -851,3 +851,43 @@ def process_video_pipeline(video_id: str, youtube_url: str, user_id: str, job_id
 
     finally:
         db.close()
+
+
+@celery_app.task(name="regenerate_collection_themes", bind=True, max_retries=1)
+def regenerate_collection_themes(self, collection_id: str, user_id: str):
+    """
+    Celery task to regenerate clustered themes for a collection.
+
+    Uses embedding-based clustering + LLM labeling.
+    """
+    db = SessionLocal()
+    try:
+        from app.services.theme_service import get_theme_service
+
+        theme_service = get_theme_service()
+        themes = theme_service.cluster_collection_themes(
+            db=db,
+            collection_id=UUID(collection_id),
+            user_id=UUID(user_id),
+        )
+
+        logger.info(
+            f"[Themes] Regenerated {len(themes)} clustered themes "
+            f"for collection {collection_id}"
+        )
+
+        return {
+            "status": "completed",
+            "collection_id": collection_id,
+            "theme_count": len(themes),
+        }
+
+    except Exception as e:
+        logger.error(
+            f"[Themes] Failed to regenerate themes for collection "
+            f"{collection_id}: {e}"
+        )
+        raise
+
+    finally:
+        db.close()

@@ -156,6 +156,11 @@ export interface ChunkReference {
   speakers?: string[] | null;
   chapter_title?: string | null;
   channel_name?: string | null;
+  // Document support
+  content_type?: string | null;
+  page_number?: number | null;
+  section_heading?: string | null;
+  location_display?: string | null;
 }
 
 export interface MessageResponse {
@@ -187,6 +192,9 @@ export interface ConversationSource {
   duration_seconds?: number;
   thumbnail_url?: string;
   youtube_id?: string;
+  content_type?: string;
+  page_count?: number;
+  original_filename?: string;
 }
 
 export interface ConversationSourcesResponse {
@@ -243,7 +251,8 @@ export interface Collection {
 export interface CollectionVideoInfo {
   id: string;
   title: string;
-  youtube_id: string;
+  youtube_id?: string | null;
+  content_type?: string | null;
   duration_seconds?: number;
   status: string;
   thumbnail_url?: string;
@@ -286,8 +295,51 @@ export interface CollectionUpdateRequest {
   };
 }
 
-export interface CollectionAddVideosRequest {
+export interface CollectionAddContentRequest {
   video_ids: string[];
+}
+
+export interface ThemeItem {
+  topic: string;
+  count: number;
+  video_ids: string[];
+}
+
+export interface CollectionThemesResponse {
+  collection_id: string;
+  themes: ThemeItem[];
+  total_videos: number;
+  videos_with_topics: number;
+  cached: boolean;
+}
+
+export interface ClusteredThemeItem {
+  theme_label: string;
+  theme_description?: string;
+  video_ids: string[];
+  relevance_score?: number;
+  topic_keywords: string[];
+}
+
+export interface ClusteredThemesResponse {
+  collection_id: string;
+  themes: ClusteredThemeItem[];
+  mode: string;
+}
+
+export interface SimilarVideoItem {
+  video_id: string;
+  title: string;
+  content_type?: string;
+  similarity: number;
+  shared_topics: string[];
+  thumbnail_url?: string;
+  duration_seconds?: number;
+}
+
+export interface SimilarVideosResponse {
+  source_video_id: string;
+  similar_videos: SimilarVideoItem[];
 }
 
 export interface VideoUpdateTagsRequest {
@@ -709,6 +761,9 @@ export interface QuotaUsage {
   videos_used: number;
   videos_limit: number;
   videos_remaining: number;
+  documents_used: number;
+  documents_limit: number;
+  documents_remaining: number;
   messages_used: number;
   messages_limit: number;
   messages_remaining: number;
@@ -729,6 +784,7 @@ export interface PricingTier {
   stripe_price_id_yearly?: string | null;
   features: string[];
   video_limit: number;
+  document_limit: number;
   message_limit: number;
   storage_limit_mb: number;
   minutes_limit: number;
@@ -803,4 +859,391 @@ export interface LLMUsageResponse {
   stats: LLMUsageStats;
   by_user: LLMUsageByUser[];
   recent_events: LLMUsageItem[];
+}
+
+// ==========================================
+// Discovery & Content Search Types
+// ==========================================
+
+// YouTube Search Filter Types
+export type YouTubeDurationFilter = "short" | "medium" | "long" | null;
+export type YouTubePublishedFilter = "week" | "month" | "year" | null;
+export type YouTubeOrderFilter = "relevance" | "date" | "viewCount";
+export type YouTubeCategoryFilter = "education" | "howto" | "tech" | "entertainment" | null;
+
+// YouTube Search
+export interface YouTubeSearchRequest {
+  query: string;
+  max_results?: number;
+  page_token?: string; // For server-side pagination (API mode only)
+  // Filter options
+  duration?: YouTubeDurationFilter;
+  published_after?: YouTubePublishedFilter;
+  order?: YouTubeOrderFilter;
+  category?: YouTubeCategoryFilter;
+}
+
+export interface YouTubeSearchResult {
+  id: string;
+  title: string;
+  description?: string;
+  channel_name?: string;
+  channel_id?: string;
+  thumbnail_url?: string;
+  duration_seconds?: number;
+  duration_display?: string;
+  published_at?: string | null;
+  view_count?: number;
+  already_imported?: boolean;
+}
+
+export interface YouTubeSearchResponse {
+  results: YouTubeSearchResult[];
+  total: number;
+  quota_used: number;
+  quota_remaining: number;
+  // Pagination fields (only available when YouTube API key is configured)
+  next_page_token?: string | null;
+  prev_page_token?: string | null;
+  total_results?: number | null;
+  has_api_pagination: boolean;
+}
+
+// Batch Import
+export interface BatchImportRequest {
+  video_ids: string[];
+  collection_id?: string;
+}
+
+export interface BatchImportResult {
+  youtube_id: string;
+  video_id?: string;
+  success: boolean;
+  error?: string;
+  already_exists: boolean;
+}
+
+export interface BatchImportResponse {
+  total: number;
+  imported: number;
+  skipped?: number;
+  failed: number;
+  results: BatchImportResult[];
+}
+
+// Discovery Sources (Subscriptions)
+export type DiscoverySourceType = "youtube_channel" | "youtube_topic" | "rss_feed";
+
+export interface DiscoverySourceConfig {
+  auto_import?: boolean;
+  notify?: boolean;
+  priority?: "low" | "normal" | "high";
+}
+
+export interface DiscoverySource {
+  id: string;
+  user_id: string;
+  source_type: DiscoverySourceType;
+  source_identifier: string;
+  display_name: string;
+  display_image_url?: string;
+  config: DiscoverySourceConfig;
+  is_explicit: boolean;
+  is_active: boolean;
+  last_checked_at?: string;
+  check_frequency_hours: number;
+  created_at: string;
+}
+
+export interface DiscoverySourceCreateRequest {
+  source_type: DiscoverySourceType;
+  source_identifier: string;
+  config?: DiscoverySourceConfig;
+}
+
+export interface DiscoverySourceUpdateRequest {
+  config?: DiscoverySourceConfig;
+  is_active?: boolean;
+  check_frequency_hours?: number;
+}
+
+export interface DiscoverySourceListResponse {
+  total: number;
+  sources: DiscoverySource[];
+}
+
+// Discovered Content
+export type DiscoveredContentStatus = "pending" | "imported" | "dismissed" | "expired";
+
+export interface DiscoveredContentPreview {
+  duration?: number;
+  duration_display?: string;
+  channel_name?: string;
+  channel_id?: string;
+  published_at?: string;
+  view_count?: number;
+}
+
+export interface DiscoveredContentContext {
+  matched_topic?: string;
+  score?: number;
+  channel_name?: string;
+}
+
+export interface DiscoveredContent {
+  id: string;
+  user_id: string;
+  discovery_source_id?: string;
+  content_type: string;
+  source_type: string;
+  source_identifier: string;
+  title: string;
+  description?: string;
+  thumbnail_url?: string;
+  preview_metadata: DiscoveredContentPreview;
+  discovery_reason: string;
+  discovery_context: DiscoveredContentContext;
+  status: DiscoveredContentStatus;
+  discovered_at: string;
+  actioned_at?: string;
+  expires_at?: string;
+}
+
+export interface DiscoveredContentListResponse {
+  total: number;
+  pending: number;
+  items: DiscoveredContent[];
+}
+
+export type DiscoveredContentAction = "import" | "dismiss";
+
+export interface DiscoveredContentActionRequest {
+  action: DiscoveredContentAction;
+  collection_id?: string;
+}
+
+// Channel Info
+export interface ChannelInfo {
+  channel_id: string;
+  display_name: string;
+  display_image_url?: string;
+  subscriber_count?: number;
+  video_count?: number;
+  description?: string;
+}
+
+// Recommendations
+export interface RecommendationItem {
+  source_type: string;
+  source_identifier: string;
+  title: string;
+  description?: string;
+  thumbnail_url?: string;
+  metadata: Record<string, unknown>;
+  reason: string;
+  context: Record<string, unknown>;
+  score: number;
+}
+
+export interface RecommendationsResponse {
+  recommendations: RecommendationItem[];
+  strategies_used: string[];
+}
+
+// ==========================================
+// Notification Types
+// ==========================================
+
+export type NotificationChannel = "in_app" | "email" | "push" | "slack";
+export type NotificationFrequency = "immediate" | "daily_digest" | "weekly_digest";
+
+export interface Notification {
+  id: string;
+  user_id: string;
+  event_type_id: string;
+  title: string;
+  body?: string;
+  action_url?: string;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  read_at?: string;
+  dismissed_at?: string;
+}
+
+export interface NotificationListResponse {
+  total: number;
+  unread: number;
+  notifications: Notification[];
+}
+
+export interface NotificationPreference {
+  event_type_id: string;
+  is_enabled: boolean;
+  enabled_channels: NotificationChannel[];
+  frequency: NotificationFrequency;
+}
+
+export interface NotificationPreferencesResponse {
+  preferences: NotificationPreference[];
+}
+
+export interface NotificationPreferenceUpdateRequest {
+  is_enabled?: boolean;
+  enabled_channels?: NotificationChannel[];
+  frequency?: NotificationFrequency;
+}
+
+export interface NotificationSettings {
+  email_digest_enabled: boolean;
+  email_digest_frequency: "daily" | "weekly";
+  timezone: string;
+  recommendations_enabled: boolean;
+}
+
+export interface NotificationSettingsUpdateRequest {
+  email_digest_enabled?: boolean;
+  email_digest_frequency?: "daily" | "weekly";
+  timezone?: string;
+  recommendations_enabled?: boolean;
+}
+
+// ==========================================
+// Extended Quota Types (Registry-Based)
+// ==========================================
+
+export type QuotaResetPeriod = "none" | "daily" | "monthly" | "yearly";
+
+export interface QuotaTypeInfo {
+  id: string;
+  display_name: string;
+  description?: string;
+  unit: string;
+  reset_period: QuotaResetPeriod;
+  warning_thresholds: number[];
+}
+
+export interface QuotaInfo {
+  quota_type_id: string;
+  used: number;
+  limit: number;
+  is_unlimited: boolean;
+  percentage: number;
+  period_start?: string;
+  period_end?: string;
+  warning_level?: string;
+}
+
+export interface QuotaCheckResult {
+  allowed: boolean;
+  warning_level?: string;
+  message?: string;
+}
+
+export interface AllQuotasResponse {
+  quotas: QuotaInfo[];
+  tier: SubscriptionTier;
+}
+
+// User Interest Profile
+export interface TopicInterest {
+  topic: string;
+  score: number;
+  last_seen: string;
+}
+
+export interface ChannelInterest {
+  channel_id: string;
+  name: string;
+  import_count: number;
+}
+
+export interface UserInterestProfile {
+  id: string;
+  user_id: string;
+  topics: TopicInterest[];
+  channels: ChannelInterest[];
+  total_imports: number;
+  updated_at: string;
+}
+
+// ==========================================
+// Document/Content Types
+// ==========================================
+
+export type DocumentContentType =
+  | "pdf"
+  | "docx"
+  | "pptx"
+  | "xlsx"
+  | "txt"
+  | "md"
+  | "html"
+  | "epub"
+  | "csv"
+  | "rtf"
+  | "email";
+
+export type ContentType = "youtube" | DocumentContentType;
+
+export type ContentStatus =
+  | "pending"
+  | "extracting"
+  | "extracted"
+  | "chunking"
+  | "enriching"
+  | "indexing"
+  | "completed"
+  | "failed"
+  | "canceled";
+
+export interface ContentItem {
+  id: string;
+  user_id: string;
+  content_type: ContentType;
+  title: string;
+  original_filename?: string;
+  file_size_bytes?: number;
+  page_count?: number;
+  source_url?: string;
+  source_metadata?: Record<string, unknown>;
+  status: ContentStatus;
+  progress_percent: number;
+  error_message?: string;
+  chunk_count?: number;
+  summary?: string;
+  key_topics?: string[];
+  storage_total_mb?: number;
+  created_at: string;
+  updated_at: string;
+  completed_at?: string;
+}
+
+export interface ContentListResponse {
+  total: number;
+  items: ContentItem[];
+}
+
+export interface ContentUploadResponse {
+  content_id: string;
+  status: string;
+  content_type: string;
+  title: string;
+  original_filename: string;
+  file_size_bytes: number;
+  message: string;
+}
+
+export interface ContentDeleteResponse {
+  deleted_count: number;
+  total_savings_mb: number;
+  message: string;
+}
+
+export interface ContentStatusUpdate {
+  id: string;
+  status: ContentStatus;
+  progress_percent: number;
+  error_message?: string;
+  chunk_count?: number;
+  completed_at?: string;
 }

@@ -162,10 +162,10 @@ class Settings(BaseSettings):
     query_expansion_variants: int = 2  # Number of query variants to generate
 
     # Self-RAG / Corrective RAG
-    enable_relevance_grading: bool = False  # LLM grades chunk relevance after reranking
+    enable_relevance_grading: bool = True  # LLM grades chunk relevance after reranking
 
     # HyDE (Hypothetical Document Embeddings)
-    enable_hyde: bool = False  # Generate hypothetical answer for coverage queries
+    enable_hyde: bool = True  # Generate hypothetical answer for coverage queries
 
     # BM25 Hybrid Search
     enable_bm25_search: bool = True
