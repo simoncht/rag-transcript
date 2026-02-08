@@ -433,7 +433,10 @@ def _chunk_and_enrich(video_id: str, transcript_id: str):
 
         update_video_status(db, video_uuid, "chunking", 40.0)
 
-        enricher = ContextualEnricher()
+        # Build full transcript text for contextual enrichment
+        full_transcript_text = " ".join(seg["text"] for seg in transcript.segments)
+
+        enricher = ContextualEnricher(full_text=full_transcript_text)
         enricher.set_video_context(video.title, video.description)
         enriched_chunks = []
         for i, chunk in enumerate(chunks):
@@ -461,6 +464,7 @@ def _chunk_and_enrich(video_id: str, transcript_id: str):
                 chunk_title=enriched_chunk.title,
                 keywords=enriched_chunk.keywords,
                 embedding_text=enriched_chunk.embedding_text,
+                enrichment_version=2,
                 enriched_at=datetime.utcnow(),
             )
             db.add(db_chunk)
@@ -571,6 +575,40 @@ def _embed_and_index(video_id: str, user_id: str, force_reindex: bool = False):
     except Exception as e:
         update_video_status(db, video_uuid, "failed", 0.0, f"Indexing failed: {str(e)}")
         raise
+    finally:
+        db.close()
+
+
+def _generate_video_summary(video_id: str):
+    """
+    Generate video-level summary for two-level retrieval.
+
+    This is the final step in the pipeline, enabling NotebookLM-style
+    hierarchical retrieval with video summaries.
+    """
+    db = SessionLocal()
+    video_uuid = UUID(video_id)
+
+    try:
+        from app.services.video_summarizer import video_summarizer_service
+
+        logger.info(f"[pipeline] Generating video summary for video={video_id}")
+
+        success = video_summarizer_service.update_video_summary(db, video_uuid)
+
+        if success:
+            logger.info(f"[pipeline] Video summary generated for video={video_id}")
+            return {"success": True}
+        else:
+            logger.warning(f"[pipeline] Failed to generate video summary for video={video_id}")
+            return {"success": False, "error": "Summary generation failed"}
+
+    except Exception as e:
+        # Don't fail the entire pipeline if summary generation fails
+        # The video is still usable for chunk-level retrieval
+        logger.error(f"[pipeline] Video summary generation error for video={video_id}: {e}")
+        return {"success": False, "error": str(e)}
+
     finally:
         db.close()
 
@@ -722,6 +760,19 @@ def process_video_pipeline(video_id: str, youtube_url: str, user_id: str, job_id
             logger.info(f"[Pipeline] Using YouTube captions for video={video_id} (fast path)")
             update_job_status(db, UUID(job_id), "running", 10.0, "Processing captions")
             transcribe_result = _create_transcript_from_captions(video_id, caption_data)
+
+            # Track ingestion for quota (no audio file on caption path)
+            try:
+                usage_tracker = UsageTracker(db)
+                usage_tracker.track_video_ingestion(
+                    UUID(user_id),
+                    UUID(video_id),
+                    video.duration_seconds or 0,
+                    0.0,  # no audio downloaded
+                )
+            except Exception as e:
+                logger.warning(f"[usage] Failed to track ingestion for video={video_id}: {e}")
+
             logger.info(f"[Pipeline] Caption-based transcription complete for video={video_id}")
         else:
             # Fallback: Download audio and transcribe with Whisper
@@ -760,10 +811,21 @@ def process_video_pipeline(video_id: str, youtube_url: str, user_id: str, job_id
         # Step 4: Embed and index
         print(f"[pipeline] Step 4: embed/index start job={job_id}")
         update_job_status(
-            db, UUID(job_id), "running", 90.0, "Generating embeddings and indexing"
+            db, UUID(job_id), "running", 85.0, "Generating embeddings and indexing"
         )
         index_result = _embed_and_index(video_id, user_id)
         print(f"[pipeline] Step 4: embed/index done job={job_id}")
+
+        # Checkpoint: after embed/index
+        _check_canceled_or_raise(db, video_id, job_id, "after_embed_index")
+
+        # Step 5: Generate video-level summary (for two-level retrieval)
+        print(f"[pipeline] Step 5: video summary start job={job_id}")
+        update_job_status(
+            db, UUID(job_id), "running", 95.0, "Generating video summary"
+        )
+        summary_result = _generate_video_summary(video_id)
+        print(f"[pipeline] Step 5: video summary done job={job_id}")
 
         # Complete
         update_job_status(db, UUID(job_id), "completed", 100.0, "Pipeline completed")
@@ -772,6 +834,7 @@ def process_video_pipeline(video_id: str, youtube_url: str, user_id: str, job_id
             "status": "completed",
             "chunk_count": chunk_result["chunk_count"],
             "indexed_count": index_result["indexed_count"],
+            "summary_generated": summary_result.get("success", False),
         }
 
     except VideoCanceledException:

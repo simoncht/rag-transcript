@@ -55,29 +55,49 @@ class ContextualEnricher:
 
     Uses an LLM to generate summaries, titles, and keywords for each chunk.
     Implements retry logic and graceful degradation if enrichment fails.
+    Works for both video transcripts and document chunks.
     """
 
     def __init__(
         self,
         llm_service: Optional[LLMService] = None,
         video_context: Optional[str] = None,
+        source_context: Optional[str] = None,
+        content_type: str = "youtube",
+        full_text: Optional[str] = None,
     ):
         """
         Initialize contextual enricher.
 
         Args:
             llm_service: LLM service instance (defaults to global instance)
-            video_context: Optional video context (title, description) to improve enrichment
+            video_context: Optional video context (title, description) - legacy param
+            source_context: Optional source context (title, description) - preferred param
+            content_type: Type of content being enriched ('youtube', 'pdf', 'docx', etc.)
+            full_text: Optional full transcript/document text for contextual grounding.
+                       When provided, the LLM sees the entire document to produce
+                       better chunk-level summaries (Anthropic contextual retrieval pattern).
         """
         from app.services.llm_providers import llm_service as default_llm_service
 
         self.llm_service = llm_service or default_llm_service
-        self.video_context = video_context
+        # Support both legacy video_context and new source_context
+        self.video_context = source_context or video_context
+        self.content_type = content_type
         self.max_retries = settings.enrichment_max_retries
+        # Full text for contextual enrichment (truncated to ~12K tokens ≈ 48K chars)
+        self.full_text = full_text[:48000] if full_text and len(full_text) > 48000 else full_text
 
     def _create_enrichment_prompt(self, chunk: Chunk) -> List[Message]:
         """
         Create prompt for chunk enrichment.
+
+        When full_text is available, uses the Anthropic contextual retrieval pattern:
+        system message (static) → full text (cached per video) → chunk (varies).
+        This lets DeepSeek cache the full text prefix after the first chunk.
+
+        Works for both video transcript chunks (with timestamps) and document chunks
+        (with page numbers).
 
         Args:
             chunk: Chunk to enrich
@@ -85,38 +105,63 @@ class ContextualEnricher:
         Returns:
             List of messages for LLM
         """
+        is_document = self.content_type != "youtube"
+        content_descriptor = "document section" if is_document else "transcript segment"
+
+        # Build system message — static, always cached
+        system_parts = [
+            f"You are an expert at analyzing {content_descriptor}s and extracting key information. "
+            f"Your task is to generate concise metadata for a chunk of {'document' if is_document else 'transcript'} text.",
+            "",
+            "Return your response as valid JSON with these exact fields:",
+            "{",
+            '  "title": "A short phrase (3-7 words) capturing the main topic",',
+            '  "summary": "A concise 1-3 sentence summary of what is discussed",',
+            '  "keywords": ["3-7 key topics, entities, or concepts mentioned"]',
+            "}",
+            "",
+            "Guidelines:",
+            "- Title should be specific and descriptive",
+            "- Summary should capture the essence, situating the chunk within the broader document",
+            "- Keywords should be searchable terms someone might use to find this content",
+            "- Return ONLY valid JSON, no additional text",
+        ]
+
+        # Append full text to system message for cache optimization
+        # DeepSeek caches identical prefixes — full text is the same for all chunks
+        if self.full_text:
+            system_parts.extend([
+                "",
+                f"<full_{'document' if is_document else 'transcript'}>",
+                self.full_text,
+                f"</full_{'document' if is_document else 'transcript'}>",
+            ])
+
         system_message = Message(
             role="system",
-            content=(
-                "You are an expert at analyzing transcript segments and extracting key information. "
-                "Your task is to generate concise metadata for a chunk of transcript text.\n\n"
-                "Return your response as valid JSON with these exact fields:\n"
-                "{\n"
-                '  "title": "A short phrase (3-7 words) capturing the main topic",\n'
-                '  "summary": "A concise 1-3 sentence summary of what is discussed",\n'
-                '  "keywords": ["3-7 key topics, entities, or concepts mentioned"]\n'
-                "}\n\n"
-                "Guidelines:\n"
-                "- Title should be specific and descriptive\n"
-                "- Summary should capture the essence and key points\n"
-                "- Keywords should be searchable terms someone might use to find this content\n"
-                "- Return ONLY valid JSON, no additional text"
-            ),
+            content="\n".join(system_parts),
         )
 
-        # Add video context if available
+        # Add source context if available
         context_info = ""
         if self.video_context:
-            context_info = f"\n\nVideo context: {self.video_context}"
+            context_label = "Document context" if is_document else "Video context"
+            context_info = f"\n\n{context_label}: {self.video_context}"
 
-        # Add timestamp for context
-        timestamp_str = f"{int(chunk.start_timestamp // 60):02d}:{int(chunk.start_timestamp % 60):02d}"
+        # Location info: timestamp for videos, page number for documents
+        if is_document:
+            page_num = getattr(chunk, "page_number", None)
+            location_str = f"page {page_num}" if page_num else "unknown location"
+        else:
+            timestamp_str = f"{int(chunk.start_timestamp // 60):02d}:{int(chunk.start_timestamp % 60):02d}"
+            location_str = f"timestamp {timestamp_str}"
 
+        # User message — varies per chunk
         user_message = Message(
             role="user",
             content=(
-                f"Analyze this transcript segment (from {timestamp_str}):{context_info}\n\n"
-                f"Transcript:\n{chunk.text}\n\n"
+                f"Analyze this {content_descriptor} (from {location_str}):{context_info}\n\n"
+                f"Text:\n{chunk.text}\n\n"
                 "Return JSON with title, summary, and keywords."
             ),
         )
@@ -362,13 +407,26 @@ class ContextualEnricher:
             video_title: Video title
             video_description: Optional video description
         """
-        context_parts = [f"Title: {video_title}"]
-        if video_description:
-            # Limit description length
+        self.set_source_context(video_title, video_description)
+
+    def set_source_context(
+        self, title: str, description: Optional[str] = None
+    ):
+        """
+        Set source context to improve enrichment quality.
+
+        Works for both videos and documents.
+
+        Args:
+            title: Content title
+            description: Optional description
+        """
+        context_parts = [f"Title: {title}"]
+        if description:
             desc = (
-                video_description[:500] + "..."
-                if len(video_description) > 500
-                else video_description
+                description[:500] + "..."
+                if len(description) > 500
+                else description
             )
             context_parts.append(f"Description: {desc}")
 

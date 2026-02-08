@@ -59,14 +59,24 @@ class Chunk(Base):
     # Speaker information (if available)
     speakers = Column(ARRAY(String), nullable=True)  # List of speaker IDs in this chunk
 
+    # Content type (mirrors parent video's content_type for filtering)
+    content_type = Column(String(50), nullable=False, default="youtube")
+
     # YouTube chapter (if video has chapters)
     chapter_title = Column(String(255), nullable=True)
     chapter_index = Column(Integer, nullable=True)
+
+    # Document-specific fields
+    page_number = Column(Integer, nullable=True)  # Page number for PDFs, DOCX, etc.
+    section_heading = Column(String(500), nullable=True)  # Section/heading for documents
 
     # Contextual enrichment (Anthropic-style contextual retrieval)
     chunk_summary = Column(Text, nullable=True)  # 1-3 sentences summarizing the chunk
     chunk_title = Column(String(255), nullable=True)  # Short phrase capturing main idea
     keywords = Column(ARRAY(String), nullable=True)  # Key topics/entities
+
+    # Enrichment tracking (v1 = original, v2 = full contextual enrichment)
+    enrichment_version = Column(Integer, nullable=False, default=2, server_default="1")
 
     # Embedding information
     embedding_text = Column(
