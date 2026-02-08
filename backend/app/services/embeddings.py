@@ -19,7 +19,13 @@ from app.core.config import settings
 EMBEDDING_PRESETS: Dict[str, Dict[str, object]] = {
     "bert-base-uncased": {"model": "bert-base-uncased", "provider": "local"},
     "all-MiniLM-L6-v2": {"model": "all-MiniLM-L6-v2", "provider": "local"},
+    "BAAI/bge-base-en-v1.5": {"model": "BAAI/bge-base-en-v1.5", "provider": "local"},
+    "BAAI/bge-small-en-v1.5": {"model": "BAAI/bge-small-en-v1.5", "provider": "local"},
 }
+
+# Models that need a query prefix for asymmetric retrieval
+BGE_QUERY_PREFIX = "Represent this sentence: "
+BGE_MODEL_PREFIXES = {"baai/bge-base-en-v1.5", "baai/bge-small-en-v1.5", "baai/bge-large-en-v1.5"}
 
 
 def resolve_collection_name(service: object) -> str:
@@ -375,8 +381,12 @@ class EmbeddingService:
         provider_type = settings.embedding_provider
 
         if provider_type == "local":
-            # Check if model is BERT-based (use custom BERT class)
-            if "bert" in settings.embedding_model.lower():
+            model_lower = settings.embedding_model.lower()
+            # BGE and other sentence-transformer-compatible models use mean pooling
+            if model_lower in BGE_MODEL_PREFIXES or "/" in settings.embedding_model:
+                return SentenceTransformerEmbedding()
+            # Legacy BERT-based models use CLS pooling
+            elif "bert" in model_lower:
                 return BertEmbedding()
             else:
                 return SentenceTransformerEmbedding()
@@ -387,17 +397,29 @@ class EmbeddingService:
         else:
             raise ValueError(f"Unknown embedding provider: {provider_type}")
 
-    def embed_text(self, text: str, use_cache: bool = True) -> np.ndarray:
+    def _needs_query_prefix(self) -> bool:
+        """Check if the current model needs a query prefix."""
+        model_name = (self.model_info.get("model") or "").lower()
+        return model_name in BGE_MODEL_PREFIXES
+
+    def embed_text(
+        self, text: str, use_cache: bool = True, is_query: bool = False
+    ) -> np.ndarray:
         """
         Generate embedding for a single text.
 
         Args:
             text: Input text
             use_cache: Whether to use caching (default: True)
+            is_query: If True and model is BGE, prepend query prefix
 
         Returns:
             Embedding vector
         """
+        # BGE models need a prefix on queries (not documents)
+        if is_query and self._needs_query_prefix():
+            text = BGE_QUERY_PREFIX + text
+
         if use_cache:
             return self._cached_embed(text)
         else:
