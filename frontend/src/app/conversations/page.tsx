@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { Suspense, useState, useEffect, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { formatDistanceToNow } from "date-fns";
 import { parseUTCDate } from "@/lib/utils";
 import { useAuthState } from "@/lib/auth";
@@ -11,7 +11,9 @@ import { MainLayout } from "@/components/layout/MainLayout";
 import { conversationsApi } from "@/lib/api/conversations";
 import { videosApi } from "@/lib/api/videos";
 import { getCollections } from "@/lib/api/collections";
-import { Plus, Trash2, MessageSquare, Loader2, Folder } from "lucide-react";
+import { Plus, MessageSquare, Loader2, Folder } from "lucide-react";
+import { ConversationActionsMenu } from "@/components/conversations/ConversationActionsMenu";
+import { InlineRenameInput } from "@/components/conversations/InlineRenameInput";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -29,6 +31,14 @@ import Link from "next/link";
 type SelectionMode = "collection" | "custom";
 
 export default function ConversationsPage() {
+  return (
+    <Suspense>
+      <ConversationsPageContent />
+    </Suspense>
+  );
+}
+
+function ConversationsPageContent() {
   const authState = useAuthState();
   const canFetch = authState.isAuthenticated;
   const [showCreateForm, setShowCreateForm] = useState(false);
@@ -36,9 +46,12 @@ export default function ConversationsPage() {
   const [selectionMode, setSelectionMode] = useState<SelectionMode>("collection");
   const [selectedCollectionId, setSelectedCollectionId] = useState("");
   const [selectedVideoIds, setSelectedVideoIds] = useState<string[]>([]);
+  const [renamingListId, setRenamingListId] = useState<string | null>(null);
 
   const queryClient = useQueryClient();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const sourceParam = searchParams.get("source");
 
   const { data: conversationsData, isLoading: conversationsLoading } = useQuery({
     queryKey: ["conversations"],
@@ -83,18 +96,21 @@ export default function ConversationsPage() {
     },
   });
 
+  // Auto-create conversation when ?source=<id> is present (from "Chat with this document/video")
+  const [sourceHandled, setSourceHandled] = useState(false);
+  useEffect(() => {
+    if (sourceParam && canFetch && !sourceHandled && !createMutation.isPending) {
+      setSourceHandled(true);
+      createMutation.mutate({ title: "", options: { selectedVideoIds: [sourceParam] } });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sourceParam, canFetch, sourceHandled]);
+
   const createErrorMessage = createMutation.isError
     ? createMutation.error instanceof Error
       ? createMutation.error.message
       : "Unable to create conversation. Please check your session and try again."
     : null;
-
-  const deleteMutation = useMutation({
-    mutationFn: conversationsApi.delete,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["conversations"] });
-    },
-  });
 
   const handleCreate = (e: React.FormEvent) => {
     e.preventDefault();
@@ -163,7 +179,7 @@ export default function ConversationsPage() {
           <p className="text-sm font-medium text-muted-foreground">Transcript chat</p>
           <h1 className="text-3xl font-semibold tracking-tight">Conversations</h1>
           <p className="text-sm text-muted-foreground">
-            Create focused chats over one or more videos and pick up where you left off.
+            Create focused chats over your content and pick up where you left off.
           </p>
           {conversationsData?.conversations && conversationsData.conversations.length > 0 && (
             <div className="flex items-center gap-2 text-xs text-muted-foreground pt-1">
@@ -252,7 +268,7 @@ export default function ConversationsPage() {
                         </div>
                         <p className="text-xs text-muted-foreground">
                           Pick an existing collection (like a course or topic) and chat over all of its
-                          videos.
+                          content.
                         </p>
                         <div className="mt-2">
                           <Label htmlFor="collection" className="text-xs">
@@ -266,7 +282,7 @@ export default function ConversationsPage() {
                               <Link href="/collections" className="text-primary hover:underline">
                                 Create one
                               </Link>{" "}
-                              to organize related videos, or switch to Custom selection below.
+                              to organize related content, or switch to Custom selection below.
                             </p>
                           ) : (
                             <select
@@ -278,7 +294,7 @@ export default function ConversationsPage() {
                               <option value="">Select a collection</option>
                               {collectionsData?.collections.map((collection) => (
                                 <option key={collection.id} value={collection.id}>
-                                  {collection.name} ({collection.video_count} videos)
+                                  {collection.name} ({collection.video_count} items)
                                 </option>
                               ))}
                             </select>
@@ -311,13 +327,13 @@ export default function ConversationsPage() {
                           </Badge>
                         </div>
                         <p className="text-xs text-muted-foreground">
-                          Choose individual completed videos for a focused study session or cross-topic
+                          Choose individual completed content for a focused study session or cross-topic
                           review.
                         </p>
                         <div className="mt-2 max-h-48 space-y-2 overflow-y-auto rounded-md border bg-muted/40 p-2">
                           {completedVideos.length === 0 ? (
                             <p className="px-1 py-2 text-xs text-muted-foreground">
-                              No completed videos yet.{" "}
+                              No completed content yet.{" "}
                               <Link href="/videos" className="text-primary hover:underline">
                                 Add a video
                               </Link>{" "}
@@ -397,12 +413,24 @@ export default function ConversationsPage() {
                       key={conversation.id}
                       type="button"
                       className="flex w-full items-center justify-between gap-4 px-4 py-3 text-left hover:bg-muted/60"
-                      onClick={() => router.push(`/conversations/${conversation.id}`)}
+                      onClick={() => {
+                        if (renamingListId === conversation.id) return;
+                        router.push(`/conversations/${conversation.id}`);
+                      }}
                     >
-                      <div className="flex-1">
-                        <p className="text-sm font-medium text-foreground">
-                          {conversation.title}
-                        </p>
+                      <div className="flex-1 min-w-0">
+                        {renamingListId === conversation.id ? (
+                          <InlineRenameInput
+                            conversationId={conversation.id}
+                            currentTitle={conversation.title}
+                            onComplete={() => setRenamingListId(null)}
+                            className="h-8 text-sm"
+                          />
+                        ) : (
+                          <p className="text-sm font-medium text-foreground truncate">
+                            {conversation.title}
+                          </p>
+                        )}
                         <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                           <span>
                             {conversation.message_count} message
@@ -423,20 +451,12 @@ export default function ConversationsPage() {
                           </span>
                         </div>
                       </div>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className="text-muted-foreground hover:text-destructive"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          deleteMutation.mutate(conversation.id);
-                        }}
-                        disabled={deleteMutation.isPending}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                        <span className="sr-only">Delete conversation</span>
-                      </Button>
+                      <ConversationActionsMenu
+                        conversationId={conversation.id}
+                        currentTitle={conversation.title}
+                        variant="list"
+                        onRenameStart={() => setRenamingListId(conversation.id)}
+                      />
                     </button>
                   ))}
                 </div>
