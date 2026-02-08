@@ -105,7 +105,21 @@ class RerankerService:
                 raise ValueError("CrossEncoder returned unexpected score count")
 
             ranked = sorted(zip(chunks, scores), key=lambda x: x[1], reverse=True)
-            reranked_chunks = [chunk for chunk, _score in ranked]
+
+            # S4: Propagate normalized cross-encoder scores to chunk.score
+            # so downstream relevance filtering uses reranker quality, not
+            # the original cosine similarity.
+            if ranked:
+                max_ce = max(s for _, s in ranked)
+                min_ce = min(s for _, s in ranked)
+                score_range = max_ce - min_ce if max_ce > min_ce else 1.0
+                reranked_chunks = []
+                for chunk, ce_score in ranked:
+                    chunk.score = (ce_score - min_ce) / score_range
+                    reranked_chunks.append(chunk)
+            else:
+                reranked_chunks = []
+
             return reranked_chunks[:top_k] if top_k else reranked_chunks
         except Exception as exc:  # noqa: BLE001
             logger.warning("Re-ranking failed (%s); returning original ordering", exc)

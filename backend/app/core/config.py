@@ -103,8 +103,8 @@ class Settings(BaseSettings):
     enrichment_max_retries: int = 3
 
     # Embedding Configuration
-    embedding_model: str = "bert-base-uncased"
-    embedding_dimensions: int = 768
+    embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
+    embedding_dimensions: int = 384
     embedding_batch_size: int = 32
     embedding_provider: Literal["local", "openai", "azure"] = "local"
 
@@ -155,11 +155,28 @@ class Settings(BaseSettings):
     # RAG Re-ranking (Phase 2)
     enable_reranking: bool = True
     reranking_top_k: int = 7
-    reranking_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    reranking_model: str = "BAAI/bge-reranker-base"
 
     # RAG Query Expansion (Performance Optimization)
     enable_query_expansion: bool = True
     query_expansion_variants: int = 2  # Number of query variants to generate
+
+    # Self-RAG / Corrective RAG
+    enable_relevance_grading: bool = False  # LLM grades chunk relevance after reranking
+
+    # HyDE (Hypothetical Document Embeddings)
+    enable_hyde: bool = False  # Generate hypothetical answer for coverage queries
+
+    # BM25 Hybrid Search
+    enable_bm25_search: bool = True
+    bm25_top_k: int = 20
+    bm25_min_normalized_score: float = 0.25
+    bm25_min_term_overlap: int = 2
+    bm25_max_unique_chunks: int = 3
+    bm25_default_score: float = 0.45
+    rrf_k: int = 60
+    rrf_vector_weight: float = 1.0
+    rrf_bm25_weight: float = 0.3
 
     # RAG Query Rewriting (History-Aware Retrieval)
     enable_query_rewriting: bool = True
@@ -170,6 +187,12 @@ class Settings(BaseSettings):
     max_video_duration_seconds: int = 14400  # 4 hours
     max_video_file_size_mb: int = 2048  # 2 GB
     cleanup_audio_after_transcription: bool = True  # Auto-delete audio after transcription
+
+    # Document Upload Limits
+    max_upload_size_mb: int = 100  # Max file size for document uploads
+    allowed_file_types: List[str] = [
+        "pdf", "docx", "pptx", "xlsx", "txt", "md", "html", "epub", "csv", "rtf", "eml",
+    ]
 
     # Caption Extraction (YouTube auto-captions)
     enable_caption_extraction: bool = True  # Try YouTube captions before Whisper
@@ -191,6 +214,9 @@ class Settings(BaseSettings):
     stripe_pro_yearly_price_id: str = ""
     stripe_enterprise_monthly_price_id: str = ""
     stripe_enterprise_yearly_price_id: str = ""
+
+    # YouTube Data API
+    youtube_api_key: str = ""  # Required for YouTube search/discovery
 
     # Logging
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
