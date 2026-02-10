@@ -556,15 +556,29 @@ async def list_conversations(
         .subquery()
     )
 
+    # Subquery: last message preview (most recent non-system message, truncated to 120 chars)
+    last_msg_subq = (
+        db.query(
+            MessageModel.conversation_id,
+            func.left(MessageModel.content, 120).label("preview"),
+        )
+        .filter(MessageModel.role != "system")
+        .distinct(MessageModel.conversation_id)
+        .order_by(MessageModel.conversation_id, MessageModel.created_at.desc())
+        .subquery()
+    )
+
     # Main query with LEFT JOINs to subqueries
     query = (
         db.query(
             Conversation,
             func.coalesce(msg_count_subq.c.msg_count, 0).label("computed_msg_count"),
             video_ids_subq.c.selected_ids.label("computed_video_ids"),
+            last_msg_subq.c.preview.label("last_msg_preview"),
         )
         .outerjoin(msg_count_subq, Conversation.id == msg_count_subq.c.conversation_id)
         .outerjoin(video_ids_subq, Conversation.id == video_ids_subq.c.conversation_id)
+        .outerjoin(last_msg_subq, Conversation.id == last_msg_subq.c.conversation_id)
         .filter(
             Conversation.user_id == current_user.id,
             Conversation.is_deleted.is_(False),
@@ -586,13 +600,14 @@ async def list_conversations(
 
     # Build response with computed values
     conversations = []
-    for conv, msg_count, video_ids in results:
+    for conv, msg_count, video_ids, last_msg_preview in results:
         # Sync collection sources (adds new videos if any)
         _sync_collection_sources(db, conv, current_user)
 
         # Override cached values with computed values
         conv.message_count = msg_count
         conv.selected_video_ids = video_ids or []
+        conv.last_message_preview = last_msg_preview
 
         conversations.append(ConversationDetail.model_validate(conv))
 
@@ -681,10 +696,48 @@ async def get_conversation(
     message_details: List[MessageWithReferences] = []
     for msg in messages:
         base = MessageSchema.model_validate(msg).model_dump()
+
+        # Use DB-persisted chunk refs first; fall back to summary_sources
+        # stored in message_metadata for summary-level retrieval results.
+        refs = chunk_refs_map.get(msg.id, [])
+        if (
+            not refs
+            and msg.role == "assistant"
+            and isinstance(msg.message_metadata, dict)
+            and "summary_sources" in msg.message_metadata
+        ):
+            for src in msg.message_metadata["summary_sources"]:
+                try:
+                    refs.append(
+                        ChunkReference(
+                            chunk_id=src.get("chunk_id"),
+                            video_id=src["video_id"],
+                            video_title=src.get("video_title", "Unknown"),
+                            youtube_id=src.get("youtube_id"),
+                            video_url=src.get("video_url"),
+                            jump_url=src.get("jump_url"),
+                            start_timestamp=src.get("start_timestamp", 0),
+                            end_timestamp=src.get("end_timestamp", 0),
+                            text_snippet=src.get("text_snippet", ""),
+                            relevance_score=src.get("relevance_score", 1.0),
+                            timestamp_display=src.get("timestamp_display", ""),
+                            rank=src.get("rank", 0),
+                            speakers=src.get("speakers"),
+                            chapter_title=src.get("chapter_title"),
+                            channel_name=src.get("channel_name"),
+                            content_type=src.get("content_type"),
+                            page_number=src.get("page_number"),
+                            section_heading=src.get("section_heading"),
+                            location_display=src.get("location_display"),
+                        )
+                    )
+                except Exception:
+                    pass  # Skip malformed entries
+
         message_details.append(
             MessageWithReferences(
                 **base,
-                chunk_references=chunk_refs_map.get(msg.id, []),
+                chunk_references=refs,
             )
         )
 
@@ -1166,11 +1219,11 @@ async def send_message(
                 location = f"Page 1" if vs.page_count else "Document"
                 jump = f"/documents/{vs.video_id}?page=1"
             else:
-                location = "0:00"
+                location = "Full video"
                 jump = _build_youtube_jump_url(video, 0) if video else None
             chunk_refs_response.append({
                 "chunk_id": None,
-                "video_id": vs.video_id,
+                "video_id": str(vs.video_id),
                 "video_title": vs.title,
                 "youtube_id": video.youtube_id if video and not is_doc else None,
                 "video_url": _build_source_url(video),
@@ -1430,6 +1483,15 @@ async def send_message(
         llm_model=llm_response.model,
     )
     db.add(assistant_message)
+
+    # Persist summary-level citations in message_metadata (since
+    # MessageChunkReference requires a chunk_id FK and summaries
+    # reference whole videos, not individual chunks).
+    if retrieval_result.retrieval_type == "summaries" and chunk_refs_response:
+        assistant_message.message_metadata = {
+            "summary_sources": chunk_refs_response,
+        }
+
     db.flush()  # Ensure message is in DB before referencing in LLM usage
 
     # 9a. Track LLM usage for cost monitoring
@@ -1793,21 +1855,73 @@ async def send_message_stream(
     else:
         stream_source_noun = "transcripts"
 
+    # Load conversation facts for long conversations (parity with non-streaming)
+    # Use actual DB count since conversation.message_count may be stale
+    actual_message_count = (
+        db.query(MessageModel)
+        .filter(MessageModel.conversation_id == conversation_id)
+        .count()
+    )
+    facts_section = ""
+    selected_fact_ids = []
+    if actual_message_count >= 15:
+        try:
+            from app.services.memory_scoring import (
+                select_facts_multifactor,
+                format_facts_for_prompt,
+            )
+            from app.services.embeddings import EmbeddingService
+
+            try:
+                embedding_service = EmbeddingService()
+            except Exception as e:
+                logger.warning(
+                    f"[Stream Facts] Failed to init embedding service: {e}"
+                )
+                embedding_service = None
+
+            scored_facts = select_facts_multifactor(
+                db=db,
+                conversation_id=conversation_id,
+                limit=15,
+                user_query=message_request.message,
+                embedding_service=embedding_service,
+            )
+
+            if scored_facts:
+                facts_section = format_facts_for_prompt(scored_facts)
+                selected_fact_ids = [str(fact.id) for fact, _ in scored_facts]
+                logger.info(
+                    f"[Stream Facts] Selected {len(scored_facts)} facts for conversation"
+                )
+            else:
+                logger.info("[Stream Facts] No facts found for this conversation")
+        except Exception as e:
+            logger.warning(f"[Stream Facts] Failed to load facts: {e}")
+    else:
+        logger.debug(
+            f"[Stream Facts] Skipped (message count {actual_message_count} < 15)"
+        )
+
     # Build LLM messages
-    system_prompt = textwrap.dedent(
-        f"""
-        You are InsightGuide, an AI assistant that answers questions using ONLY information from provided {stream_source_noun}.
+    system_prompt = (
+        textwrap.dedent(
+            """
+        You are InsightGuide, an AI assistant that answers questions using ONLY information from provided {source_noun}.{facts}
 
         **Core Rules**:
-        1. Use ONLY the provided source {stream_source_noun} - never add external knowledge
-        2. If information is not in the {stream_source_noun}, say: "This is not mentioned in the provided {stream_source_noun}"
+        1. Use ONLY the provided source {source_noun} - never add external knowledge
+        2. If information is not in the {source_noun}, say: "This is not mentioned in the provided {source_noun}"
         3. Be concise but thorough - aim for clear, direct answers
 
         **Citation Rules**:
         - Use simple format: [1], [2], [3] at the end of claims
         - Do NOT write "According to Source 1" - just add [N] after the claim
     """
-    ).strip()
+        )
+        .strip()
+        .format(source_noun=stream_source_noun, facts=facts_section)
+    )
 
     llm_messages = [LLMMessage(role="system", content=system_prompt)]
     for msg in history_messages[:-1]:
@@ -1858,6 +1972,32 @@ async def send_message_stream(
             )
             db.add(assistant_message)
 
+            # Look up Chunk DB objects for MessageChunkReference persistence + metadata
+            from app.models import MessageChunkReference, Chunk
+
+            chunk_by_id = {}
+            chunk_by_video_index = {}
+            if retrieval_result.retrieval_type != "summaries":
+                chunk_ids = [c.chunk_id for c in top_chunks if c.chunk_id]
+                video_index_pairs = [
+                    (c.video_id, c.chunk_index) for c in top_chunks if c.chunk_index is not None
+                ]
+                if chunk_ids:
+                    for chunk in db.query(Chunk).filter(Chunk.id.in_(chunk_ids)).all():
+                        chunk_by_id[chunk.id] = chunk
+                if video_index_pairs:
+                    video_ids_for_index = list({vid for vid, _ in video_index_pairs})
+                    chunk_indices_for_query = list({idx for _, idx in video_index_pairs})
+                    candidate_chunks = (
+                        db.query(Chunk)
+                        .filter(Chunk.video_id.in_(video_ids_for_index))
+                        .filter(Chunk.chunk_index.in_(chunk_indices_for_query))
+                        .all()
+                    )
+                    for chunk in candidate_chunks:
+                        key = (chunk.video_id, chunk.chunk_index)
+                        chunk_by_video_index[key] = chunk
+
             # Build chunk references for citations
             chunk_refs_response = []
             if retrieval_result.retrieval_type == "summaries":
@@ -1869,7 +2009,7 @@ async def send_message_stream(
                         location = f"Page 1" if vs.page_count else "Document"
                         jump = f"/documents/{vs.video_id}?page=1"
                     else:
-                        location = "0:00"
+                        location = "Full video"
                         jump = _build_youtube_jump_url(video, 0) if video else None
                     chunk_refs_response.append({
                         "chunk_id": None,
@@ -1884,6 +2024,9 @@ async def send_message_stream(
                         "relevance_score": 1.0,
                         "timestamp_display": location,
                         "rank": idx,
+                        "speakers": None,
+                        "chapter_title": None,
+                        "channel_name": vs.channel_name if not is_doc else None,
                         "content_type": vs.content_type,
                         "page_number": 1 if is_doc else None,
                         "section_heading": None,
@@ -1893,6 +2036,27 @@ async def send_message_stream(
                 # Chunk-level references
                 for rank, scored_chunk in enumerate(top_chunks, 1):
                     video = video_map.get(scored_chunk.video_id)
+
+                    # Look up Chunk DB object for persistence + metadata
+                    chunk_db = None
+                    if scored_chunk.chunk_id and scored_chunk.chunk_id in chunk_by_id:
+                        chunk_db = chunk_by_id[scored_chunk.chunk_id]
+                    if not chunk_db and scored_chunk.chunk_index is not None:
+                        chunk_db = chunk_by_video_index.get(
+                            (scored_chunk.video_id, scored_chunk.chunk_index)
+                        )
+
+                    # Save MessageChunkReference for citation persistence on reload
+                    if chunk_db:
+                        ref = MessageChunkReference(
+                            id=uuid.uuid4(),
+                            message_id=message_id,
+                            chunk_id=chunk_db.id,
+                            relevance_score=scored_chunk.score,
+                            rank=rank,
+                        )
+                        db.add(ref)
+
                     location_display = _format_location_display(scored_chunk)
                     snippet = _truncate_snippet(
                         scored_chunk.text, limit=SNIPPET_PREVIEW_MAX_CHARS
@@ -1912,11 +2076,22 @@ async def send_message_stream(
                         "relevance_score": scored_chunk.score,
                         "timestamp_display": location_display,
                         "rank": rank,
+                        "speakers": chunk_db.speakers if chunk_db and chunk_db.speakers else None,
+                        "chapter_title": chunk_db.chapter_title if chunk_db and chunk_db.chapter_title else None,
+                        "channel_name": video.channel_name if video and video.channel_name and not s_is_doc else None,
                         "content_type": s_content_type,
-                        "page_number": getattr(scored_chunk, "page_number", None),
-                        "section_heading": getattr(scored_chunk, "section_heading", None),
+                        "page_number": getattr(scored_chunk, "page_number", None) or (getattr(chunk_db, "page_number", None) if chunk_db else None),
+                        "section_heading": getattr(scored_chunk, "section_heading", None) or (getattr(chunk_db, "section_heading", None) if chunk_db else None),
                         "location_display": location_display,
                     })
+
+            # Persist summary-level citations in message_metadata (since
+            # MessageChunkReference requires a chunk_id FK and summaries
+            # reference whole videos, not individual chunks).
+            if retrieval_result.retrieval_type == "summaries" and chunk_refs_response:
+                assistant_message.message_metadata = {
+                    "summary_sources": chunk_refs_response,
+                }
 
             # Update conversation metadata
             conversation.message_count = (
@@ -1927,6 +2102,11 @@ async def send_message_stream(
             conversation.last_message_at = assistant_message.created_at
 
             db.commit()
+
+            # Re-load objects from DB after commit (streaming generators can detach
+            # objects from the session, causing DetachedInstanceError downstream)
+            conv_refreshed = db.query(Conversation).filter(Conversation.id == conversation_id).first()
+            msg_refreshed = db.query(MessageModel).filter(MessageModel.id == message_id).first()
 
             # Track chat message for usage quota
             from app.services.usage_tracker import UsageTracker
@@ -1940,6 +2120,38 @@ async def send_message_stream(
                 tokens_out=len(assistant_content.split()),  # Approximate
                 chunks_retrieved=len(chunk_refs_response),
             )
+
+            # Fact access reinforcement (facts used in this turn get stronger)
+            if selected_fact_ids:
+                try:
+                    from app.services.memory_scoring import update_fact_access
+
+                    update_fact_access(db, selected_fact_ids)
+                    logger.debug(f"[Stream Memory] Reinforced {len(selected_fact_ids)} facts")
+                except Exception as e:
+                    logger.warning(f"[Stream Memory] Failed to update fact access: {e}")
+
+            # Extract facts from this conversation turn
+            try:
+                from app.services.fact_extraction import fact_extraction_service
+
+                extracted_facts = fact_extraction_service.extract_facts(
+                    db=db,
+                    message=msg_refreshed or assistant_message,
+                    conversation=conv_refreshed or conversation,
+                    user_query=message_request.message,
+                )
+
+                for fact in extracted_facts:
+                    db.add(fact)
+
+                if extracted_facts:
+                    db.commit()
+                    logger.info(
+                        f"[Stream Facts] Saved {len(extracted_facts)} facts for conversation {conversation_id}"
+                    )
+            except Exception as e:
+                logger.warning(f"[Stream Facts] Fact extraction failed: {e}")
 
             # Send final metadata
             yield f"data: {json.dumps({'type': 'done', 'message_id': str(message_id), 'sources': chunk_refs_response, 'token_count': len(assistant_content.split()), 'response_time_seconds': time.time() - start_time})}\n\n"

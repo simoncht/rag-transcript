@@ -87,28 +87,28 @@ class MessageSendRequest(BaseModel):
 class ChunkReference(BaseModel):
     """Reference to a source chunk used in response."""
 
-    chunk_id: UUID
+    chunk_id: Optional[UUID] = None
     video_id: UUID
     video_title: str
     youtube_id: Optional[str] = Field(
         None, description="YouTube video identifier for building jump links"
     )
     video_url: Optional[str] = Field(
-        None, description="Canonical YouTube URL for this source"
+        None, description="Canonical URL for this source"
     )
     jump_url: Optional[str] = Field(
         None,
-        description="YouTube URL with timestamp for jumping directly to the cited moment",
+        description="URL for jumping directly to the cited location (timestamp or page)",
     )
     transcript_url: Optional[str] = Field(
         None, description="Optional link to view the transcript for this source"
     )
-    start_timestamp: float
-    end_timestamp: float
+    start_timestamp: float = 0.0
+    end_timestamp: float = 0.0
     text_snippet: str = Field(..., max_length=500, description="Excerpt from the chunk")
     relevance_score: float = Field(..., ge=0, le=1, description="Relevance score (0-1)")
     timestamp_display: str = Field(
-        ..., description="Human-readable timestamp (MM:SS or HH:MM:SS)"
+        "", description="Human-readable location (timestamp or page number)"
     )
     rank: int = Field(
         ...,
@@ -123,6 +123,19 @@ class ChunkReference(BaseModel):
     )
     channel_name: Optional[str] = Field(
         None, description="YouTube channel name for the source video"
+    )
+    # Document support
+    content_type: Optional[str] = Field(
+        None, description="Content type: youtube, pdf, docx, etc."
+    )
+    page_number: Optional[int] = Field(
+        None, description="Page number for document chunks"
+    )
+    section_heading: Optional[str] = Field(
+        None, description="Section heading for document chunks"
+    )
+    location_display: Optional[str] = Field(
+        None, description="Human-readable location (e.g. 'Page 3' or '02:05 - 03:00')"
     )
 
     class Config:
@@ -184,6 +197,7 @@ class ConversationDetail(BaseModel):
     created_at: datetime
     updated_at: datetime
     last_message_at: Optional[datetime] = None
+    last_message_preview: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -203,7 +217,7 @@ class ConversationList(BaseModel):
 
 
 class ConversationSource(BaseModel):
-    """A video/transcript attached to a conversation."""
+    """A video/document attached to a conversation."""
 
     conversation_id: UUID
     video_id: UUID
@@ -211,7 +225,7 @@ class ConversationSource(BaseModel):
     added_at: datetime
     added_via: Optional[str] = None
 
-    # Video metadata for UI
+    # Content metadata for UI
     title: Optional[str] = None
     status: Optional[str] = None
     is_deleted: Optional[bool] = None
@@ -220,6 +234,15 @@ class ConversationSource(BaseModel):
     duration_seconds: Optional[int] = None
     thumbnail_url: Optional[str] = None
     youtube_id: Optional[str] = None
+    content_type: Optional[str] = Field(
+        None, description="Content type: youtube, pdf, docx, etc."
+    )
+    page_count: Optional[int] = Field(
+        None, description="Page count for document content"
+    )
+    original_filename: Optional[str] = Field(
+        None, description="Original filename for document content"
+    )
 
     class Config:
         json_schema_extra = {

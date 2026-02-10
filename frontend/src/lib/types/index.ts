@@ -124,6 +124,7 @@ export interface Conversation {
   created_at: string;
   updated_at: string;
   last_message_at?: string;
+  last_message_preview?: string;
 }
 
 export interface Message {
@@ -1209,6 +1210,10 @@ export interface ContentItem {
   status: ContentStatus;
   progress_percent: number;
   error_message?: string;
+  chunks_enriched?: number;
+  total_chunks?: number;
+  eta_seconds?: number;
+  is_active?: boolean;
   chunk_count?: number;
   summary?: string;
   key_topics?: string[];
@@ -1231,6 +1236,7 @@ export interface ContentUploadResponse {
   original_filename: string;
   file_size_bytes: number;
   message: string;
+  warning?: string;
 }
 
 export interface ContentDeleteResponse {
@@ -1246,4 +1252,8 @@ export interface ContentStatusUpdate {
   error_message?: string;
   chunk_count?: number;
   completed_at?: string;
+  chunks_enriched?: number;
+  total_chunks?: number;
+  eta_seconds?: number;
+  is_active?: boolean;
 }

@@ -16,7 +16,6 @@ import remarkGfm from "remark-gfm";
 import { useAuth, useAuthState, createParallelQueryFn } from "@/lib/auth";
 import { apiClient } from "@/lib/api/client";
 import { subscriptionsApi } from "@/lib/api/subscriptions";
-import QuotaDisplay from "@/components/subscription/QuotaDisplay";
 import type { QuotaUsage } from "@/lib/types";
 import { conversationsApi } from "@/lib/api/conversations";
 import { insightsApi } from "@/lib/api/insights";
@@ -46,6 +45,14 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
@@ -72,15 +79,19 @@ import {
   Shield,
   User,
   Settings,
-  PanelRightClose,
-  PanelRightOpen,
   Info,
   Square,
   ChevronDown,
   ChevronUp,
+  FileText,
+  Copy,
+  Check,
 } from "lucide-react";
 import Link from "next/link";
 import { ThemeToggle } from "@/components/layout/ThemeToggle";
+import { SourceSelectionPopover } from "@/components/conversations/SourceSelectionPopover";
+import { ConversationActionsMenu } from "@/components/conversations/ConversationActionsMenu";
+import { InlineRenameInput } from "@/components/conversations/InlineRenameInput";
 import type { Conversation } from "@/lib/types";
 
 const EMPTY_MESSAGES: Message[] = [];
@@ -207,6 +218,7 @@ interface GroupedSources {
   videoId: string;
   videoTitle: string;
   channelName?: string | null;
+  contentType?: string | null;
   sources: ChunkReference[];
 }
 
@@ -222,6 +234,7 @@ const groupSourcesByVideo = (sources: ChunkReference[]): GroupedSources[] => {
         videoId: source.video_id,
         videoTitle: source.video_title,
         channelName: source.channel_name,
+        contentType: source.content_type,
         sources: [source],
       });
     }
@@ -238,10 +251,12 @@ const groupSourcesByVideo = (sources: ChunkReference[]): GroupedSources[] => {
 interface MessageItemProps {
   message: Message & { chunk_references?: ChunkReference[] };
   highlightedSourceId: string | null;
+  copiedId: string | null;
   onCitationClick: (messageId: string, rank?: number) => void;
+  onCopy: (messageId: string, content: string) => void;
 }
 
-const MessageItem = memo<MessageItemProps>(({ message, highlightedSourceId, onCitationClick }) => {
+const MessageItem = memo<MessageItemProps>(({ message, highlightedSourceId, copiedId, onCitationClick, onCopy }) => {
   const [sourcesExpanded, setSourcesExpanded] = useState(false);
   const isSystem = message.role === "system";
   const isUser = message.role === "user";
@@ -268,6 +283,13 @@ const MessageItem = memo<MessageItemProps>(({ message, highlightedSourceId, onCi
 
   const resolveJumpUrl = useCallback((chunk: ChunkReference) => {
     if (chunk.jump_url) return chunk.jump_url;
+    // For documents, build internal viewer URL
+    if (chunk.content_type && chunk.content_type !== "youtube") {
+      const page = chunk.page_number;
+      if (page) return `/documents/${chunk.video_id}?page=${page}`;
+      return `/documents/${chunk.video_id}`;
+    }
+    // For videos, build YouTube timestamp URL
     const base = chunk.video_url;
     if (!base) return undefined;
     const start = Math.max(0, Math.floor(chunk.start_timestamp || 0));
@@ -392,6 +414,16 @@ const MessageItem = memo<MessageItemProps>(({ message, highlightedSourceId, onCi
             {message.token_count != null && (
               <span>{message.token_count} tokens</span>
             )}
+            <button
+              onClick={() => onCopy(message.id, message.content)}
+              className="inline-flex items-center gap-1 hover:text-foreground transition-colors"
+            >
+              {copiedId === message.id ? (
+                <><Check className="h-3 w-3" /> Copied</>
+              ) : (
+                <><Copy className="h-3 w-3" /> Copy</>
+              )}
+            </button>
           </div>
         )}
 
@@ -405,7 +437,7 @@ const MessageItem = memo<MessageItemProps>(({ message, highlightedSourceId, onCi
               className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-muted/50 transition-colors rounded-lg"
             >
               <p className="text-xs font-medium">
-                Sources ({totalSources}{totalVideos > 1 ? ` from ${totalVideos} videos` : ""})
+                Sources ({totalSources}{totalVideos > 1 ? ` from ${totalVideos} sources` : ""})
               </p>
               {sourcesExpanded ? (
                 <ChevronUp className="h-4 w-4 text-muted-foreground" />
@@ -419,14 +451,23 @@ const MessageItem = memo<MessageItemProps>(({ message, highlightedSourceId, onCi
               <div className="space-y-4 px-3 pb-3">
                 {groupedSources.map((group) => (
                   <div key={group.videoId} className="space-y-2">
-                    {/* Video group header - only shown when multiple videos */}
+                    {/* Source group header - only shown when multiple sources */}
                     {totalVideos > 1 && (
                       <div className="flex items-center gap-2 border-b border-border/50 pb-1.5">
-                        <Video className="h-3.5 w-3.5 text-muted-foreground" />
+                        {group.contentType && group.contentType !== "youtube" ? (
+                          <FileText className="h-3.5 w-3.5 text-muted-foreground" />
+                        ) : (
+                          <Video className="h-3.5 w-3.5 text-muted-foreground" />
+                        )}
                         <span className="text-xs font-medium">{group.videoTitle}</span>
-                        {group.channelName && (
+                        {group.channelName && group.contentType === "youtube" && (
                           <span className="text-[10px] text-muted-foreground">
                             {group.channelName}
+                          </span>
+                        )}
+                        {group.contentType && group.contentType !== "youtube" && (
+                          <span className="text-[10px] text-muted-foreground uppercase">
+                            {group.contentType}
                           </span>
                         )}
                         <span className="ml-auto text-[10px] text-muted-foreground">
@@ -455,13 +496,24 @@ const MessageItem = memo<MessageItemProps>(({ message, highlightedSourceId, onCi
                               <Badge variant="outline" className="text-[10px] uppercase">
                                 [{chunkRank}]
                               </Badge>
-                              <span className="text-muted-foreground">{chunk.timestamp_display}</span>
+                              <span className="text-muted-foreground">
+                                {chunk.location_display || chunk.timestamp_display}
+                              </span>
                               <span className="ml-auto text-[10px] text-muted-foreground">
                                 {relevancePct}% match
                               </span>
                             </div>
-                            {/* Contextual metadata - chapter and speakers (channel shown in group header for multi-video) */}
-                            {(chunk.chapter_title || (chunk.speakers && chunk.speakers.length > 0) || (totalVideos === 1 && chunk.channel_name)) && (
+                            {/* Contextual metadata - content-type-aware */}
+                            {chunk.content_type && chunk.content_type !== "youtube" ? (
+                              chunk.section_heading && (
+                                <div className="mb-1.5 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
+                                  <span className="flex items-center gap-1">
+                                    <span className="opacity-60">Section:</span>
+                                    {chunk.section_heading}
+                                  </span>
+                                </div>
+                              )
+                            ) : (chunk.chapter_title || (chunk.speakers && chunk.speakers.length > 0) || (totalVideos === 1 && chunk.channel_name)) ? (
                               <div className="mb-1.5 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
                                 {totalVideos === 1 && chunk.channel_name && (
                                   <span className="flex items-center gap-1">
@@ -482,18 +534,27 @@ const MessageItem = memo<MessageItemProps>(({ message, highlightedSourceId, onCi
                                   </span>
                                 )}
                               </div>
-                            )}
+                            ) : null}
                             <p className="text-[11px] text-muted-foreground leading-relaxed">
                               {chunk.text_snippet}
                             </p>
                             <div className="mt-2 flex flex-wrap items-center gap-2">
                               {jumpUrl && (
-                                <Button asChild variant="outline" size="sm" className="gap-1 text-[11px]">
-                                  <a href={jumpUrl} target="_blank" rel="noopener noreferrer">
-                                    <Video className="h-3.5 w-3.5" />
-                                    Jump to video
-                                  </a>
-                                </Button>
+                                chunk.content_type && chunk.content_type !== "youtube" ? (
+                                  <Button asChild variant="outline" size="sm" className="gap-1 text-[11px]">
+                                    <a href={jumpUrl}>
+                                      <FileText className="h-3.5 w-3.5" />
+                                      View in document
+                                    </a>
+                                  </Button>
+                                ) : (
+                                  <Button asChild variant="outline" size="sm" className="gap-1 text-[11px]">
+                                    <a href={jumpUrl} target="_blank" rel="noopener noreferrer">
+                                      <Video className="h-3.5 w-3.5" />
+                                      Jump to video
+                                    </a>
+                                  </Button>
+                                )
                               )}
                             </div>
                           </div>
@@ -592,8 +653,8 @@ export default function ConversationDetailPage() {
   const [messageText, setMessageText] = useState("");
   const [isAutoScrollEnabled, setIsAutoScrollEnabled] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [contextPanelOpen, setContextPanelOpen] = useState(true);
   const [sourcesSheetOpen, setSourcesSheetOpen] = useState(false);
+  const [mobileSourceFilter, setMobileSourceFilter] = useState("");
   const [insightsDialogOpen, setInsightsDialogOpen] = useState(false);
   const [insightsDialogMaximized, setInsightsDialogMaximized] = useState(false);
   const [highlightedSourceId, setHighlightedSourceId] = useState<string | null>(null);
@@ -602,6 +663,9 @@ export default function ConversationDetailPage() {
   const [selectedModelId, setSelectedModelId] = useState<string>("deepseek-chat");
   const [selectedMode, setSelectedMode] = useState<ModeId>(MODE_OPTIONS[0].id);
   const [isAdminBackend, setIsAdminBackend] = useState<boolean | null>(null);
+  const [isRenamingHeader, setIsRenamingHeader] = useState(false);
+  const [renamingSidebarId, setRenamingSidebarId] = useState<string | null>(null);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const prevMessageCountRef = useRef<number>(0);
@@ -845,10 +909,23 @@ export default function ConversationDetailPage() {
       queryClient.invalidateQueries({ queryKey: ["conversation", conversationId] });
     },
     onError: (error: any) => {
-      const detail =
-        error?.response?.data?.detail ||
-        (error?.message === "Network Error" ? "Network error" : null);
-      setSendError(detail || "Unable to send message. Check your sources and try again.");
+      const detail = error?.response?.data?.detail;
+
+      // Handle quota exceeded error (detail is an object with quota info)
+      if (detail && typeof detail === "object" && detail.error === "quota_exceeded") {
+        setSendError(
+          `${detail.message || "Message quota exceeded."} ` +
+          `Upgrade your plan to continue chatting.`
+        );
+        return;
+      }
+
+      // Handle string error messages
+      const errorMessage =
+        (typeof detail === "string" ? detail : null) ||
+        (error?.message === "Network Error" ? "Network error" : null) ||
+        "Unable to send message. Check your sources and try again.";
+      setSendError(errorMessage);
     },
   });
 
@@ -863,6 +940,42 @@ export default function ConversationDetailPage() {
       window.setTimeout(() => setHighlightedSourceId(null), 1500);
     }
   }, []);
+
+  const handleCopyMessage = useCallback((messageId: string, content: string) => {
+    navigator.clipboard.writeText(content);
+    setCopiedId(messageId);
+    setTimeout(() => setCopiedId(null), 2000);
+  }, []);
+
+  // Given the current conversations list and the id being deleted,
+  // return the next best conversation to navigate to (or null).
+  // Also optimistically removes the deleted conversation from the cache
+  // so the sidebar updates immediately.
+  const handleConversationDeleted = useCallback(
+    (deletedId: string): string | null => {
+      if (!conversations || conversations.length <= 1) {
+        // Optimistically clear even if navigating away
+        queryClient.setQueryData(["conversations"], (prev: any) =>
+          prev ? { ...prev, conversations: [] } : prev
+        );
+        return null;
+      }
+      const idx = conversations.findIndex((c: Conversation) => c.id === deletedId);
+      if (idx === -1) return null;
+      // Pick adjacent conversation before mutating cache
+      const nextId = idx < conversations.length - 1
+        ? conversations[idx + 1].id
+        : conversations[idx - 1].id;
+      // Optimistically remove from cache so sidebar updates immediately
+      queryClient.setQueryData(["conversations"], (prev: any) =>
+        prev
+          ? { ...prev, conversations: prev.conversations.filter((c: Conversation) => c.id !== deletedId) }
+          : prev
+      );
+      return nextId;
+    },
+    [conversations, queryClient]
+  );
 
   const handleBack = () => {
     router.push("/conversations");
@@ -1012,104 +1125,129 @@ export default function ConversationDetailPage() {
     });
   };
 
-  const renderSourcesContent = () => (
-    <div className="space-y-3">
-      <div className="flex items-start justify-between gap-2">
-        <div>
-          <p className="text-sm font-medium">Sources</p>
-          <p className="text-xs text-muted-foreground">
-            Using {selectedSourcesCount} of {totalSourcesCount}
-          </p>
-          {sourcesUpdateError && (
-            <p className="mt-1 text-xs text-destructive">{sourcesUpdateError}</p>
-          )}
-        </div>
-        <div className="flex gap-2">
-          <Button
-            size="sm"
-            variant="outline"
-            className="text-xs"
-            onClick={handleDeselectAllSources}
-            disabled={updateSourcesMutation.isPending || sources.length === 0}
-          >
-            None
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            className="text-xs"
-            onClick={handleSelectAllSources}
-            disabled={updateSourcesMutation.isPending || sources.length === 0}
-          >
-            All
-          </Button>
-        </div>
-      </div>
-      <div className="max-h-[65vh] space-y-2 overflow-y-auto pr-1">
-        {sourcesLoading ? (
-          <p className="text-xs text-muted-foreground">Loading sources…</p>
-        ) : sources.length === 0 ? (
-          <p className="text-xs text-muted-foreground">No sources attached yet.</p>
-        ) : (
-          sources.map((source) => (
-            <label
-              key={source.video_id}
-              className="flex cursor-pointer items-start gap-2 rounded-md border bg-background px-2 py-2"
+  const renderSourcesContent = () => {
+    const filteredSources = sources.filter((source) =>
+      mobileSourceFilter === "" ||
+      (source.title || "Untitled video").toLowerCase().includes(mobileSourceFilter.toLowerCase())
+    );
+
+    return (
+      <div className="space-y-3">
+        <div className="flex items-start justify-between gap-2">
+          <div>
+            <p className="text-sm font-medium">Select Sources</p>
+            <p className="text-xs text-muted-foreground">
+              Using {selectedSourcesCount} of {totalSourcesCount}
+            </p>
+            {sourcesUpdateError && (
+              <p className="mt-1 text-xs text-destructive">{sourcesUpdateError}</p>
+            )}
+          </div>
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              className="text-xs"
+              onClick={handleDeselectAllSources}
+              disabled={updateSourcesMutation.isPending || sources.length === 0}
             >
-              <Checkbox
-                checked={source.is_selected}
-                onCheckedChange={() => toggleSourceSelection(source.video_id)}
-                disabled={
-                  updateSourcesMutation.isPending ||
-                  reprocessVideoMutation.isPending ||
-                  source.selectable === false
-                }
-              />
-              <div className="flex flex-1 flex-col gap-1">
-                <div className="flex items-center gap-2">
-                  <span className="line-clamp-2 text-sm font-medium">
-                    {source.title || "Untitled video"}
-                  </span>
-                  {source.status && (
-                    <Badge variant="outline" className="text-[10px] uppercase">
-                      {source.status}
-                    </Badge>
-                  )}
-                </div>
-                <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
-                  {source.duration_seconds ? (
-                    <span>{formatDuration(source.duration_seconds)}</span>
-                  ) : null}
-                  {source.added_via && <span>via {source.added_via}</span>}
-                </div>
-                {source.selectable === false && (
-                  <div className="flex items-center justify-between gap-2 text-[11px] text-destructive">
-                    <span className="line-clamp-1">{source.selectable_reason}</span>
-                    {!source.is_deleted && (
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        className="h-6 px-2 text-[11px]"
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          reprocessVideoMutation.mutate(source.video_id);
-                        }}
-                        disabled={reprocessVideoMutation.isPending}
-                      >
-                        Reprocess
-                      </Button>
+              None
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              className="text-xs"
+              onClick={handleSelectAllSources}
+              disabled={updateSourcesMutation.isPending || sources.length === 0}
+            >
+              All
+            </Button>
+          </div>
+        </div>
+        {/* Search filter - only show when 7+ sources */}
+        {sources.length > 6 && (
+          <Input
+            placeholder="Filter sources..."
+            value={mobileSourceFilter}
+            onChange={(e) => setMobileSourceFilter(e.target.value)}
+            className="h-8 text-xs"
+          />
+        )}
+        <div className="max-h-[65vh] space-y-2 overflow-y-auto pr-1">
+          {sourcesLoading ? (
+            <p className="text-xs text-muted-foreground">Loading sources…</p>
+          ) : sources.length === 0 ? (
+            <p className="text-xs text-muted-foreground">No sources attached yet.</p>
+          ) : (
+            <TooltipProvider delayDuration={300}>
+              {filteredSources.map((source) => (
+                <label
+                  key={source.video_id}
+                  className="flex cursor-pointer items-start gap-2 rounded-md border bg-background px-2 py-2"
+                >
+                  <Checkbox
+                    checked={source.is_selected}
+                    onCheckedChange={() => toggleSourceSelection(source.video_id)}
+                    disabled={
+                      updateSourcesMutation.isPending ||
+                      reprocessVideoMutation.isPending ||
+                      source.selectable === false
+                    }
+                  />
+                  <div className="flex flex-1 flex-col gap-1">
+                    <div className="flex items-center gap-2">
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span className="line-clamp-2 text-sm font-medium cursor-default">
+                            {source.title || "Untitled video"}
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent side="left" className="max-w-xs">
+                          <p className="text-xs">{source.title || "Untitled video"}</p>
+                        </TooltipContent>
+                      </Tooltip>
+                      {source.status && (
+                        <Badge variant="outline" className="text-[10px] uppercase">
+                          {source.status}
+                        </Badge>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+                      {source.duration_seconds ? (
+                        <span>{formatDuration(source.duration_seconds)}</span>
+                      ) : null}
+                      {source.added_via && <span>via {source.added_via}</span>}
+                    </div>
+                    {source.selectable === false && (
+                      <div className="flex items-center justify-between gap-2 text-[11px] text-destructive">
+                        <span className="line-clamp-1">{source.selectable_reason}</span>
+                        {!source.is_deleted && (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="h-6 px-2 text-[11px]"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              reprocessVideoMutation.mutate(source.video_id);
+                            }}
+                            disabled={reprocessVideoMutation.isPending}
+                          >
+                            Reprocess
+                          </Button>
+                        )}
+                      </div>
                     )}
                   </div>
-                )}
-              </div>
-            </label>
-          ))
-        )}
+                </label>
+              ))}
+            </TooltipProvider>
+          )}
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
 
   return (
@@ -1150,168 +1288,185 @@ export default function ConversationDetailPage() {
             </Link>
           </div>
 
-          {/* Recent conversations */}
-          <div className="flex-1 overflow-y-auto px-2">
-            <div className="space-y-1">
-              {conversations.map((conv: Conversation) => (
-                <div key={conv.id} className="space-y-1">
+          {/* Recent conversations - limited to 5 */}
+          <div className="flex-1 overflow-y-auto px-3 py-3">
+            <p className="mb-2 px-2 text-xs font-medium text-muted-foreground">Recent</p>
+            <div className="space-y-0.5">
+              {conversations.slice(0, 5).map((conv: Conversation) => (
+                <div key={conv.id} className="group relative">
                   <Link href={`/conversations/${conv.id}`}>
                     <Button
                       variant="ghost"
                       className={cn(
-                        "w-full justify-start gap-2 text-xs",
+                        "w-full justify-start gap-2 text-sm h-9 pr-8",
                         conv.id === conversationId && "bg-muted"
                       )}
-                      size="sm"
                     >
-                      <MessageCircle className="h-3.5 w-3.5 flex-shrink-0" />
-                      <span className="truncate">{conv.title || "Untitled"}</span>
+                      <MessageCircle className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
+                      {renamingSidebarId === conv.id ? (
+                        <InlineRenameInput
+                          conversationId={conv.id}
+                          currentTitle={conv.title || "Untitled"}
+                          onComplete={() => setRenamingSidebarId(null)}
+                          className="h-6 text-sm"
+                        />
+                      ) : (
+                        <span className="truncate">{conv.title || "Untitled"}</span>
+                      )}
                     </Button>
                   </Link>
-
-                  {conv.id === conversationId && (
-                    <div className="ml-4 space-y-1 border-l pl-3">
-                      {sourcesLoading ? (
-                        <p className="text-[11px] text-muted-foreground">Loading sources…</p>
-                      ) : sources.length === 0 ? (
-                        <p className="text-[11px] text-muted-foreground">
-                          No sources attached.
-                        </p>
-                      ) : (
-                        sources.map((source) => (
-                          <label
-                            key={source.video_id}
-                            className="flex cursor-pointer items-center gap-2 text-[11px] text-foreground"
-                            onClick={(e) => e.stopPropagation()}
-                            title={source.selectable === false ? source.selectable_reason ?? undefined : undefined}
-                          >
-                            <Checkbox
-                              checked={source.is_selected}
-                              onCheckedChange={() => toggleSourceSelection(source.video_id)}
-                              className="h-3.5 w-3.5"
-                              disabled={
-                                updateSourcesMutation.isPending ||
-                                reprocessVideoMutation.isPending ||
-                                source.selectable === false
-                              }
-                            />
-                            <span className="line-clamp-1 flex-1">
-                              {source.title || "Untitled video"}
-                            </span>
-                          </label>
-                        ))
-                      )}
+                  {renamingSidebarId !== conv.id && (
+                    <div className="absolute right-1 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <ConversationActionsMenu
+                        conversationId={conv.id}
+                        currentTitle={conv.title || "Untitled"}
+                        variant="compact"
+                        onRenameStart={() => setRenamingSidebarId(conv.id)}
+                        onDeleted={() => {
+                          if (conv.id === conversationId) {
+                            const nextId = handleConversationDeleted(conv.id);
+                            router.push(nextId ? `/conversations/${nextId}` : "/conversations");
+                          }
+                        }}
+                      />
                     </div>
                   )}
                 </div>
               ))}
+              {conversations.length > 5 && (
+                <Link href="/conversations">
+                  <Button
+                    variant="ghost"
+                    className="w-full justify-start text-xs text-muted-foreground h-8"
+                  >
+                    View all conversations
+                  </Button>
+                </Link>
+              )}
             </div>
           </div>
 
-          {/* Navigation - MainLayout style */}
-          <nav className="space-y-1 px-2 py-3 border-t">
-            <Link
-              href="/videos"
-              className={cn(
-                "group flex items-center justify-between rounded-lg px-3 py-2 text-sm font-medium transition-colors",
-                "text-muted-foreground hover:text-foreground"
-              )}
-            >
-              <span className="flex items-center gap-2">
-                <Video className="h-4 w-4" />
-                Videos
-              </span>
-            </Link>
-            <Link
-              href="/collections"
-              className={cn(
-                "group flex items-center justify-between rounded-lg px-3 py-2 text-sm font-medium transition-colors",
-                "text-muted-foreground hover:text-foreground"
-              )}
-            >
-              <span className="flex items-center gap-2">
-                <Folder className="h-4 w-4" />
-                Collections
-              </span>
-            </Link>
-            <Link
-              href="/conversations"
-              className={cn(
-                "group flex items-center justify-between rounded-lg px-3 py-2 text-sm font-medium transition-colors",
-                "bg-primary/10 text-foreground"
-              )}
-            >
-              <span className="flex items-center gap-2">
-                <MessageSquare className="h-4 w-4" />
-                Conversations
-              </span>
-            </Link>
-            <Link
-              href="/account"
-              className={cn(
-                "group flex items-center justify-between rounded-lg px-3 py-2 text-sm font-medium transition-colors",
-                "text-muted-foreground hover:text-foreground"
-              )}
-            >
-              <span className="flex items-center gap-2">
-                <User className="h-4 w-4" />
-                Account
-              </span>
-            </Link>
-            {hasAdminAccess && (
-              <Link
-                href="/admin"
-                className={cn(
-                  "group flex items-center justify-between rounded-lg px-3 py-2 text-sm font-medium transition-colors",
-                  "text-muted-foreground hover:text-foreground",
-                  "border-t mt-2 pt-4"
-                )}
-              >
-                <span className="flex items-center gap-2">
-                  <Shield className="h-4 w-4" />
-                  Admin
-                </span>
+          {/* Navigation */}
+          <nav className="border-t px-3 py-3">
+            <p className="mb-2 px-2 text-xs font-medium text-muted-foreground">Navigate</p>
+            <div className="space-y-0.5">
+              <Link href="/videos">
+                <Button
+                  variant="ghost"
+                  className="w-full justify-start gap-2 text-sm h-9 text-muted-foreground hover:text-foreground"
+                >
+                  <Video className="h-4 w-4" />
+                  Videos
+                </Button>
               </Link>
-            )}
+              <Link href="/collections">
+                <Button
+                  variant="ghost"
+                  className="w-full justify-start gap-2 text-sm h-9 text-muted-foreground hover:text-foreground"
+                >
+                  <Folder className="h-4 w-4" />
+                  Collections
+                </Button>
+              </Link>
+              <Link href="/account">
+                <Button
+                  variant="ghost"
+                  className="w-full justify-start gap-2 text-sm h-9 text-muted-foreground hover:text-foreground"
+                >
+                  <User className="h-4 w-4" />
+                  Account
+                </Button>
+              </Link>
+              {hasAdminAccess && (
+                <Link href="/admin">
+                  <Button
+                    variant="ghost"
+                    className="w-full justify-start gap-2 text-sm h-9 text-muted-foreground hover:text-foreground"
+                  >
+                    <Shield className="h-4 w-4" />
+                    Admin
+                  </Button>
+                </Link>
+              )}
+            </div>
           </nav>
 
-          {/* Quota indicator */}
-          {quota && (
-            <div className="border-t px-4 py-3">
-              <p className="text-xs font-semibold text-muted-foreground mb-2">QUOTA</p>
-              <div className="space-y-1.5">
-                <QuotaDisplay
-                  used={quota.videos_used}
-                  limit={quota.videos_limit}
-                  label="videos"
-                  variant="compact"
-                />
-                <QuotaDisplay
-                  used={quota.messages_used}
-                  limit={quota.messages_limit}
-                  label="messages/mo"
-                  variant="compact"
-                />
-              </div>
-            </div>
-          )}
+          {/* Compact footer: Quota + User avatar */}
+          <div className="border-t px-3 py-2">
+            <div className="flex items-center justify-between">
+              {/* Quota indicator - compact with progress bar */}
+              {quota && (
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Link href="/account" className="flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors">
+                        <div className="h-2 w-16 rounded-full bg-muted overflow-hidden">
+                          <div
+                            className="h-full bg-primary transition-all"
+                            style={{
+                              width: quota.videos_limit === -1
+                                ? '10%'  // Show minimal bar for unlimited
+                                : `${Math.min((quota.videos_used / quota.videos_limit) * 100, 100)}%`,
+                            }}
+                          />
+                        </div>
+                        <span>
+                          {quota.videos_used}/{quota.videos_limit === -1 ? '∞' : quota.videos_limit}
+                        </span>
+                      </Link>
+                    </TooltipTrigger>
+                    <TooltipContent side="top">
+                      <p className="text-xs">
+                        Videos: {quota.videos_used}/{quota.videos_limit === -1 ? '∞' : quota.videos_limit}
+                      </p>
+                      <p className="text-xs">
+                        Messages: {quota.messages_used}/{quota.messages_limit === -1 ? '∞' : quota.messages_limit}/mo
+                      </p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              )}
 
-          {/* User profile section */}
-          {user && (
-            <div className="border-t px-4 py-4 text-sm text-muted-foreground">
-              <p className="font-medium text-foreground">{displayName}</p>
-              {email && <p>{email}</p>}
-              <Button
-                variant="ghost"
-                size="sm"
-                className="mt-3 w-full justify-start gap-2"
-                onClick={handleLogout}
-              >
-                <LogOut className="h-4 w-4" />
-                Logout
-              </Button>
+              {/* User avatar with dropdown */}
+              {user && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full">
+                      <div className="h-7 w-7 rounded-full bg-primary/10 flex items-center justify-center">
+                        <span className="text-xs font-medium">
+                          {displayName?.charAt(0)?.toUpperCase() || "U"}
+                        </span>
+                      </div>
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-48">
+                    <DropdownMenuLabel className="font-normal">
+                      <div className="flex flex-col space-y-1">
+                        <p className="text-sm font-medium leading-none">{displayName}</p>
+                        {email && (
+                          <p className="text-xs leading-none text-muted-foreground truncate">
+                            {email}
+                          </p>
+                        )}
+                      </div>
+                    </DropdownMenuLabel>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem asChild>
+                      <Link href="/account" className="cursor-pointer">
+                        <User className="mr-2 h-4 w-4" />
+                        Account
+                      </Link>
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onClick={handleLogout} className="cursor-pointer">
+                      <LogOut className="mr-2 h-4 w-4" />
+                      Logout
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
             </div>
-          )}
+          </div>
         </div>
       </div>
 
@@ -1323,9 +1478,9 @@ export default function ConversationDetailPage() {
         />
       )}
 
-      {/* Main content - Three column layout */}
+      {/* Main content - Chat takes full remaining width */}
       <div className="flex h-full flex-1 min-h-0">
-        {/* Chat area column */}
+        {/* Chat area - full width */}
         <div className="flex flex-1 flex-col min-w-0 min-h-0">
           {/* Top navigation bar */}
           <header className="sticky top-0 z-30 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
@@ -1342,9 +1497,30 @@ export default function ConversationDetailPage() {
                     <Menu className="h-5 w-5" />
                   </Button>
                   <Separator orientation="vertical" className="h-6 lg:hidden" />
-                  <h1 className="text-sm font-medium truncate">
-                    {conversation.title || "New conversation"}
-                  </h1>
+                  {isRenamingHeader ? (
+                    <InlineRenameInput
+                      conversationId={conversationId}
+                      currentTitle={conversation.title || "New conversation"}
+                      onComplete={() => setIsRenamingHeader(false)}
+                      className="h-8 max-w-xs text-sm"
+                    />
+                  ) : (
+                    <h1 className="text-sm font-medium truncate">
+                      {conversation.title || "New conversation"}
+                    </h1>
+                  )}
+                  <ConversationActionsMenu
+                    conversationId={conversationId}
+                    currentTitle={conversation.title || "New conversation"}
+                    variant="default"
+                    messages={messages}
+                    sourceCount={selectedSourcesCount}
+                    onRenameStart={() => setIsRenamingHeader(true)}
+                    onDeleted={() => {
+                      const nextId = handleConversationDeleted(conversationId);
+                      router.push(nextId ? `/conversations/${nextId}` : "/conversations");
+                    }}
+                  />
                 </div>
 
                 {/* Secondary: Metadata */}
@@ -1369,6 +1545,20 @@ export default function ConversationDetailPage() {
                 </div>
               </div>
               <div className="flex items-center gap-2">
+                {/* Source selection popover */}
+                {sources.length > 0 && (
+                  <SourceSelectionPopover
+                    sources={sources}
+                    selectedCount={selectedSourcesCount}
+                    totalCount={totalSourcesCount}
+                    onToggleSource={toggleSourceSelection}
+                    onSelectAll={handleSelectAllSources}
+                    onDeselectAll={handleDeselectAllSources}
+                    disabled={updateSourcesMutation.isPending}
+                    error={sourcesUpdateError}
+                  />
+                )}
+
                 {/* Insights dialog */}
                 <Dialog
                   open={insightsDialogOpen}
@@ -1475,21 +1665,6 @@ export default function ConversationDetailPage() {
 
                 <ThemeToggle />
 
-                {/* Context panel toggle - desktop */}
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-9 w-9 hidden lg:flex"
-                  onClick={() => setContextPanelOpen(!contextPanelOpen)}
-                  title={contextPanelOpen ? "Hide settings panel" : "Show settings panel"}
-                >
-                  {contextPanelOpen ? (
-                    <PanelRightClose className="h-4 w-4" />
-                  ) : (
-                    <PanelRightOpen className="h-4 w-4" />
-                  )}
-                </Button>
-
                 {/* Sources panel toggle - mobile (opens sheet) */}
                 <Sheet open={sourcesSheetOpen} onOpenChange={setSourcesSheetOpen}>
                   <SheetTrigger asChild>
@@ -1506,9 +1681,6 @@ export default function ConversationDetailPage() {
                     <div className="mt-4 space-y-6">
                       {/* Sources section */}
                       <div className="space-y-3">
-                        <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                          Sources
-                        </h3>
                         {renderSourcesContent()}
                       </div>
                     </div>
@@ -1528,7 +1700,7 @@ export default function ConversationDetailPage() {
               )}
 
               {messages.length === 0 ? (
-                <div className="flex h-[60vh] flex-col items-center justify-center gap-3 text-center">
+                <div className="flex h-[60vh] flex-col items-center justify-center gap-4 text-center">
                   <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10">
                     <MessageCircle className="h-6 w-6 text-primary" />
                   </div>
@@ -1539,6 +1711,39 @@ export default function ConversationDetailPage() {
                       {sourceCountLabel !== 1 ? "s" : ""}
                     </p>
                   </div>
+                  {selectedSourcesCount > 0 && (
+                    <div className="flex flex-wrap gap-2 justify-center max-w-md">
+                      {(selectedSourcesCount >= 2
+                        ? [
+                            "Compare perspectives across sources",
+                            "What common themes emerge?",
+                            "Summarize all sources briefly",
+                            "What are the key differences?",
+                          ]
+                        : [
+                            "Summarize the key points",
+                            "What are the main arguments?",
+                            "List actionable takeaways",
+                            "What topics are covered?",
+                          ]
+                      ).map((question) => (
+                        <Button
+                          key={question}
+                          variant="outline"
+                          size="sm"
+                          className="text-xs"
+                          onClick={async () => {
+                            setMessageText("");
+                            setSendError(null);
+                            await sendStreamingMessage(question, selectedModelId || undefined, selectedMode);
+                          }}
+                          disabled={isStreaming}
+                        >
+                          {question}
+                        </Button>
+                      ))}
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div className="space-y-8">
@@ -1547,7 +1752,9 @@ export default function ConversationDetailPage() {
                       key={message.id}
                       message={message as Message & { chunk_references?: ChunkReference[] }}
                       highlightedSourceId={highlightedSourceId}
+                      copiedId={copiedId}
                       onCitationClick={handleCitationClick}
+                      onCopy={handleCopyMessage}
                     />
                   ))}
                   {/* Streaming message - shown while AI is responding */}
@@ -1660,20 +1867,6 @@ export default function ConversationDetailPage() {
                   )}
                 </div>
 
-                {/* Inline sources summary when context panel is collapsed */}
-                {!contextPanelOpen && (
-                  <button
-                    type="button"
-                    onClick={() => setContextPanelOpen(true)}
-                    className="mt-2 flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors"
-                  >
-                    <Settings className="h-3 w-3" />
-                    <span>
-                      {selectedSourcesCount} source{selectedSourcesCount !== 1 ? "s" : ""} selected
-                    </span>
-                  </button>
-                )}
-
                 {sendError && (
                   <p className="mt-2 text-[11px] text-destructive">{sendError}</p>
                 )}
@@ -1681,38 +1874,6 @@ export default function ConversationDetailPage() {
             </div>
           </div>
         </div>
-
-        {/* Context panel - desktop only, collapsible */}
-        <aside
-          className={cn(
-            "hidden lg:flex flex-col w-72 border-l bg-background transition-all duration-200 overflow-hidden",
-            contextPanelOpen ? "translate-x-0" : "translate-x-full w-0 border-l-0"
-          )}
-        >
-          {/* Panel header */}
-          <div className="flex h-14 items-center justify-between border-b px-4">
-            <span className="text-sm font-medium">Context</span>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8"
-              onClick={() => setContextPanelOpen(false)}
-            >
-              <X className="h-4 w-4" />
-            </Button>
-          </div>
-
-          {/* Panel content - scrollable */}
-          <div className="flex-1 overflow-y-auto">
-            {/* Sources section */}
-            <div className="p-4">
-              <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-3">
-                Sources
-              </h3>
-              {renderSourcesContent()}
-            </div>
-          </div>
-        </aside>
       </div>
     </div>
   );

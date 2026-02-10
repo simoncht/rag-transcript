@@ -11,7 +11,7 @@ import { MainLayout } from "@/components/layout/MainLayout";
 import { conversationsApi } from "@/lib/api/conversations";
 import { videosApi } from "@/lib/api/videos";
 import { getCollections } from "@/lib/api/collections";
-import { Plus, MessageSquare, Loader2, Folder } from "lucide-react";
+import { Plus, MessageSquare, Loader2, Folder, Search } from "lucide-react";
 import { ConversationActionsMenu } from "@/components/conversations/ConversationActionsMenu";
 import { InlineRenameInput } from "@/components/conversations/InlineRenameInput";
 import { Button } from "@/components/ui/button";
@@ -47,6 +47,8 @@ function ConversationsPageContent() {
   const [selectedCollectionId, setSelectedCollectionId] = useState("");
   const [selectedVideoIds, setSelectedVideoIds] = useState<string[]>([]);
   const [renamingListId, setRenamingListId] = useState<string | null>(null);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [sortOrder, setSortOrder] = useState<"recent" | "messages" | "alpha">("recent");
 
   const queryClient = useQueryClient();
   const router = useRouter();
@@ -137,6 +139,23 @@ function ConversationsPageContent() {
     setSelectedCollectionId("");
     setSelectionMode("collection");
   };
+
+  const filteredConversations = useMemo(() => {
+    const conversations = conversationsData?.conversations ?? [];
+    let filtered = conversations;
+    if (searchTerm) {
+      const term = searchTerm.toLowerCase();
+      filtered = filtered.filter((c) => c.title?.toLowerCase().includes(term));
+    }
+    return [...filtered].sort((a, b) => {
+      if (sortOrder === "messages") return (b.message_count || 0) - (a.message_count || 0);
+      if (sortOrder === "alpha") return (a.title || "").localeCompare(b.title || "");
+      // "recent" — by last_message_at descending, fallback to created_at
+      const aDate = a.last_message_at || a.created_at;
+      const bDate = b.last_message_at || b.created_at;
+      return new Date(bDate).getTime() - new Date(aDate).getTime();
+    });
+  }, [conversationsData?.conversations, searchTerm, sortOrder]);
 
   // Breadcrumb: active conversations count
   const breadcrumbDetail = useMemo(() => {
@@ -393,6 +412,29 @@ function ConversationsPageContent() {
                 </p>
               </div>
 
+              {conversationsData?.conversations && conversationsData.conversations.length > 0 && (
+                <div className="flex items-center gap-2">
+                  <div className="relative flex-1">
+                    <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      placeholder="Search conversations..."
+                      value={searchTerm}
+                      onChange={(e) => setSearchTerm(e.target.value)}
+                      className="pl-8 h-9"
+                    />
+                  </div>
+                  <select
+                    value={sortOrder}
+                    onChange={(e) => setSortOrder(e.target.value as "recent" | "messages" | "alpha")}
+                    className="h-9 w-[140px] rounded-md border border-border bg-background px-3 text-sm"
+                  >
+                    <option value="recent">Most recent</option>
+                    <option value="messages">Most messages</option>
+                    <option value="alpha">Alphabetical</option>
+                  </select>
+                </div>
+              )}
+
               {conversationsLoading ? (
                 <div className="flex items-center justify-center py-8 text-muted-foreground">
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -406,9 +448,17 @@ function ConversationsPageContent() {
                     Start by creating a new conversation above.
                   </p>
                 </div>
+              ) : filteredConversations.length === 0 ? (
+                <div className="flex flex-col items-center justify-center gap-2 rounded-md border border-dashed py-10 text-center">
+                  <Search className="h-10 w-10 text-muted-foreground" />
+                  <p className="text-sm font-medium text-foreground">No matching conversations</p>
+                  <p className="text-xs text-muted-foreground">
+                    Try a different search term.
+                  </p>
+                </div>
               ) : (
                 <div className="divide-y rounded-md border bg-muted/20">
-                  {conversationsData?.conversations.map((conversation) => (
+                  {filteredConversations.map((conversation) => (
                     <button
                       key={conversation.id}
                       type="button"
@@ -429,6 +479,11 @@ function ConversationsPageContent() {
                         ) : (
                           <p className="text-sm font-medium text-foreground truncate">
                             {conversation.title}
+                          </p>
+                        )}
+                        {conversation.last_message_preview && (
+                          <p className="mt-0.5 text-xs text-muted-foreground line-clamp-1">
+                            {conversation.last_message_preview}
                           </p>
                         )}
                         <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">

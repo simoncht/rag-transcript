@@ -14,8 +14,9 @@
 
 import { useState, Suspense } from "react";
 import Image from "next/image";
+import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Folder, Trash2, Edit, MessageSquare, MinusCircle } from "lucide-react";
+import { Plus, Folder, Trash2, Edit, MessageSquare, MinusCircle, Loader2 } from "lucide-react";
 import {
   getCollections,
   deleteCollection,
@@ -23,6 +24,7 @@ import {
   removeItemFromCollection,
 } from "@/lib/api/collections";
 import type { Collection, CollectionVideoInfo } from "@/lib/types";
+import { conversationsApi } from "@/lib/api/conversations";
 import { CollectionModal } from "./CollectionModal";
 import { CollectionAddContentModal } from "./CollectionAddVideosModal";
 import { CollectionThemes } from "./CollectionThemes";
@@ -46,8 +48,10 @@ export function CollectionsContent() {
   const authState = useAuthState();
   const canFetch = authState.isAuthenticated;
   const queryClient = useQueryClient();
+  const router = useRouter();
 
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [chattingCollectionId, setChattingCollectionId] = useState<string | null>(null);
   const [editingCollection, setEditingCollection] = useState<Collection | null>(null);
   const [expandedCollectionId, setExpandedCollectionId] = useState<string | null>(null);
   const [collectionForAddModal, setCollectionForAddModal] = useState<Collection | null>(null);
@@ -124,6 +128,20 @@ export function CollectionsContent() {
 
   const handleToggleExpand = (collectionId: string) => {
     setExpandedCollectionId(expandedCollectionId === collectionId ? null : collectionId);
+  };
+
+  const handleQuickChat = async (collection: Collection) => {
+    try {
+      setChattingCollectionId(collection.id);
+      const conversation = await conversationsApi.create(
+        `Chat: ${collection.name}`,
+        { collectionId: collection.id }
+      );
+      router.push(`/conversations/${conversation.id}`);
+    } catch (err) {
+      console.error("Failed to create conversation:", err);
+      setChattingCollectionId(null);
+    }
   };
 
   const formatDuration = (seconds: number) => {
@@ -298,14 +316,33 @@ export function CollectionsContent() {
                       </div>
                     </div>
                     <div className="flex flex-col items-end gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="gap-1"
-                        onClick={() => handleToggleExpand(collection.id)}
-                      >
-                        {isExpanded ? "Hide content" : "Show content"}
-                      </Button>
+                      <div className="flex gap-1">
+                        {collection.video_count > 0 && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="gap-1"
+                            onClick={() => handleQuickChat(collection)}
+                            disabled={chattingCollectionId === collection.id}
+                            title="Chat with this collection"
+                          >
+                            {chattingCollectionId === collection.id ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <MessageSquare className="h-4 w-4" />
+                            )}
+                            Chat
+                          </Button>
+                        )}
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="gap-1"
+                          onClick={() => handleToggleExpand(collection.id)}
+                        >
+                          {isExpanded ? "Hide content" : "Show content"}
+                        </Button>
+                      </div>
                       {!collection.is_default && (
                         <div className="flex gap-1">
                           <Button
