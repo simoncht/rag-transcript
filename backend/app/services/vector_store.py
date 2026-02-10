@@ -249,8 +249,11 @@ class QdrantVectorStore(VectorStore):
 
             points.append(point)
 
-        # Upsert points to Qdrant
-        self.client.upsert(collection_name=self.collection_name, points=points)
+        # Upsert points to Qdrant in batches to avoid payload size limits
+        BATCH_SIZE = 500
+        for i in range(0, len(points), BATCH_SIZE):
+            batch = points[i : i + BATCH_SIZE]
+            self.client.upsert(collection_name=self.collection_name, points=batch)
 
         print(f"Indexed {len(points)} chunks for {'document' if content_type != 'youtube' else 'video'} {video_id}")
 

@@ -29,8 +29,7 @@ def _update_status(db, content_id: UUID, status: str, progress: float, error: st
     if video:
         video.status = status
         video.progress_percent = progress
-        if error:
-            video.error_message = error
+        video.error_message = error
         if status == "completed":
             video.completed_at = datetime.utcnow()
         db.commit()
@@ -48,6 +47,15 @@ def _extract_document(content_id: str):
         video = db.query(Video).filter(Video.id == content_uuid).first()
         if not video or not video.document_file_path:
             raise ValueError(f"Document file not found for content={content_id}")
+
+        # Reuse cached extraction if available (saves 2-3 min on reprocess)
+        existing = storage_service.load_extracted_text(video.user_id, content_uuid)
+        if existing:
+            logger.info(f"[Document Pipeline] Reusing cached extraction for content={content_id}")
+            video.status = "extracted"
+            video.progress_percent = 30.0
+            db.commit()
+            return existing
 
         # Run async extraction in sync context
         from app.services.document_extractor import document_extractor
@@ -106,6 +114,44 @@ def _extract_document(content_id: str):
         except Exception as e:
             logger.warning(f"[Document Pipeline] Failed to track extraction storage for content={content_id}: {e}")
 
+        # Post-extraction validation: word count and page count
+        word_count = result.word_count
+        page_count = result.page_count
+        try:
+            from app.core.pricing import get_tier_config, is_unlimited
+            from app.models import User
+
+            user = db.query(User).filter(User.id == video.user_id).first()
+            user_tier = user.subscription_tier if user else "free"
+            tier_config = get_tier_config(user_tier)
+
+            max_words = tier_config.get("max_document_words", -1)
+            if not is_unlimited(max_words) and word_count > max_words:
+                raise ValueError(
+                    f"Document too large: {word_count:,} words exceeds your "
+                    f"{user_tier} tier limit of {max_words:,} words. "
+                    f"Please upgrade your plan or use a shorter document."
+                )
+
+            max_pages = tier_config.get("max_document_pages", -1)
+            if not is_unlimited(max_pages) and page_count > max_pages:
+                raise ValueError(
+                    f"Document too large: {page_count:,} pages exceeds your "
+                    f"{user_tier} tier limit of {max_pages:,} pages. "
+                    f"Please upgrade your plan or use a shorter document."
+                )
+        except ValueError:
+            raise
+        except Exception as e:
+            logger.warning(f"[Document Pipeline] Document size validation skipped: {e}")
+
+        # Store word_count in source_metadata for reference
+        video.source_metadata = video.source_metadata or {}
+        video.source_metadata["word_count"] = word_count
+        from sqlalchemy.orm.attributes import flag_modified
+        flag_modified(video, "source_metadata")
+        db.commit()
+
         logger.info(
             f"[Document Pipeline] Extract complete for content={content_id}, "
             f"pages={result.page_count}, words={result.word_count}"
@@ -128,6 +174,12 @@ def _chunk_and_enrich_document(content_id: str, extracted_data: dict):
     try:
         logger.info(f"[Document Pipeline] Chunk/enrich start for content={content_id}")
         _update_status(db, content_uuid, "chunking", 35.0)
+
+        # Clean up old chunks from previous runs to avoid duplicates on reprocess
+        old_count = db.query(ChunkModel).filter(ChunkModel.video_id == content_uuid).delete()
+        if old_count:
+            logger.info(f"[Document Pipeline] Deleted {old_count} old chunks for content={content_id}")
+            db.commit()
 
         video = db.query(Video).filter(Video.id == content_uuid).first()
 
@@ -173,10 +225,9 @@ def _chunk_and_enrich_document(content_id: str, extracted_data: dict):
 
         # Convert DocumentChunks to Chunk-compatible objects for enrichment
         from app.services.chunking import Chunk as ChunkData
-        enriched_chunks = []
 
-        for i, doc_chunk in enumerate(doc_chunks):
-            # Create a Chunk-compatible object
+        chunk_data_list = []
+        for doc_chunk in doc_chunks:
             chunk_data = ChunkData(
                 text=doc_chunk.text,
                 start_timestamp=doc_chunk.start_timestamp,
@@ -184,15 +235,45 @@ def _chunk_and_enrich_document(content_id: str, extracted_data: dict):
                 token_count=doc_chunk.token_count,
                 chunk_index=doc_chunk.chunk_index,
             )
-            # Attach document-specific attrs for enrichment prompt
             chunk_data.page_number = doc_chunk.page_number
             chunk_data.section_heading = doc_chunk.section_heading
+            chunk_data_list.append(chunk_data)
 
-            enriched = enricher.enrich_chunk(chunk_data)
-            enriched_chunks.append((enriched, doc_chunk))
+        # Store enrichment metadata for progress tracking
+        from sqlalchemy.orm.attributes import flag_modified
+        import time as _time
 
-            progress = 50.0 + (i + 1) / len(doc_chunks) * 30.0
-            _update_status(db, content_uuid, "enriching", progress)
+        enrichment_started_at = _time.time()
+        video.source_metadata = video.source_metadata or {}
+        video.source_metadata["total_chunks"] = len(doc_chunks)
+        video.source_metadata["chunks_enriched"] = 0
+        video.source_metadata["enrichment_started_at"] = enrichment_started_at
+        flag_modified(video, "source_metadata")
+        db.commit()
+
+        def _on_enrichment_progress(completed: int, total: int):
+            elapsed = _time.time() - enrichment_started_at
+            rate = completed / elapsed if elapsed > 0 else 0
+            remaining = total - completed
+            eta_seconds = int(remaining / rate) if rate > 0 else None
+
+            video.source_metadata["chunks_enriched"] = completed
+            if eta_seconds is not None:
+                video.source_metadata["eta_seconds"] = eta_seconds
+            flag_modified(video, "source_metadata")
+
+            progress = 50.0 + completed / total * 30.0
+            video.progress_percent = progress
+            db.commit()
+
+        # Use concurrent enrichment for ~5x speedup
+        enriched_results = enricher.enrich_chunks_concurrent(
+            chunk_data_list,
+            max_workers=settings.enrichment_max_workers,
+            on_progress=_on_enrichment_progress,
+        )
+
+        enriched_chunks = list(zip(enriched_results, doc_chunks))
 
         # Save chunks to database
         for enriched_chunk, doc_chunk in enriched_chunks:
@@ -290,7 +371,7 @@ def _embed_and_index_document(content_id: str):
             )
             enriched_chunks.append(enriched)
 
-        # Index in vector store
+        # Index in vector store (delete old vectors first to avoid duplicates on reprocess)
         from app.services.vector_store import vector_store_service
 
         collection_name = resolve_collection_name(embedding_service)
@@ -298,6 +379,11 @@ def _embed_and_index_document(content_id: str):
             embedding_service.get_dimensions(),
             collection_name=collection_name,
         )
+        try:
+            vector_store_service.delete_by_video_id(content_uuid)
+        except Exception as e:
+            logger.warning(f"[Document Pipeline] Could not clean old vectors: {e}")
+
         vector_store_service.index_video_chunks(
             enriched_chunks=enriched_chunks,
             embeddings=embeddings,
