@@ -8,8 +8,8 @@
 
 "use client";
 
-import { useState, useMemo } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useState, useMemo, useEffect, useRef, useCallback, Suspense } from "react";
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import { formatDistanceToNow } from "date-fns";
 import { useAuth, createParallelQueryFn, useAuthState } from "@/lib/auth";
 import { MainLayout } from "@/components/layout/MainLayout";
@@ -17,7 +17,7 @@ import { videosApi } from "@/lib/api/videos";
 import { usageApi } from "@/lib/api/usage";
 import { subscriptionsApi } from "@/lib/api/subscriptions";
 import { conversationsApi } from "@/lib/api/conversations";
-import { Video, VideoDeleteRequest, VideoListResponse, UsageSummary, QuotaUsage, CleanupOption } from "@/lib/types";
+import { Video, VideoDeleteRequest, VideoListResponse, VideoFilterValues, UsageSummary, QuotaUsage, CleanupOption } from "@/lib/types";
 import UpgradePromptModal from "@/components/subscription/UpgradePromptModal";
 import QuotaDisplay from "@/components/subscription/QuotaDisplay";
 import { DeleteConfirmationModal } from "@/components/videos/DeleteConfirmationModal";
@@ -25,6 +25,15 @@ import { CancelConfirmationModal } from "@/components/videos/CancelConfirmationM
 import { AddToCollectionModal } from "@/components/videos/AddToCollectionModal";
 import { ManageTagsModal } from "@/components/videos/ManageTagsModal";
 import { SimilarVideos } from "@/components/videos/SimilarVideos";
+import { ActiveFilters } from "@/components/videos/ActiveFilters";
+import { TagFilter } from "@/components/videos/TagFilter";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet";
 import {
   Plus,
   Trash2,
@@ -41,6 +50,8 @@ import {
   StopCircle,
   RefreshCw,
   MessageSquare,
+  SlidersHorizontal,
+  X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -63,11 +74,22 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Progress } from "@/components/ui/progress";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { PaginationBar } from "@/components/shared/PaginationBar";
+import { usePaginationParams } from "@/hooks/usePaginationParams";
 import { AddContentPanel } from "@/components/videos/AddContentPanel";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn, parseUTCDate } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
+import { ToastAction } from "@/components/ui/toast";
 import { useSetBreadcrumb } from "@/contexts/BreadcrumbContext";
 import {
   Tooltip,
@@ -77,6 +99,14 @@ import {
 } from "@/components/ui/tooltip";
 
 export default function VideosPage() {
+  return (
+    <Suspense fallback={null}>
+      <VideosPageContent />
+    </Suspense>
+  );
+}
+
+function VideosPageContent() {
   const authProvider = useAuth();
   const authState = useAuthState();
   const canFetch = authState.isAuthenticated;
@@ -95,6 +125,65 @@ export default function VideosPage() {
   const [showStorageBreakdown, setShowStorageBreakdown] = useState(false);
   const [isCreatingChat, setIsCreatingChat] = useState(false);
   const queryClient = useQueryClient();
+  const {
+    page, pageSize, status: statusFilter, q: searchQuery, sort: sortOrder,
+    channel: channelFilter, tags: tagsFilter, durationMin, durationMax,
+    skip, hasActiveFilters,
+    setPage, setPageSize, setStatus, setQ, setSort, setChannel, setTags, setDuration, clearAllFilters,
+  } = usePaginationParams();
+  const [searchInput, setSearchInput] = useState(searchQuery ?? "");
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
+
+  // Debounced search
+  const handleSearchChange = useCallback((value: string) => {
+    setSearchInput(value);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      setQ(value || undefined);
+    }, 300);
+  }, [setQ]);
+
+  // Sync searchInput when URL param changes externally (e.g. clear all)
+  useEffect(() => {
+    setSearchInput(searchQuery ?? "");
+  }, [searchQuery]);
+
+  // Derived tag list for TagFilter
+  const selectedTagsList = useMemo(() => {
+    if (!tagsFilter) return [];
+    return tagsFilter.split(",").filter(Boolean);
+  }, [tagsFilter]);
+
+  const handleTagsChange = useCallback((newTags: string[]) => {
+    setTags(newTags.length > 0 ? newTags.join(",") : undefined);
+  }, [setTags]);
+
+  // Duration preset helpers
+  const durationPreset = useMemo(() => {
+    if (durationMin === undefined && durationMax === undefined) return "all";
+    if (durationMin === undefined && durationMax === 300) return "short";
+    if (durationMin === 300 && durationMax === 900) return "medium";
+    if (durationMin === 900 && durationMax === 3600) return "long";
+    if (durationMin === 3600 && durationMax === undefined) return "very_long";
+    return "custom";
+  }, [durationMin, durationMax]);
+
+  const handleDurationPreset = useCallback((preset: string) => {
+    switch (preset) {
+      case "short": setDuration(undefined, 300); break;
+      case "medium": setDuration(300, 900); break;
+      case "long": setDuration(900, 3600); break;
+      case "very_long": setDuration(3600, undefined); break;
+      default: setDuration(undefined, undefined);
+    }
+  }, [setDuration]);
+
+  // Clear selection when pagination or filter changes
+  useEffect(() => {
+    setSelectedVideoIds(new Set());
+    setOpenTranscriptVideoId(null);
+  }, [page, pageSize, statusFilter, searchQuery, sortOrder, channelFilter, tagsFilter, durationMin, durationMax]);
 
   // Performance: Parallel auth + data fetch (no blocking on auth)
   const { data: usageSummary } = useQuery<UsageSummary>({
@@ -112,15 +201,27 @@ export default function VideosPage() {
     enabled: canFetch,
   });
 
+  // Fetch filter values (channels, tags with counts)
+  const { data: filterValues } = useQuery<VideoFilterValues>({
+    queryKey: ["video-filters"],
+    queryFn: createParallelQueryFn(authProvider, () => videosApi.getFilters()),
+    staleTime: 60_000,
+    enabled: canFetch,
+  });
+
   // Performance: Parallel fetch + increased polling interval
   const {
     data,
     isLoading,
+    isFetching,
     isError,
     error,
   } = useQuery<VideoListResponse>({
-    queryKey: ["videos"],
-    queryFn: createParallelQueryFn(authProvider, () => videosApi.list()),
+    queryKey: ["videos", { page, pageSize, status: statusFilter, q: searchQuery, sort: sortOrder, channel: channelFilter, tags: tagsFilter, durationMin, durationMax }],
+    queryFn: createParallelQueryFn(authProvider, () =>
+      videosApi.list(skip, pageSize, statusFilter, searchQuery, sortOrder, channelFilter, tagsFilter, durationMin, durationMax)
+    ),
+    placeholderData: keepPreviousData,
     staleTime: 30 * 1000, // 30 seconds - data is reasonably fresh
     enabled: canFetch,
     refetchInterval: (query) => {
@@ -131,6 +232,31 @@ export default function VideosPage() {
       return hasInFlight ? 10000 : false; // 10 seconds when processing
     },
   });
+
+  // Prefetch next page
+  useEffect(() => {
+    if (!data || !canFetch) return;
+    const totalPages = Math.ceil(data.total / pageSize);
+    if (page < totalPages) {
+      const nextSkip = page * pageSize;
+      queryClient.prefetchQuery({
+        queryKey: ["videos", { page: page + 1, pageSize, status: statusFilter, q: searchQuery, sort: sortOrder, channel: channelFilter, tags: tagsFilter, durationMin, durationMax }],
+        queryFn: createParallelQueryFn(authProvider, () =>
+          videosApi.list(nextSkip, pageSize, statusFilter, searchQuery, sortOrder, channelFilter, tagsFilter, durationMin, durationMax)
+        ),
+        staleTime: 30 * 1000,
+      });
+    }
+  }, [data, page, pageSize, statusFilter, searchQuery, sortOrder, channelFilter, tagsFilter, durationMin, durationMax, canFetch, queryClient, authProvider]);
+
+  // Clamp page if current page exceeds total pages (e.g., after bulk delete)
+  useEffect(() => {
+    if (!data) return;
+    const totalPages = Math.max(1, Math.ceil(data.total / pageSize));
+    if (page > totalPages) {
+      setPage(totalPages);
+    }
+  }, [data, page, pageSize, setPage]);
 
   const deleteMutation = useMutation({
     mutationFn: videosApi.delete,
@@ -143,6 +269,7 @@ export default function VideosPage() {
         return next;
       });
       queryClient.invalidateQueries({ queryKey: ["videos"] });
+      queryClient.invalidateQueries({ queryKey: ["video-filters"] });
     },
   });
 
@@ -155,6 +282,7 @@ export default function VideosPage() {
       setShowDeleteModal(false);
       setVideosToDelete([]);
       queryClient.invalidateQueries({ queryKey: ["videos"] });
+      queryClient.invalidateQueries({ queryKey: ["video-filters"] });
       queryClient.invalidateQueries({ queryKey: ["usage-summary"] });
     },
     onError: (error) => {
@@ -250,6 +378,34 @@ export default function VideosPage() {
 
     setIsCreatingChat(true);
     try {
+      // Try to resume the most recent conversation for this video
+      try {
+        const existing = await conversationsApi.findBySource({ videoId: video.id });
+        if (existing.total > 0) {
+          router.push(`/conversations/${existing.conversations[0].id}`);
+          toast({
+            title: "Resumed conversation",
+            description: existing.conversations[0].title || video.title,
+            action: (
+              <ToastAction
+                altText="Start new conversation"
+                onClick={async () => {
+                  const conv = await conversationsApi.create(
+                    `Chat: ${video.title}`,
+                    { selectedVideoIds: [video.id] }
+                  );
+                  router.push(`/conversations/${conv.id}`);
+                }}
+              >
+                New chat
+              </ToastAction>
+            ),
+          });
+          return;
+        }
+      } catch {
+        // Fall through to create on lookup failure
+      }
       const conversation = await conversationsApi.create(
         `Chat: ${video.title}`,
         { selectedVideoIds: [video.id] }
@@ -741,9 +897,9 @@ export default function VideosPage() {
             <p className="text-sm text-muted-foreground">
               Track ingestion, storage, and transcript quality across your workspace.
             </p>
-            {videos.length > 0 && (
+            {(data?.total ?? 0) > 0 && (
               <div className="flex items-center gap-2 text-xs text-muted-foreground pt-1">
-                <span>{videos.length} video{videos.length !== 1 ? 's' : ''}</span>
+                <span>{data?.total} video{(data?.total ?? 0) !== 1 ? 's' : ''}</span>
                 {(() => {
                   const processingCount = videos.filter(v => !['completed', 'failed', 'canceled'].includes(v.status)).length;
                   return processingCount > 0 ? (
@@ -860,7 +1016,7 @@ export default function VideosPage() {
                   </div>
                 </div>
                 <div className="rounded-lg border bg-muted/30 p-3 text-xs text-muted-foreground">
-                  Delete {videos.length} video(s) to free approximately {formatMb(
+                  {videos.length} video(s) on this page using approximately {formatMb(
                     videos.reduce((sum, v) => sum + (v.storage_total_mb || 0), 0)
                   )}.
                 </div>
@@ -915,55 +1071,341 @@ export default function VideosPage() {
           </div>
         )}
         <Card>
-          <CardHeader className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
-            <div>
-              <CardTitle>Library</CardTitle>
-              <CardDescription>
-                Select completed videos to clean up storage or open transcripts inline.
-              </CardDescription>
-            </div>
-            <div className="flex flex-col items-end gap-2 text-sm text-muted-foreground sm:flex-row sm:items-center sm:gap-4">
-              <div className="text-sm text-muted-foreground">
-                {selectedVideoIds.size > 0
-                  ? `${selectedVideoIds.size} video(s) selected`
-                  : "Select completed videos to enable cleanup."}
+          <CardHeader className="space-y-3">
+            <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <CardTitle>Library</CardTitle>
+                <CardDescription>
+                  Select completed videos to clean up storage or open transcripts inline.
+                </CardDescription>
               </div>
-              {selectedVideos.length > 0 && (
-                <div className="flex gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="gap-1"
-                    onClick={() => openAddToCollectionModal(selectedVideos)}
-                  >
-                    <FolderPlus className="h-3.5 w-3.5" />
-                    Add to collection
-                  </Button>
-                  {selectedVideos.some(isCancelable) && (
+              <div className="flex items-center gap-2">
+                {selectedVideoIds.size > 0 && (
+                  <span className="text-xs text-muted-foreground">
+                    {selectedVideoIds.size} selected
+                  </span>
+                )}
+                {selectedVideos.length > 0 && (
+                  <div className="flex gap-2">
                     <Button
                       variant="outline"
                       size="sm"
-                      className="gap-2 text-orange-600 border-orange-300 hover:bg-orange-50"
-                      onClick={handleBulkCancel}
-                      disabled={bulkCancelMutation.isPending}
+                      className="gap-1"
+                      onClick={() => openAddToCollectionModal(selectedVideos)}
                     >
-                      <StopCircle className="h-4 w-4" />
-                      Cancel processing ({selectedVideos.filter(isCancelable).length})
+                      <FolderPlus className="h-3.5 w-3.5" />
+                      <span className="hidden sm:inline">Add to collection</span>
                     </Button>
-                  )}
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="gap-2"
-                    onClick={handleBulkDelete}
-                    disabled={bulkDeleteMutation.isPending}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                    Delete selected ({selectedVideoIds.size})
-                  </Button>
-                </div>
+                    {selectedVideos.some(isCancelable) && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="gap-2 text-orange-600 border-orange-300 hover:bg-orange-50"
+                        onClick={handleBulkCancel}
+                        disabled={bulkCancelMutation.isPending}
+                      >
+                        <StopCircle className="h-4 w-4" />
+                        Cancel ({selectedVideos.filter(isCancelable).length})
+                      </Button>
+                    )}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="gap-2"
+                      onClick={handleBulkDelete}
+                      disabled={bulkDeleteMutation.isPending}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                      Delete ({selectedVideoIds.size})
+                    </Button>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Search bar */}
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={searchInput}
+                onChange={(e) => handleSearchChange(e.target.value)}
+                placeholder="Search videos by title, description, or channel..."
+                className="pl-9 pr-8"
+              />
+              {searchInput && (
+                <button
+                  type="button"
+                  onClick={() => handleSearchChange("")}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  aria-label="Clear search"
+                >
+                  <X className="h-4 w-4" />
+                </button>
               )}
             </div>
+
+            {/* Filter toolbar - desktop */}
+            <div className="hidden md:flex md:flex-wrap md:items-center md:gap-2">
+              <Select
+                value={statusFilter ?? "all"}
+                onValueChange={(value) => setStatus(value === "all" ? undefined : value)}
+              >
+                <SelectTrigger className="w-[140px] h-8 text-xs">
+                  <SelectValue placeholder="All statuses" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All statuses</SelectItem>
+                  <SelectItem value="completed">Completed</SelectItem>
+                  <SelectItem value="pending">Pending</SelectItem>
+                  <SelectItem value="downloading">Downloading</SelectItem>
+                  <SelectItem value="transcribing">Transcribing</SelectItem>
+                  <SelectItem value="chunking">Chunking</SelectItem>
+                  <SelectItem value="enriching">Enriching</SelectItem>
+                  <SelectItem value="indexing">Indexing</SelectItem>
+                  <SelectItem value="failed">Failed</SelectItem>
+                  <SelectItem value="canceled">Canceled</SelectItem>
+                </SelectContent>
+              </Select>
+
+              {filterValues && filterValues.channels.length > 0 && (
+                <Select
+                  value={channelFilter ?? "all"}
+                  onValueChange={(value) => setChannel(value === "all" ? undefined : value)}
+                >
+                  <SelectTrigger className="w-[160px] h-8 text-xs">
+                    <SelectValue placeholder="All channels" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All channels</SelectItem>
+                    {filterValues.channels.map((ch) => (
+                      <SelectItem key={ch.name} value={ch.name}>
+                        {ch.name} ({ch.count})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+
+              {filterValues && filterValues.tags.length > 0 && (
+                <TagFilter
+                  availableTags={filterValues.tags}
+                  selectedTags={selectedTagsList}
+                  onTagsChange={handleTagsChange}
+                />
+              )}
+
+              <Select
+                value={durationPreset}
+                onValueChange={handleDurationPreset}
+              >
+                <SelectTrigger className="w-[140px] h-8 text-xs">
+                  <SelectValue placeholder="Any duration" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Any duration</SelectItem>
+                  <SelectItem value="short">&lt; 5 min</SelectItem>
+                  <SelectItem value="medium">5 - 15 min</SelectItem>
+                  <SelectItem value="long">15 - 60 min</SelectItem>
+                  <SelectItem value="very_long">&gt; 60 min</SelectItem>
+                </SelectContent>
+              </Select>
+
+              <Select
+                value={sortOrder ?? "created_at_desc"}
+                onValueChange={(value) => setSort(value === "created_at_desc" ? undefined : value)}
+              >
+                <SelectTrigger className="w-[160px] h-8 text-xs">
+                  <SelectValue placeholder="Newest first" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="created_at_desc">Newest first</SelectItem>
+                  <SelectItem value="created_at_asc">Oldest first</SelectItem>
+                  <SelectItem value="title_asc">Title A-Z</SelectItem>
+                  <SelectItem value="duration_desc">Longest first</SelectItem>
+                  <SelectItem value="duration_asc">Shortest first</SelectItem>
+                  <SelectItem value="upload_date_desc">Upload date</SelectItem>
+                </SelectContent>
+              </Select>
+
+              {hasActiveFilters && (
+                <span className="text-xs text-muted-foreground ml-auto">
+                  {data?.total ?? 0} result{(data?.total ?? 0) !== 1 ? "s" : ""}
+                </span>
+              )}
+            </div>
+
+            {/* Filter toolbar - mobile */}
+            <div className="flex items-center gap-2 md:hidden">
+              <Select
+                value={sortOrder ?? "created_at_desc"}
+                onValueChange={(value) => setSort(value === "created_at_desc" ? undefined : value)}
+              >
+                <SelectTrigger className="h-8 flex-1 text-xs">
+                  <SelectValue placeholder="Newest first" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="created_at_desc">Newest first</SelectItem>
+                  <SelectItem value="created_at_asc">Oldest first</SelectItem>
+                  <SelectItem value="title_asc">Title A-Z</SelectItem>
+                  <SelectItem value="duration_desc">Longest</SelectItem>
+                  <SelectItem value="duration_asc">Shortest</SelectItem>
+                  <SelectItem value="upload_date_desc">Upload date</SelectItem>
+                </SelectContent>
+              </Select>
+              <Sheet open={mobileFiltersOpen} onOpenChange={setMobileFiltersOpen}>
+                <SheetTrigger asChild>
+                  <Button variant="outline" size="sm" className="h-8 gap-1 text-xs">
+                    <SlidersHorizontal className="h-3.5 w-3.5" />
+                    Filters
+                    {hasActiveFilters && (
+                      <Badge variant="secondary" className="ml-1 h-4 min-w-4 px-1 text-[10px]">
+                        {[statusFilter, channelFilter, tagsFilter, durationPreset !== "all" ? "d" : null].filter(Boolean).length}
+                      </Badge>
+                    )}
+                  </Button>
+                </SheetTrigger>
+                <SheetContent side="bottom" className="max-h-[80vh]">
+                  <SheetHeader>
+                    <SheetTitle>Filters</SheetTitle>
+                  </SheetHeader>
+                  <div className="space-y-4 py-4">
+                    <div className="space-y-2">
+                      <label className="text-xs font-medium text-muted-foreground">Status</label>
+                      <Select
+                        value={statusFilter ?? "all"}
+                        onValueChange={(value) => { setStatus(value === "all" ? undefined : value); }}
+                      >
+                        <SelectTrigger className="h-9 text-sm">
+                          <SelectValue placeholder="All statuses" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">All statuses</SelectItem>
+                          <SelectItem value="completed">Completed</SelectItem>
+                          <SelectItem value="pending">Pending</SelectItem>
+                          <SelectItem value="downloading">Downloading</SelectItem>
+                          <SelectItem value="transcribing">Transcribing</SelectItem>
+                          <SelectItem value="chunking">Chunking</SelectItem>
+                          <SelectItem value="enriching">Enriching</SelectItem>
+                          <SelectItem value="indexing">Indexing</SelectItem>
+                          <SelectItem value="failed">Failed</SelectItem>
+                          <SelectItem value="canceled">Canceled</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    {filterValues && filterValues.channels.length > 0 && (
+                      <div className="space-y-2">
+                        <label className="text-xs font-medium text-muted-foreground">Channel</label>
+                        <Select
+                          value={channelFilter ?? "all"}
+                          onValueChange={(value) => { setChannel(value === "all" ? undefined : value); }}
+                        >
+                          <SelectTrigger className="h-9 text-sm">
+                            <SelectValue placeholder="All channels" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="all">All channels</SelectItem>
+                            {filterValues.channels.map((ch) => (
+                              <SelectItem key={ch.name} value={ch.name}>
+                                {ch.name} ({ch.count})
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    )}
+                    <div className="space-y-2">
+                      <label className="text-xs font-medium text-muted-foreground">Duration</label>
+                      <Select
+                        value={durationPreset}
+                        onValueChange={handleDurationPreset}
+                      >
+                        <SelectTrigger className="h-9 text-sm">
+                          <SelectValue placeholder="Any duration" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">Any duration</SelectItem>
+                          <SelectItem value="short">&lt; 5 min</SelectItem>
+                          <SelectItem value="medium">5 - 15 min</SelectItem>
+                          <SelectItem value="long">15 - 60 min</SelectItem>
+                          <SelectItem value="very_long">&gt; 60 min</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    {filterValues && filterValues.tags.length > 0 && (
+                      <div className="space-y-2">
+                        <label className="text-xs font-medium text-muted-foreground">Tags</label>
+                        <div className="flex flex-wrap gap-2">
+                          {filterValues.tags.map((tag) => {
+                            const isSelected = selectedTagsList.includes(tag.name);
+                            return (
+                              <Badge
+                                key={tag.name}
+                                variant={isSelected ? "default" : "outline"}
+                                className="cursor-pointer text-xs"
+                                onClick={() => {
+                                  if (isSelected) {
+                                    handleTagsChange(selectedTagsList.filter((t) => t !== tag.name));
+                                  } else {
+                                    handleTagsChange([...selectedTagsList, tag.name]);
+                                  }
+                                }}
+                              >
+                                {tag.name} ({tag.count})
+                              </Badge>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                    {hasActiveFilters && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => { clearAllFilters(); setMobileFiltersOpen(false); }}
+                        className="w-full"
+                      >
+                        Clear all filters
+                      </Button>
+                    )}
+                  </div>
+                </SheetContent>
+              </Sheet>
+              {hasActiveFilters && (
+                <span className="text-xs text-muted-foreground">
+                  {data?.total ?? 0} results
+                </span>
+              )}
+            </div>
+
+            {/* Active filter chips */}
+            <ActiveFilters
+              chips={[
+                ...(statusFilter ? [{ key: "status", label: "Status", value: statusFilter }] : []),
+                ...(channelFilter ? [{ key: "channel", label: "Channel", value: channelFilter }] : []),
+                ...selectedTagsList.map((tag) => ({ key: `tag-${tag}`, label: "Tag", value: tag })),
+                ...(durationPreset !== "all" ? [{
+                  key: "duration",
+                  label: "Duration",
+                  value: durationPreset === "short" ? "< 5 min"
+                    : durationPreset === "medium" ? "5-15 min"
+                    : durationPreset === "long" ? "15-60 min"
+                    : durationPreset === "very_long" ? "> 60 min"
+                    : "Custom",
+                }] : []),
+                ...(searchQuery ? [{ key: "q", label: "Search", value: searchQuery }] : []),
+              ]}
+              onRemove={(key) => {
+                if (key === "status") setStatus(undefined);
+                else if (key === "channel") setChannel(undefined);
+                else if (key === "duration") setDuration(undefined, undefined);
+                else if (key === "q") { setQ(undefined); setSearchInput(""); }
+                else if (key.startsWith("tag-")) {
+                  const tag = key.slice(4);
+                  handleTagsChange(selectedTagsList.filter((t) => t !== tag));
+                }
+              }}
+              onClearAll={() => { clearAllFilters(); setSearchInput(""); }}
+            />
           </CardHeader>
           <CardContent className="p-0">
             {!canFetch ? (
@@ -979,10 +1421,31 @@ export default function VideosPage() {
                 </div>
               </div>
             ) : isLoading ? (
-              <div className="flex items-center justify-center gap-2 py-12 text-muted-foreground">
-                <Loader2 className="h-5 w-5 animate-spin" />
-                Loading videos...
-              </div>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-12"><span className="sr-only">Select</span></TableHead>
+                    <TableHead className="w-[40%]">Video</TableHead>
+                    <TableHead className="w-[15%]">Status</TableHead>
+                    <TableHead className="w-[15%]">Storage</TableHead>
+                    <TableHead className="w-[30%] text-right">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {Array.from({ length: 5 }).map((_, i) => (
+                    <TableRow key={i}>
+                      <TableCell><Skeleton className="h-4 w-4" /></TableCell>
+                      <TableCell className="space-y-2">
+                        <Skeleton className="h-4 w-48" />
+                        <Skeleton className="h-3 w-32" />
+                      </TableCell>
+                      <TableCell><Skeleton className="h-5 w-20 rounded-full" /></TableCell>
+                      <TableCell><Skeleton className="h-4 w-16" /></TableCell>
+                      <TableCell className="text-right"><Skeleton className="h-8 w-24 ml-auto" /></TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
             ) : isError ? (
               <div className="py-12 text-center text-sm text-destructive">
                 Unable to load videos.{" "}
@@ -990,9 +1453,22 @@ export default function VideosPage() {
               </div>
             ) : videos.length === 0 ? (
               <div className="py-12 text-center text-sm text-muted-foreground">
-                No videos yet. Ingest your first YouTube URL to get started.
+                {hasActiveFilters || searchQuery ? (
+                  <>
+                    No videos match your filters.{" "}
+                    <button
+                      className="text-primary hover:underline"
+                      onClick={() => { clearAllFilters(); setSearchInput(""); }}
+                    >
+                      Clear all filters
+                    </button>
+                  </>
+                ) : (
+                  "No videos yet. Ingest your first YouTube URL to get started."
+                )}
               </div>
             ) : (
+              <>
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -1005,7 +1481,7 @@ export default function VideosPage() {
                     <TableHead className="w-[30%] text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
-                <TableBody>
+                <TableBody className={cn(isFetching && !isLoading && "opacity-60 transition-opacity")}>
                   {videos.map((video) => {
                     const isSelected = selectedVideoIds.has(video.id);
                     return (
@@ -1030,7 +1506,8 @@ export default function VideosPage() {
                               <div>
                                 <p className="font-medium leading-none">{video.title}</p>
                                 <div className="text-xs text-muted-foreground">
-                                  {formatDuration(video.duration_seconds)} - Added {formatDistanceToNow(
+                                  {video.channel_name && <>{video.channel_name} &middot; </>}
+                                  {formatDuration(video.duration_seconds)} &middot; Added {formatDistanceToNow(
                                     parseUTCDate(video.created_at)
                                   )} ago
                                 </div>
@@ -1239,6 +1716,20 @@ export default function VideosPage() {
                   })}
                 </TableBody>
               </Table>
+              {data && data.total > 0 && (
+                <div className="border-t">
+                  <PaginationBar
+                    page={page}
+                    pageSize={pageSize}
+                    total={data.total}
+                    onPageChange={setPage}
+                    onPageSizeChange={setPageSize}
+                    isLoading={isFetching}
+                    itemLabel="videos"
+                  />
+                </div>
+              )}
+              </>
             )}
           </CardContent>
         </Card>

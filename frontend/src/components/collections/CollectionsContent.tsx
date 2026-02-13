@@ -15,7 +15,7 @@
 import { useState, Suspense } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import { Plus, Folder, Trash2, Edit, MessageSquare, MinusCircle, Loader2 } from "lucide-react";
 import {
   getCollections,
@@ -28,13 +28,18 @@ import { conversationsApi } from "@/lib/api/conversations";
 import { CollectionModal } from "./CollectionModal";
 import { CollectionAddContentModal } from "./CollectionAddVideosModal";
 import { CollectionThemes } from "./CollectionThemes";
+import { CollectionInsightMap } from "./CollectionInsightMap";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
+import { useToast } from "@/hooks/use-toast";
+import { ToastAction } from "@/components/ui/toast";
 import { useAuth, useAuthState, createParallelQueryFn } from "@/lib/auth";
 import { useSetBreadcrumb } from "@/contexts/BreadcrumbContext";
+import { usePaginationParams } from "@/hooks/usePaginationParams";
+import { PaginationBar } from "@/components/shared/PaginationBar";
 import Link from "next/link";
 
 /**
@@ -49,7 +54,9 @@ export function CollectionsContent() {
   const canFetch = authState.isAuthenticated;
   const queryClient = useQueryClient();
   const router = useRouter();
+  const { toast } = useToast();
 
+  const { page, pageSize, skip, setPage, setPageSize } = usePaginationParams();
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [chattingCollectionId, setChattingCollectionId] = useState<string | null>(null);
   const [editingCollection, setEditingCollection] = useState<Collection | null>(null);
@@ -58,11 +65,12 @@ export function CollectionsContent() {
 
   // Performance: Parallel auth + data fetch
   // Auth and getCollections() run concurrently instead of sequentially
-  const { data, isLoading, error } = useQuery({
-    queryKey: ["collections"],
-    queryFn: createParallelQueryFn(authProvider, getCollections),
+  const { data, isLoading, isFetching, error } = useQuery({
+    queryKey: ["collections", { page, pageSize }],
+    queryFn: createParallelQueryFn(authProvider, () => getCollections(skip, pageSize)),
     staleTime: 2 * 60 * 1000, // 2 minutes
     enabled: canFetch,
+    placeholderData: keepPreviousData,
   });
 
   const deleteMutation = useMutation({
@@ -133,6 +141,34 @@ export function CollectionsContent() {
   const handleQuickChat = async (collection: Collection) => {
     try {
       setChattingCollectionId(collection.id);
+      // Try to resume the most recent conversation for this collection
+      try {
+        const existing = await conversationsApi.findBySource({ collectionId: collection.id });
+        if (existing.total > 0) {
+          router.push(`/conversations/${existing.conversations[0].id}`);
+          toast({
+            title: "Resumed conversation",
+            description: existing.conversations[0].title || collection.name,
+            action: (
+              <ToastAction
+                altText="Start new conversation"
+                onClick={async () => {
+                  const conv = await conversationsApi.create(
+                    `Chat: ${collection.name}`,
+                    { collectionId: collection.id }
+                  );
+                  router.push(`/conversations/${conv.id}`);
+                }}
+              >
+                New chat
+              </ToastAction>
+            ),
+          });
+          return;
+        }
+      } catch {
+        // Fall through to create on lookup failure
+      }
       const conversation = await conversationsApi.create(
         `Chat: ${collection.name}`,
         { collectionId: collection.id }
@@ -240,7 +276,7 @@ export function CollectionsContent() {
             </CardContent>
           </Card>
         ) : (
-          <div className="space-y-4">
+          <div className={`space-y-4 transition-opacity ${isFetching && !isLoading ? "opacity-60" : ""}`}>
             {collections.map((collection) => {
               const isExpanded = expandedCollectionId === collection.id;
               const collectionDetails = isExpanded ? expandedCollection : null;
@@ -311,6 +347,12 @@ export function CollectionsContent() {
                           <CollectionThemes
                             collectionId={collection.id}
                             enabled={canFetch}
+                          />
+                        )}
+                        {collection.video_count >= 2 && (
+                          <CollectionInsightMap
+                            collectionId={collection.id}
+                            videoCount={collection.video_count}
                           />
                         )}
                       </div>
@@ -463,6 +505,18 @@ export function CollectionsContent() {
               );
             })}
           </div>
+        )}
+
+        {(data?.total ?? 0) > 0 && (
+          <PaginationBar
+            page={page}
+            pageSize={pageSize}
+            total={data?.total ?? 0}
+            onPageChange={setPage}
+            onPageSizeChange={setPageSize}
+            isLoading={isFetching}
+            itemLabel="collections"
+          />
         )}
       </div>
 

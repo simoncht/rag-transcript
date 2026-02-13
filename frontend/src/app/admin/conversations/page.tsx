@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type KeyboardEvent } from "react";
+import { Suspense, useState, type KeyboardEvent } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { adminApi } from "@/lib/api/admin";
 import { Card } from "@/components/ui/card";
@@ -19,12 +19,21 @@ import { Badge } from "@/components/ui/badge";
 import { AlertCircle, MessageSquare, Search } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { parseUTCDate } from "@/lib/utils";
+import { usePaginationParams } from "@/hooks/usePaginationParams";
+import { PaginationBar } from "@/components/shared/PaginationBar";
 
 export default function AdminConversationsPage() {
-  const [page, setPage] = useState(1);
+  return (
+    <Suspense>
+      <AdminConversationsPageContent />
+    </Suspense>
+  );
+}
+
+function AdminConversationsPageContent() {
+  const { page, pageSize, setPage, setPageSize } = usePaginationParams();
   const [search, setSearch] = useState("");
   const [searchInput, setSearchInput] = useState("");
-  const pageSize = 20;
 
   const { data, isLoading, error, isFetching, refetch } = useQuery({
     queryKey: ["admin-conversations", page, search],
@@ -36,8 +45,6 @@ export default function AdminConversationsPage() {
       }),
     placeholderData: (previousData) => previousData,
   });
-
-  const totalPages = data ? Math.max(Math.ceil(data.total / pageSize), 1) : 1;
 
   const handleSearch = () => {
     setPage(1);
@@ -193,29 +200,17 @@ export default function AdminConversationsPage() {
         </Table>
       </Card>
 
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">
-          Page {page} of {totalPages}
-        </p>
-        <div className="flex gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setPage((p) => Math.max(1, p - 1))}
-            disabled={page === 1}
-          >
-            Previous
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-            disabled={page >= totalPages}
-          >
-            Next
-          </Button>
-        </div>
-      </div>
+      {data && data.total > 0 && (
+        <PaginationBar
+          page={page}
+          pageSize={pageSize}
+          total={data.total}
+          onPageChange={setPage}
+          onPageSizeChange={setPageSize}
+          isLoading={isFetching}
+          itemLabel="conversations"
+        />
+      )}
     </div>
   );
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { adminApi } from "@/lib/api/admin";
 import { Card } from "@/components/ui/card";
@@ -18,6 +18,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { AlertCircle, RefreshCw, MessageSquare, Timer } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { parseUTCDate } from "@/lib/utils";
+import { usePaginationParams } from "@/hooks/usePaginationParams";
+import { PaginationBar } from "@/components/shared/PaginationBar";
+import type { PageSize } from "@/hooks/usePaginationParams";
 
 const truncate = (value: string, limit = 120) => {
   if (value.length <= limit) return value;
@@ -25,10 +28,18 @@ const truncate = (value: string, limit = 120) => {
 };
 
 export default function AdminQAFeedPage() {
-  const [page, setPage] = useState(1);
-  const pageSize = 20;
+  return (
+    <Suspense>
+      <AdminQAFeedPageContent />
+    </Suspense>
+  );
+}
+
+function AdminQAFeedPageContent() {
+  const { page, pageSize, setPage, setPageSize } = usePaginationParams();
+  // Audit log uses local state (secondary list shouldn't compete for URL params)
   const [auditPage, setAuditPage] = useState(1);
-  const auditPageSize = 10;
+  const [auditPageSize, setAuditPageSize] = useState<number>(10);
 
   const { data, isLoading, isFetching, error, refetch } = useQuery({
     queryKey: ["admin-qa-feed", page],
@@ -55,11 +66,7 @@ export default function AdminQAFeedPage() {
   });
 
   const items = data?.items ?? [];
-  const totalPages = data ? Math.max(Math.ceil(data.total / pageSize), 1) : 1;
   const auditItems = auditData?.items ?? [];
-  const auditTotalPages = auditData
-    ? Math.max(Math.ceil(auditData.total / auditPageSize), 1)
-    : 1;
 
   return (
     <div className="container mx-auto p-6 space-y-6">
@@ -217,29 +224,17 @@ export default function AdminQAFeedPage() {
         </Table>
       </Card>
 
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">
-          Page {page} of {totalPages}
-        </p>
-        <div className="flex gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setPage((p) => Math.max(1, p - 1))}
-            disabled={page === 1}
-          >
-            Previous
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-            disabled={page >= totalPages}
-          >
-            Next
-          </Button>
-        </div>
-      </div>
+      {data && data.total > 0 && (
+        <PaginationBar
+          page={page}
+          pageSize={pageSize}
+          total={data.total}
+          onPageChange={setPage}
+          onPageSizeChange={setPageSize}
+          isLoading={isFetching}
+          itemLabel="questions"
+        />
+      )}
 
       <div className="flex items-center justify-between gap-2 pt-10">
         <div>
@@ -378,29 +373,17 @@ export default function AdminQAFeedPage() {
         </Table>
       </Card>
 
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">
-          Page {auditPage} of {auditTotalPages}
-        </p>
-        <div className="flex gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setAuditPage((p) => Math.max(1, p - 1))}
-            disabled={auditPage === 1}
-          >
-            Previous
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setAuditPage((p) => Math.min(auditTotalPages, p + 1))}
-            disabled={auditPage >= auditTotalPages}
-          >
-            Next
-          </Button>
-        </div>
-      </div>
+      {auditData && auditData.total > 0 && (
+        <PaginationBar
+          page={auditPage}
+          pageSize={auditPageSize}
+          total={auditData.total}
+          onPageChange={setAuditPage}
+          onPageSizeChange={(size) => { setAuditPageSize(size); setAuditPage(1); }}
+          isLoading={auditFetching}
+          itemLabel="messages"
+        />
+      )}
     </div>
   );
 }

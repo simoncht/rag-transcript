@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { adminApi } from "@/lib/api/admin";
 import { Card } from "@/components/ui/card";
@@ -25,8 +25,6 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Search,
-  ChevronLeft,
-  ChevronRight,
   User,
   Shield,
   AlertCircle,
@@ -34,10 +32,19 @@ import {
 import Link from "next/link";
 import { formatDistanceToNow } from "date-fns";
 import { parseUTCDate } from "@/lib/utils";
+import { usePaginationParams } from "@/hooks/usePaginationParams";
+import { PaginationBar } from "@/components/shared/PaginationBar";
 
 export default function AdminUsersPage() {
-  const [page, setPage] = useState(1);
-  const [pageSize] = useState(20);
+  return (
+    <Suspense>
+      <AdminUsersPageContent />
+    </Suspense>
+  );
+}
+
+function AdminUsersPageContent() {
+  const { page, pageSize, setPage, setPageSize } = usePaginationParams();
   const [search, setSearch] = useState("");
   const [searchInput, setSearchInput] = useState("");
   const [tier, setTier] = useState<string>("all");
@@ -65,8 +72,6 @@ export default function AdminUsersPage() {
       handleSearch();
     }
   };
-
-  const totalPages = data ? Math.ceil(data.total / pageSize) : 0;
 
   return (
     <div className="container mx-auto p-6 space-y-6">
@@ -269,36 +274,15 @@ export default function AdminUsersPage() {
       </Card>
 
       {/* Pagination */}
-      {data && totalPages > 1 && (
-        <div className="flex items-center justify-between">
-          <p className="text-sm text-muted-foreground">
-            Showing {(page - 1) * pageSize + 1} to{" "}
-            {Math.min(page * pageSize, data.total)} of {data.total} users
-          </p>
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-              disabled={page === 1}
-            >
-              <ChevronLeft className="h-4 w-4 mr-1" />
-              Previous
-            </Button>
-            <span className="text-sm">
-              Page {page} of {totalPages}
-            </span>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-              disabled={page === totalPages}
-            >
-              Next
-              <ChevronRight className="h-4 w-4 ml-1" />
-            </Button>
-          </div>
-        </div>
+      {data && data.total > 0 && (
+        <PaginationBar
+          page={page}
+          pageSize={pageSize}
+          total={data.total}
+          onPageChange={setPage}
+          onPageSizeChange={setPageSize}
+          itemLabel="users"
+        />
       )}
     </div>
   );

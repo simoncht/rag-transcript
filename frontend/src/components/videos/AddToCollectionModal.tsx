@@ -5,8 +5,8 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { X, Folder, Plus, Minus, FolderPlus } from "lucide-react";
 import {
   getCollections,
-  addVideosToCollection,
-  removeVideoFromCollection,
+  addContentToCollection,
+  removeItemFromCollection,
   createCollection,
 } from "@/lib/api/collections";
 import { videosApi } from "@/lib/api/videos";
@@ -46,7 +46,7 @@ export function AddToCollectionModal({
   // Fetch collections
   const { data: collectionsData, isLoading } = useQuery({
     queryKey: ["collections"],
-    queryFn: getCollections,
+    queryFn: () => getCollections(),
   });
 
   // Fetch which collections the video is already in (only for single video)
@@ -63,7 +63,7 @@ export function AddToCollectionModal({
   // Add video to collection mutation
   const addMutation = useMutation({
     mutationFn: ({ collectionId, videoIds }: AddMutationVariables) =>
-      addVideosToCollection(collectionId, { video_ids: videoIds }),
+      addContentToCollection(collectionId, { video_ids: videoIds }),
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ["collections"] });
       queryClient.invalidateQueries({ queryKey: ["videos"] });
@@ -100,7 +100,7 @@ export function AddToCollectionModal({
   // Remove video from collection mutation
   const removeMutation = useMutation({
     mutationFn: ({ collectionId, videoId }: RemoveMutationVariables) =>
-      removeVideoFromCollection(collectionId, videoId),
+      removeItemFromCollection(collectionId, videoId),
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ["collections"] });
       queryClient.invalidateQueries({ queryKey: ["videos"] });
@@ -275,118 +275,125 @@ export function AddToCollectionModal({
               <div className="text-center py-4">
                 <div className="text-gray-500">Loading collections...</div>
               </div>
-            ) : collectionsData && collectionsData.collections.length > 0 ? (
-              <div className="space-y-2 max-h-64 overflow-y-auto">
-                {collectionsData.collections.map((collection) => {
-                  const isInCollection = isSingleVideo && videoCollections.has(collection.id);
-                  const isDisabled =
-                    addMutation.isPending || removeMutation.isPending || createMutation.isPending;
-
-                  return (
-                    <label
-                      key={collection.id}
-                      className={`flex items-center p-3 border rounded-lg cursor-pointer transition-colors ${
-                        isDisabled
-                          ? "opacity-50 cursor-not-allowed"
-                          : "hover:border-gray-400"
-                      } border-gray-200`}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={isInCollection}
-                        disabled={isDisabled}
-                        onChange={(e) => handleCheckboxChange(collection, e.target.checked)}
-                        className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                      />
-                      <Folder
-                        className={`w-5 h-5 mx-3 ${
-                          collection.is_default ? "text-gray-400" : "text-blue-600"
-                        }`}
-                      />
-                      <div className="flex-1">
-                        <div className="font-medium text-gray-900">{collection.name}</div>
-                        {collection.description && (
-                          <div className="text-sm text-gray-500">{collection.description}</div>
-                        )}
-                        <div className="text-xs text-gray-500 mt-1">
-                          {collection.video_count} videos
-                        </div>
-                      </div>
-                    </label>
-                  );
-                })}
-              </div>
             ) : (
-              <div className="text-center py-6 text-gray-600 border border-dashed border-gray-200 rounded-lg">
-                <FolderPlus className="w-8 h-8 mx-auto text-gray-400" />
-                <p className="mt-3 text-base font-semibold text-gray-900">
-                  No collections available
-                </p>
-                <p className="mt-1 text-sm text-gray-600">
-                  Create a collection to organize this video.
-                </p>
+              <>
+                {/* Collection list - show if any exist */}
+                {collectionsData && collectionsData.collections.length > 0 && (
+                  <div className="space-y-2 max-h-48 overflow-y-auto">
+                    {collectionsData.collections.map((collection) => {
+                      const isInCollection = isSingleVideo && videoCollections.has(collection.id);
+                      const isDisabled =
+                        addMutation.isPending || removeMutation.isPending || createMutation.isPending;
 
-                {!showCreateForm ? (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowCreateForm(true);
-                      setError("");
-                    }}
-                    className="mt-4 inline-flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
-                    disabled={createMutation.isPending}
-                  >
-                    <Plus className="w-4 h-4" />
-                    Create collection
-                  </button>
-                ) : (
-                  <form onSubmit={handleCreateCollection} className="mt-4 text-left space-y-3 px-2">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Collection name <span className="text-red-500">*</span>
-                      </label>
-                      <input
-                        type="text"
-                        value={newCollectionName}
-                        onChange={(e) => setNewCollectionName(e.target.value)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        placeholder="e.g., Course playlist"
-                        disabled={createMutation.isPending}
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Description (optional)
-                      </label>
-                      <input
-                        type="text"
-                        value={newCollectionDescription}
-                        onChange={(e) => setNewCollectionDescription(e.target.value)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        placeholder="What is this collection for?"
-                        disabled={createMutation.isPending}
-                      />
-                    </div>
-                    <div className="flex justify-end gap-2 pt-1">
-                      <button
-                        type="button"
-                        onClick={resetCreateForm}
-                        className="px-4 py-2 text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors disabled:opacity-50"
-                        disabled={createMutation.isPending}
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        type="submit"
-                        className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
-                        disabled={createMutation.isPending}
-                      >
-                        {createMutation.isPending ? "Creating..." : "Create & add video"}
-                      </button>
-                    </div>
-                  </form>
+                      return (
+                        <label
+                          key={collection.id}
+                          className={`flex items-center p-3 border rounded-lg cursor-pointer transition-colors ${
+                            isDisabled
+                              ? "opacity-50 cursor-not-allowed"
+                              : "hover:border-gray-400"
+                          } border-gray-200`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isInCollection}
+                            disabled={isDisabled}
+                            onChange={(e) => handleCheckboxChange(collection, e.target.checked)}
+                            className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                          />
+                          <Folder
+                            className={`w-5 h-5 mx-3 ${
+                              collection.is_default ? "text-gray-400" : "text-blue-600"
+                            }`}
+                          />
+                          <div className="flex-1">
+                            <div className="font-medium text-gray-900">{collection.name}</div>
+                            {collection.description && (
+                              <div className="text-sm text-gray-500">{collection.description}</div>
+                            )}
+                            <div className="text-xs text-gray-500 mt-1">
+                              {collection.video_count} videos
+                            </div>
+                          </div>
+                        </label>
+                      );
+                    })}
+                  </div>
                 )}
-              </div>
+
+                {/* Empty state - only when no collections and form not showing */}
+                {collectionsData && collectionsData.collections.length === 0 && !showCreateForm && (
+                  <div className="text-center py-4 text-gray-500">
+                    <FolderPlus className="w-8 h-8 mx-auto text-gray-400 mb-2" />
+                    <p className="text-sm">No collections yet. Create one below.</p>
+                  </div>
+                )}
+
+                {/* Create new collection section - ALWAYS visible */}
+                <div className="mt-4 pt-4 border-t border-gray-200">
+                  {!showCreateForm ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowCreateForm(true);
+                        setError("");
+                      }}
+                      className="w-full flex items-center justify-center gap-2 px-4 py-3 text-blue-600 border border-dashed border-blue-300 rounded-lg hover:bg-blue-50 hover:border-blue-400 transition-colors"
+                      disabled={createMutation.isPending}
+                    >
+                      <Plus className="w-4 h-4" />
+                      Create new collection
+                    </button>
+                  ) : (
+                    <form onSubmit={handleCreateCollection} className="space-y-3">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          Collection name <span className="text-red-500">*</span>
+                        </label>
+                        <input
+                          type="text"
+                          value={newCollectionName}
+                          onChange={(e) => setNewCollectionName(e.target.value)}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          placeholder="e.g., Course playlist"
+                          disabled={createMutation.isPending}
+                          autoFocus
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          Description (optional)
+                        </label>
+                        <input
+                          type="text"
+                          value={newCollectionDescription}
+                          onChange={(e) => setNewCollectionDescription(e.target.value)}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          placeholder="What is this collection for?"
+                          disabled={createMutation.isPending}
+                        />
+                      </div>
+                      <div className="flex justify-end gap-2 pt-1">
+                        <button
+                          type="button"
+                          onClick={resetCreateForm}
+                          className="px-4 py-2 text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors disabled:opacity-50"
+                          disabled={createMutation.isPending}
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="submit"
+                          className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
+                          disabled={createMutation.isPending}
+                        >
+                          {createMutation.isPending ? "Creating..." : "Create & add video"}
+                        </button>
+                      </div>
+                    </form>
+                  )}
+                </div>
+              </>
             )}
           </div>
 

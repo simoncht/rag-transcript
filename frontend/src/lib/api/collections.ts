@@ -13,8 +13,10 @@ import type {
 /**
  * Get all collections for the current user
  */
-export async function getCollections(): Promise<CollectionListResponse> {
-  const response = await apiClient.get("/collections");
+export async function getCollections(skip = 0, limit = 50): Promise<CollectionListResponse> {
+  const response = await apiClient.get("/collections", {
+    params: { skip, limit },
+  });
   return response.data;
 }
 

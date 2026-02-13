@@ -1,7 +1,7 @@
 "use client";
 
 import { Suspense, useState, useEffect, useMemo } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
 import { formatDistanceToNow } from "date-fns";
 import { parseUTCDate } from "@/lib/utils";
@@ -12,6 +12,10 @@ import { conversationsApi } from "@/lib/api/conversations";
 import { videosApi } from "@/lib/api/videos";
 import { getCollections } from "@/lib/api/collections";
 import { Plus, MessageSquare, Loader2, Folder, Search } from "lucide-react";
+import { usePaginationParams } from "@/hooks/usePaginationParams";
+import { PaginationBar } from "@/components/shared/PaginationBar";
+import { useToast } from "@/hooks/use-toast";
+import { ToastAction } from "@/components/ui/toast";
 import { ConversationActionsMenu } from "@/components/conversations/ConversationActionsMenu";
 import { InlineRenameInput } from "@/components/conversations/InlineRenameInput";
 import { Button } from "@/components/ui/button";
@@ -50,15 +54,18 @@ function ConversationsPageContent() {
   const [searchTerm, setSearchTerm] = useState("");
   const [sortOrder, setSortOrder] = useState<"recent" | "messages" | "alpha">("recent");
 
+  const { page, pageSize, skip, setPage, setPageSize } = usePaginationParams();
   const queryClient = useQueryClient();
   const router = useRouter();
   const searchParams = useSearchParams();
   const sourceParam = searchParams.get("source");
+  const { toast } = useToast();
 
-  const { data: conversationsData, isLoading: conversationsLoading } = useQuery({
-    queryKey: ["conversations"],
-    queryFn: () => conversationsApi.list(),
+  const { data: conversationsData, isLoading: conversationsLoading, isFetching } = useQuery({
+    queryKey: ["conversations", { page, pageSize }],
+    queryFn: () => conversationsApi.list(skip, pageSize),
     enabled: canFetch,
+    placeholderData: keepPreviousData,
   });
 
   const { data: videosData } = useQuery({
@@ -69,7 +76,7 @@ function ConversationsPageContent() {
 
   const { data: collectionsData, isLoading: collectionsLoading } = useQuery({
     queryKey: ["collections"],
-    queryFn: getCollections,
+    queryFn: () => getCollections(),
     enabled: canFetch && showCreateForm,
   });
 
@@ -98,12 +105,37 @@ function ConversationsPageContent() {
     },
   });
 
-  // Auto-create conversation when ?source=<id> is present (from "Chat with this document/video")
+  // Auto-resume or create conversation when ?source=<id> is present (from "Chat with this document/video")
   const [sourceHandled, setSourceHandled] = useState(false);
   useEffect(() => {
     if (sourceParam && canFetch && !sourceHandled && !createMutation.isPending) {
       setSourceHandled(true);
-      createMutation.mutate({ title: "", options: { selectedVideoIds: [sourceParam] } });
+      (async () => {
+        try {
+          const existing = await conversationsApi.findBySource({ videoId: sourceParam });
+          if (existing.total > 0) {
+            router.push(`/conversations/${existing.conversations[0].id}`);
+            toast({
+              title: "Resumed conversation",
+              description: existing.conversations[0].title || "Previous conversation",
+              action: (
+                <ToastAction
+                  altText="Start new conversation"
+                  onClick={() => {
+                    createMutation.mutate({ title: "", options: { selectedVideoIds: [sourceParam] } });
+                  }}
+                >
+                  New chat
+                </ToastAction>
+              ),
+            });
+            return;
+          }
+        } catch {
+          // Fall through to create on lookup failure
+        }
+        createMutation.mutate({ title: "", options: { selectedVideoIds: [sourceParam] } });
+      })();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sourceParam, canFetch, sourceHandled]);
@@ -200,9 +232,9 @@ function ConversationsPageContent() {
           <p className="text-sm text-muted-foreground">
             Create focused chats over your content and pick up where you left off.
           </p>
-          {conversationsData?.conversations && conversationsData.conversations.length > 0 && (
+          {conversationsData && (conversationsData.total ?? conversationsData.conversations.length) > 0 && (
             <div className="flex items-center gap-2 text-xs text-muted-foreground pt-1">
-              <span>{conversationsData.conversations.length} conversation{conversationsData.conversations.length !== 1 ? 's' : ''}</span>
+              <span>{conversationsData.total ?? conversationsData.conversations.length} conversation{(conversationsData.total ?? conversationsData.conversations.length) !== 1 ? 's' : ''}</span>
               <span>•</span>
               <span>
                 {conversationsData.conversations.reduce((sum, c) => sum + (c.message_count || 0), 0)} message{conversationsData.conversations.reduce((sum, c) => sum + (c.message_count || 0), 0) !== 1 ? 's' : ''}
@@ -457,7 +489,7 @@ function ConversationsPageContent() {
                   </p>
                 </div>
               ) : (
-                <div className="divide-y rounded-md border bg-muted/20">
+                <div className={`divide-y rounded-md border bg-muted/20 transition-opacity ${isFetching && !conversationsLoading ? "opacity-60" : ""}`}>
                   {filteredConversations.map((conversation) => (
                     <button
                       key={conversation.id}
@@ -515,6 +547,18 @@ function ConversationsPageContent() {
                     </button>
                   ))}
                 </div>
+              )}
+
+              {conversationsData && (conversationsData.total ?? 0) > 0 && (
+                <PaginationBar
+                  page={page}
+                  pageSize={pageSize}
+                  total={conversationsData.total ?? conversationsData.conversations.length}
+                  onPageChange={setPage}
+                  onPageSizeChange={setPageSize}
+                  isLoading={isFetching}
+                  itemLabel="conversations"
+                />
               )}
             </div>
           </CardContent>
