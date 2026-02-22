@@ -427,6 +427,155 @@ class TestVideoCountInfluence:
         assert result.confidence > 0.5
 
 
+class TestBroadQueryCoverage:
+    """Tests for broad query patterns that previously misclassified as PRECISION.
+
+    These are the 11 real-world queries from the coverage bug investigation.
+    All broad queries should classify as COVERAGE, especially with many videos.
+    """
+
+    @pytest.fixture
+    def classifier(self):
+        """Create a fresh classifier instance."""
+        return IntentClassifier()
+
+    def test_different_themes_grouped_by(self, classifier):
+        """The original bug query — should be COVERAGE."""
+        result = classifier.classify_sync(
+            query="what are the different themes can each of these sources be grouped by?",
+            mode="summarize",
+            num_videos=40,
+        )
+        assert result.intent == QueryIntent.COVERAGE
+
+    def test_what_topics_do_videos_cover(self, classifier):
+        """Should detect topic coverage query."""
+        result = classifier.classify_sync(
+            query="what topics do these videos cover?",
+            mode="summarize",
+            num_videos=40,
+        )
+        assert result.intent == QueryIntent.COVERAGE
+
+    def test_group_by_subject_matter(self, classifier):
+        """Should detect grouping queries."""
+        result = classifier.classify_sync(
+            query="group these by subject matter",
+            mode="summarize",
+            num_videos=40,
+        )
+        assert result.intent == QueryIntent.COVERAGE
+
+    def test_organize_into_categories(self, classifier):
+        """Should detect organize/categorize queries."""
+        result = classifier.classify_sync(
+            query="organize these sources into categories",
+            mode="summarize",
+            num_videos=40,
+        )
+        assert result.intent == QueryIntent.COVERAGE
+
+    def test_break_down_content_of_all_40_videos(self, classifier):
+        """Should handle 'all N videos' pattern."""
+        result = classifier.classify_sync(
+            query="break down the content of all 40 videos",
+            mode="summarize",
+            num_videos=40,
+        )
+        assert result.intent == QueryIntent.COVERAGE
+
+    def test_what_kind_of_content(self, classifier):
+        """Should detect content discovery queries."""
+        result = classifier.classify_sync(
+            query="what kind of content do I have?",
+            mode="summarize",
+            num_videos=40,
+        )
+        assert result.intent == QueryIntent.COVERAGE
+
+    def test_what_can_i_learn(self, classifier):
+        """Should detect learning/coverage queries."""
+        result = classifier.classify_sync(
+            query="what can I learn from all these videos?",
+            mode="summarize",
+            num_videos=40,
+        )
+        assert result.intent == QueryIntent.COVERAGE
+
+    def test_how_would_you_organize(self, classifier):
+        """Should detect organization queries."""
+        result = classifier.classify_sync(
+            query="how would you organize these videos?",
+            mode="summarize",
+            num_videos=40,
+        )
+        assert result.intent == QueryIntent.COVERAGE
+
+    def test_each_video_about(self, classifier):
+        """Should detect 'each video' pattern (already worked)."""
+        result = classifier.classify_sync(
+            query="what is each video about?",
+            mode="summarize",
+            num_videos=40,
+        )
+        assert result.intent == QueryIntent.COVERAGE
+
+    def test_every_source(self, classifier):
+        """Should detect 'every source' pattern (already worked)."""
+        result = classifier.classify_sync(
+            query="list the main ideas from every source",
+            mode="summarize",
+            num_videos=40,
+        )
+        assert result.intent == QueryIntent.COVERAGE
+
+    def test_overview(self, classifier):
+        """Should detect 'overview' pattern (already worked)."""
+        result = classifier.classify_sync(
+            query="give me an overview of everything",
+            mode="summarize",
+            num_videos=40,
+        )
+        assert result.intent == QueryIntent.COVERAGE
+
+
+class TestCrossSourceThreshold:
+    """Tests for the adjusted cross-source keyword threshold."""
+
+    @pytest.fixture
+    def classifier(self):
+        """Create a fresh classifier instance."""
+        return IntentClassifier()
+
+    def test_single_keyword_with_many_videos_routes_coverage(self, classifier):
+        """With >5 videos, a single cross-source keyword should trigger COVERAGE."""
+        result = classifier.classify_sync(
+            query="what are the different themes here?",
+            mode="deep_dive",
+            num_videos=20,
+        )
+        assert result.intent == QueryIntent.COVERAGE
+
+    def test_single_keyword_with_few_videos_stays_precision(self, classifier):
+        """With <=5 videos, a single keyword should NOT trigger COVERAGE."""
+        result = classifier.classify_sync(
+            query="tell me about the theme",
+            mode="deep_dive",
+            num_videos=3,
+        )
+        # Should not match coverage patterns and fall to mode-based precision
+        assert result.intent == QueryIntent.PRECISION
+
+    def test_two_keywords_with_few_videos_routes_coverage(self, classifier):
+        """With <=5 videos, 2+ keywords should still trigger COVERAGE."""
+        result = classifier.classify_sync(
+            query="compare the themes and differences",
+            mode="deep_dive",
+            num_videos=3,
+        )
+        assert result.intent == QueryIntent.COVERAGE
+
+
 class TestGetIntentClassifier:
     """Tests for the global service getter."""
 
@@ -435,6 +584,219 @@ class TestGetIntentClassifier:
         classifier1 = get_intent_classifier()
         classifier2 = get_intent_classifier()
         assert classifier1 is classifier2
+
+
+class TestPatternCollisionGuards:
+    """Guards against COVERAGE patterns accidentally matching PRECISION queries.
+
+    The new patterns (different/various themes, grouped, categoriz, classify)
+    could collide with precision queries that happen to contain these words.
+    This is the highest-risk regression area.
+    """
+
+    @pytest.fixture
+    def classifier(self):
+        """Create a fresh classifier instance."""
+        return IntentClassifier()
+
+    def test_why_question_stays_precision_despite_themes_word(self, classifier):
+        """'why do different themes emerge?' — has 'different themes' COVERAGE
+        pattern but 'why do' is a strong PRECISION signal."""
+        result = classifier.classify_sync(
+            query="why do different themes emerge in these videos?",
+            mode="deep_dive",
+            num_videos=10,
+        )
+        # PRECISION or HYBRID, NOT pure COVERAGE
+        assert result.intent in [QueryIntent.PRECISION, QueryIntent.HYBRID]
+
+    def test_find_specific_category_stays_precision(self, classifier):
+        """'find the part about categorization' — 'categoriz' matches COVERAGE
+        but 'find the part' is PRECISION."""
+        result = classifier.classify_sync(
+            query="find the part about categorization",
+            mode="deep_dive",
+            num_videos=10,
+        )
+        assert result.intent in [QueryIntent.PRECISION, QueryIntent.HYBRID]
+
+    def test_what_did_speaker_say_about_topics_stays_precision(self, classifier):
+        """'what did the speaker say about topics?' — 'topics' is a cross-source
+        keyword but 'what did X say about' is a strong PRECISION pattern."""
+        result = classifier.classify_sync(
+            query="what did the speaker say about topics?",
+            mode="deep_dive",
+            num_videos=10,
+        )
+        assert result.intent == QueryIntent.PRECISION
+
+    def test_timestamp_request_with_group_word(self, classifier):
+        """'at what timestamp do they discuss group dynamics?' — 'group' matches
+        COVERAGE keyword but 'timestamp' is PRECISION."""
+        result = classifier.classify_sync(
+            query="at what timestamp do they discuss group dynamics?",
+            mode="deep_dive",
+            num_videos=10,
+        )
+        assert result.intent in [QueryIntent.PRECISION, QueryIntent.HYBRID]
+
+    def test_quote_about_different_themes(self, classifier):
+        """'quote what they said about different themes' — 'different themes'
+        COVERAGE pattern but 'quote' is PRECISION."""
+        result = classifier.classify_sync(
+            query="quote what they said about different themes",
+            mode="deep_dive",
+            num_videos=10,
+        )
+        assert result.intent in [QueryIntent.PRECISION, QueryIntent.HYBRID]
+
+
+class TestCrossSourceBoundaryBehavior:
+    """Tests the num_videos > 5 threshold boundary exactly.
+
+    The min_hits = 1 if num_videos > 5 else 2 boundary is critical.
+    Off-by-one bugs here would silently misroute hundreds of queries.
+    """
+
+    @pytest.fixture
+    def classifier(self):
+        """Create a fresh classifier instance."""
+        return IntentClassifier()
+
+    def test_boundary_5_videos_requires_two_keywords(self, classifier):
+        """num_videos=5 (boundary), query with 1 cross-source keyword -> PRECISION."""
+        result = classifier.classify_sync(
+            query="tell me about the theme",
+            mode="deep_dive",
+            num_videos=5,
+        )
+        # With only 1 keyword hit and num_videos=5 (not >5), threshold is 2
+        assert result.intent == QueryIntent.PRECISION
+
+    def test_boundary_6_videos_accepts_one_keyword(self, classifier):
+        """num_videos=6 (just past boundary), query with 1 keyword -> COVERAGE."""
+        result = classifier.classify_sync(
+            query="tell me about the theme",
+            mode="deep_dive",
+            num_videos=6,
+        )
+        # With 1 keyword hit ("theme") and num_videos=6 (>5), threshold drops to 1
+        assert result.intent == QueryIntent.COVERAGE
+
+    def test_zero_videos_no_crash(self, classifier):
+        """num_videos=0, ambiguous query -> no exception."""
+        result = classifier.classify_sync(
+            query="tell me about themes",
+            mode="summarize",
+            num_videos=0,
+        )
+        assert isinstance(result, IntentClassification)
+        assert result.intent in [QueryIntent.COVERAGE, QueryIntent.PRECISION, QueryIntent.HYBRID]
+
+    def test_negative_videos_no_crash(self, classifier):
+        """num_videos=-1 -> no exception."""
+        result = classifier.classify_sync(
+            query="tell me about themes",
+            mode="summarize",
+            num_videos=-1,
+        )
+        assert isinstance(result, IntentClassification)
+
+
+class TestNewCoveragePatternExhaustive:
+    """Each new COVERAGE pattern tested in isolation to verify it fires."""
+
+    @pytest.fixture
+    def classifier(self):
+        """Create a fresh classifier instance."""
+        return IntentClassifier()
+
+    def test_pattern_various_categories(self, classifier):
+        """Pattern: (different|various|main|major) (themes?|topics?|categories)."""
+        result = classifier.classify_sync(
+            query="what are the various categories?",
+            mode="summarize",
+            num_videos=10,
+        )
+        assert result.intent == QueryIntent.COVERAGE
+
+    def test_pattern_classify_content(self, classifier):
+        """Pattern: classif(y|ied|ying)."""
+        result = classifier.classify_sync(
+            query="classify this content for me",
+            mode="summarize",
+            num_videos=10,
+        )
+        assert result.intent == QueryIntent.COVERAGE
+
+    def test_pattern_break_down_all(self, classifier):
+        """Pattern: break down .* (content|all|these|the)."""
+        result = classifier.classify_sync(
+            query="break down all the content",
+            mode="summarize",
+            num_videos=10,
+        )
+        assert result.intent == QueryIntent.COVERAGE
+
+    def test_pattern_all_40_videos(self, classifier):
+        """Pattern: all \\d+ (videos?|sources?|transcripts?)."""
+        result = classifier.classify_sync(
+            query="summarize all 40 videos",
+            mode="summarize",
+            num_videos=40,
+        )
+        assert result.intent == QueryIntent.COVERAGE
+
+    def test_pattern_how_would_you_categorize(self, classifier):
+        """Pattern: how would you (organize|group|categorize|classify)."""
+        result = classifier.classify_sync(
+            query="how would you categorize these?",
+            mode="summarize",
+            num_videos=10,
+        )
+        assert result.intent == QueryIntent.COVERAGE
+
+
+class TestExtendedCrossSourceKeywords:
+    """Test new cross-source keywords specifically."""
+
+    @pytest.fixture
+    def classifier(self):
+        """Create a fresh classifier instance."""
+        return IntentClassifier()
+
+    def test_new_keyword_organize_triggers_coverage(self, classifier):
+        """'organize' keyword with >5 videos -> COVERAGE."""
+        result = classifier.classify_sync(
+            query="how should I organize this?",
+            mode="deep_dive",
+            num_videos=10,
+        )
+        assert result.intent == QueryIntent.COVERAGE
+
+    def test_new_keyword_content_triggers_coverage(self, classifier):
+        """'content' keyword with >5 videos -> COVERAGE."""
+        result = classifier.classify_sync(
+            query="what content is available?",
+            mode="deep_dive",
+            num_videos=10,
+        )
+        assert result.intent == QueryIntent.COVERAGE
+
+    def test_keyword_hit_scaling_confidence(self, classifier):
+        """3 keyword hits -> higher confidence than 1 keyword hit."""
+        result_1kw = classifier.classify_sync(
+            query="tell me about themes",
+            mode="deep_dive",
+            num_videos=10,
+        )
+        result_3kw = classifier.classify_sync(
+            query="compare themes and differences across different topics",
+            mode="deep_dive",
+            num_videos=10,
+        )
+        # More keyword hits should give higher or equal confidence
+        assert result_3kw.confidence >= result_1kw.confidence
 
 
 class TestIntegrationScenarios:
