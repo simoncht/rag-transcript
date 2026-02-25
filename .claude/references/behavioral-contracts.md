@@ -1,0 +1,79 @@
+# Behavioral Contracts
+
+Machine-readable list of behavioral promises the system makes to users. Each contract has a unique ID, a description of what it promises, where it's implemented, and how to validate it.
+
+**Last updated:** 2026-02-23
+
+---
+
+## Memory Contracts (MEM-*)
+
+| ID | Promise | Implementation | Validation |
+|----|---------|----------------|------------|
+| MEM-001 | No memory dead zone: fact extraction covers turns before they leave history window | `conversations.py:1242` `.limit(10)` + fact threshold `>= 15` at `conversations.py:1445` | Assert `FACT_THRESHOLD <= HISTORY_LIMIT * 2` OR bridging mechanism exists (e.g., facts extracted before old messages truncated) |
+| MEM-002 | Identity facts survive indefinitely | `memory_consolidation.py:24-28` identity skip + `memory_scoring.py:38-44` category priority 1.0 | Identity facts from turn 1 still present at turn 100 — consolidation must not prune identity-category facts |
+| MEM-003 | Consolidation runs during active conversations when fact count > threshold | `memory_consolidation.py` only runs for stale convos (24h inactive via beat task) | Assert consolidation triggered inline when facts > `MAX_FACTS_PER_CONVERSATION` (currently 50) |
+| MEM-004 | Fact values merge on update (not silently dropped) | `fact_extraction.py` dedup checks key only | When fact "speaker=X" is updated to "speaker=X Y", new value replaces old — not skipped as duplicate |
+
+---
+
+## Citation Contracts (CIT-*)
+
+| ID | Promise | Implementation | Validation |
+|----|---------|----------------|------------|
+| CIT-001 | `was_used_in_response` reflects actual LLM output, not always True | `message.py:114-116` default=True, never set to False anywhere in codebase | Parse LLM response for `[N]` markers after generation, set `was_used_in_response=False` for unreferenced chunks |
+| CIT-002 | All `[N]` markers in LLM output map to valid retrieved chunks | `conversations.py` system prompt + chunk_refs | Assert `max(N)` in LLM output `<= len(chunk_refs_response)` — no orphan citation markers |
+| CIT-003 | Jump URLs have correct timestamps | `conversations.py` `_build_youtube_jump_url` | Assert URL `t=` parameter matches `chunk.start_timestamp` (within 1s tolerance) |
+
+---
+
+## Accuracy Contracts (ACC-*)
+
+| ID | Promise | Implementation | Validation |
+|----|---------|----------------|------------|
+| ACC-001 | Storage vector size calculation uses actual embedding dimensions | `storage_calculator.py:23` hardcodes `BYTES_PER_VECTOR = 5 * 1024` assuming 1536 dims | Assert `BYTES_PER_VECTOR` matches `(embedding_model_dimensions * 4) + overhead`. BGE-base uses 768 dims, not 1536. |
+| ACC-002 | Token estimates within 20% of actual | `conversations.py` uses `word_count * 1.3` heuristic | Compare streaming token estimates vs actual token counts from LLM response usage metadata |
+| ACC-003 | BM25 not skipped for entity/name queries | `bm25_search.py:50-52` skips queries with `<3` non-stopword tokens | Queries with proper nouns (e.g., "Ken Robinson") must bypass the min-token gate or treat proper nouns as content tokens |
+
+---
+
+## Content Parity Contracts (PAR-*)
+
+| ID | Promise | Implementation | Validation |
+|----|---------|----------------|------------|
+| PAR-001 | Documents get same enrichment quality as videos | `document_tasks.py` vs `video_tasks.py` | Both call `ContextualEnricher` with equivalent params (full_text, content_type, usage_collector) |
+| PAR-002 | Enrichment logs warning when full-text is truncated | `enrichment.py:94` silently truncates at 48K chars | Assert `logger.warning()` called when `len(full_text) > 48000` before truncation |
+
+---
+
+## Retrieval Contracts (RET-*)
+
+| ID | Promise | Implementation | Validation |
+|----|---------|----------------|------------|
+| RET-001 | Self-RAG corrective actions execute when enabled | `two_level_retriever.py:785-828` has REFORMULATE/EXPAND_SCOPE/INSUFFICIENT handlers | When `enable_relevance_grading=True`, REFORMULATE triggers actual re-retrieval with reformulated query, not just logging |
+
+---
+
+## How to Use This Document
+
+### For proactive skills
+Shell scripts grep for specific patterns (`.limit(N)`, `was_used_in_response`, etc.) and flag when contracts appear violated.
+
+### For test-before-complete
+Claude reads this file, identifies which contracts are touched by changed files, and verifies each touched contract still holds.
+
+### For contract unit tests
+`backend/tests/unit/test_memory_contracts.py` and `test_citation_contracts.py` encode the validation column as automated assertions.
+
+### For full audit (`/behavioral-contracts`)
+Claude reads every contract, checks the implementing code, and produces a pass/fail report.
+
+---
+
+## Contract Status Legend
+
+When reporting contract status:
+- **PASS** — Implementation matches promise, validation confirms
+- **BROKEN** — Implementation contradicts promise (e.g., `was_used_in_response` always True)
+- **DEGRADED** — Implementation partially fulfills promise (e.g., dead zone exists but is small)
+- **UNTESTED** — Cannot verify without live infrastructure

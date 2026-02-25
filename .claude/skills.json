@@ -1,13 +1,81 @@
 {
   "skills": [
     {
-      "name": "test-runner",
-      "command": ".claude/skills/test-runner.sh",
-      "description": "Run pytest tests automatically after backend code changes",
+      "name": "test-targeted",
+      "command": ".claude/skills/test-targeted.sh",
+      "description": "Run tests matching changed files only (fast, <5s)",
       "trigger": {
         "proactive": true,
         "patterns": [
+          "backend/app/**/*.py"
+        ]
+      }
+    },
+    {
+      "name": "test-before-complete",
+      "command": ".claude/skills/test-coverage-check.sh",
+      "description": "Comprehensive test coverage check with semantic gap analysis - run before completing any feature",
+      "trigger": {
+        "manual": true,
+        "patterns": [
           "backend/app/**/*.py",
+          "backend/tests/**/*.py"
+        ]
+      },
+      "prompt": ".claude/prompts/test-before-complete.md"
+    },
+    {
+      "name": "test-fix-failures",
+      "command": ".claude/skills/test-fix-failures.sh",
+      "description": "Diagnose and fix failing tests - classifies root cause and offers fixes",
+      "trigger": {
+        "manual": true
+      },
+      "prompt": ".claude/prompts/test-fix-failures.md"
+    },
+    {
+      "name": "test-generate",
+      "description": "Generate comprehensive tests for a specific source file",
+      "trigger": {
+        "manual": true
+      },
+      "prompt": ".claude/prompts/test-generate.md"
+    },
+    {
+      "name": "test-coverage-report",
+      "command": ".claude/skills/test-coverage-report.sh",
+      "description": "Live coverage analysis with per-file breakdown and priority recommendations",
+      "trigger": {
+        "manual": true
+      }
+    },
+    {
+      "name": "frontend-test-setup",
+      "description": "One-time bootstrap of Jest + React Testing Library for Next.js 14 frontend",
+      "trigger": {
+        "manual": true
+      },
+      "prompt": ".claude/prompts/frontend-test-setup.md"
+    },
+    {
+      "name": "test-api-contract",
+      "command": ".claude/skills/test-api-contract.sh",
+      "description": "Validate API route changes match Pydantic schemas",
+      "trigger": {
+        "proactive": true,
+        "patterns": [
+          "backend/app/api/routes/*.py",
+          "backend/app/schemas/*.py"
+        ]
+      }
+    },
+    {
+      "name": "test-regression-guard",
+      "command": ".claude/skills/test-regression-guard.sh",
+      "description": "Guard against test regressions - warns if test count decreases or tests break",
+      "trigger": {
+        "proactive": true,
+        "patterns": [
           "backend/tests/**/*.py"
         ]
       }
@@ -53,17 +121,9 @@
     {
       "name": "rag-smoke-test",
       "command": ".claude/skills/rag-smoke-test.sh",
-      "description": "Test the RAG pipeline end-to-end (embedding, retrieval, LLM)",
+      "description": "Test the RAG pipeline end-to-end (embedding, retrieval, LLM) - requires live infrastructure",
       "trigger": {
-        "proactive": true,
-        "patterns": [
-          "backend/app/services/chunking.py",
-          "backend/app/services/embeddings.py",
-          "backend/app/services/vector_store.py",
-          "backend/app/services/reranker.py",
-          "backend/app/services/llm_providers.py",
-          "backend/app/api/routes/conversations.py"
-        ]
+        "manual": true
       }
     },
     {
@@ -71,10 +131,6 @@
       "command": ".claude/skills/pipeline-status.sh",
       "description": "Show video processing pipeline status and system diagnostics",
       "trigger": {
-        "proactive": true,
-        "patterns": [
-          "backend/app/tasks/video_tasks.py"
-        ],
         "manual": true
       }
     },
@@ -92,6 +148,157 @@
           "backend/app/api/routes/conversations.py"
         ]
       }
+    },
+    {
+      "name": "rag-architect",
+      "description": "RAG architecture advisor - evaluates pipeline decisions against best practices. Two modes: planning review (auto-consulted for RAG file changes) and full audit (/rag-architect)",
+      "trigger": {
+        "manual": true,
+        "patterns": [
+          "backend/app/services/vector_store.py",
+          "backend/app/services/chunking.py",
+          "backend/app/services/enrichment.py",
+          "backend/app/services/embeddings.py",
+          "backend/app/services/query_expansion.py",
+          "backend/app/services/reranker.py",
+          "backend/app/services/llm_providers.py",
+          "backend/app/services/fact_extraction.py",
+          "backend/app/api/routes/conversations.py"
+        ]
+      },
+      "prompt": ".claude/prompts/rag-architect.md"
+    },
+    {
+      "name": "ux-review",
+      "description": "UX reviewer - visual inspection + code analysis of frontend pages. Two modes: page review (specify route) and full audit (walks all key routes). Uses browser automation for screenshots, accessibility trees, responsive testing, and dark mode validation.",
+      "trigger": {
+        "manual": true
+      },
+      "prompt": ".claude/prompts/ux-review.md"
+    },
+    {
+      "name": "ux-flows",
+      "description": "Usability and engagement analyst - traces user journeys through the running app to find friction, dead ends, and missed engagement opportunities. Two modes: single flow (specify journey) and full assessment (all 6 core flows).",
+      "trigger": {
+        "manual": true
+      },
+      "prompt": ".claude/prompts/ux-flows.md"
+    },
+    {
+      "name": "product-builder",
+      "description": "Product architect — turns feature ideas into detailed implementation specs. Three modes: feature spec (ready-to-build plan for new content types or features), roadmap review (what to build next), and architecture check (multi-content compatibility).",
+      "trigger": {
+        "manual": true,
+        "patterns": [
+          "backend/app/providers/**/*.py",
+          "backend/app/models/**/*.py",
+          "backend/app/tasks/**/*.py"
+        ]
+      },
+      "prompt": ".claude/prompts/product-builder.md"
+    },
+    {
+      "name": "rag-quality-gate",
+      "command": ".claude/skills/rag-quality-gate.sh",
+      "description": "Validate RAG retrieval quality: intent classification accuracy, multi-video coverage, diversity metrics, and summary availability",
+      "trigger": {
+        "proactive": true,
+        "patterns": [
+          "backend/app/services/intent_classifier.py",
+          "backend/app/services/two_level_retriever.py",
+          "backend/app/services/vector_store.py",
+          "backend/app/core/config.py"
+        ]
+      },
+      "prompt": ".claude/prompts/rag-quality-gate.md"
+    },
+    {
+      "name": "rag-eval",
+      "command": ".claude/skills/rag-eval.sh",
+      "description": "Run retrieval evaluation against golden dataset. Computes recall@K, NDCG@K, MRR, answer quality.",
+      "trigger": {
+        "manual": true,
+        "patterns": [
+          "backend/app/services/embeddings.py",
+          "backend/app/services/enrichment.py",
+          "backend/app/services/vector_store.py",
+          "backend/app/services/reranker.py",
+          "backend/app/services/bm25_search.py",
+          "backend/app/services/query_expansion.py",
+          "backend/app/api/routes/conversations.py"
+        ]
+      }
+    },
+    {
+      "name": "rag-eval-compare",
+      "command": ".claude/skills/rag-eval-compare.sh",
+      "description": "Compare current RAG metrics against saved baseline. Shows delta per metric.",
+      "trigger": {
+        "manual": true
+      }
+    },
+    {
+      "name": "reembed-chunks",
+      "command": ".claude/skills/reembed-chunks.sh",
+      "description": "Re-embed all chunks after embedding model change. Supports --dry-run, --batch-size, --video-id.",
+      "trigger": {
+        "manual": true
+      }
+    },
+    {
+      "name": "conversation-quality",
+      "command": ".claude/skills/conversation-quality.sh",
+      "description": "Validate conversation behavioral contracts: memory retention, history limits, fact extraction timing",
+      "trigger": {
+        "proactive": true,
+        "patterns": [
+          "backend/app/api/routes/conversations.py",
+          "backend/app/api/utils.py",
+          "backend/app/services/fact_extraction.py",
+          "backend/app/services/memory_scoring.py",
+          "backend/app/services/memory_consolidation.py"
+        ]
+      },
+      "prompt": ".claude/prompts/conversation-quality.md"
+    },
+    {
+      "name": "citation-accuracy",
+      "command": ".claude/skills/citation-accuracy.sh",
+      "description": "Validate citation grounding: was_used_in_response tracking, jump URL correctness, citation marker consistency",
+      "trigger": {
+        "proactive": true,
+        "patterns": [
+          "backend/app/api/routes/conversations.py",
+          "backend/app/models/message.py",
+          "backend/app/services/two_level_retriever.py",
+          "frontend/src/components/shared/CitationBadge.tsx"
+        ]
+      },
+      "prompt": ".claude/prompts/citation-accuracy.md"
+    },
+    {
+      "name": "content-parity",
+      "command": ".claude/skills/content-parity.sh",
+      "description": "Validate document and video processing parity: enrichment, chunking, citation consistency",
+      "trigger": {
+        "proactive": true,
+        "patterns": [
+          "backend/app/tasks/document_tasks.py",
+          "backend/app/tasks/video_tasks.py",
+          "backend/app/services/document_chunker.py",
+          "backend/app/services/chunking.py",
+          "backend/app/services/enrichment.py"
+        ]
+      },
+      "prompt": ".claude/prompts/content-parity.md"
+    },
+    {
+      "name": "behavioral-contracts",
+      "description": "Full audit of all behavioral promises: memory, citations, accuracy, content parity. Run before major releases.",
+      "trigger": {
+        "manual": true
+      },
+      "prompt": ".claude/prompts/behavioral-contracts.md"
     }
   ]
 }
