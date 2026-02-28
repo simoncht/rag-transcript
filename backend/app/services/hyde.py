@@ -10,7 +10,7 @@ fusion (already in conversations.py) naturally picks the best chunks from either
 original or HyDE retrieval.
 """
 import logging
-from typing import Any, List, Optional
+from typing import Any, Optional
 
 import numpy as np
 

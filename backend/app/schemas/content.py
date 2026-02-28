@@ -1,10 +1,10 @@
 """
 Pydantic schemas for universal content (document upload) API endpoints.
 """
-from typing import Optional, List, Dict, Literal
+from typing import Optional, List, Dict
 from datetime import datetime
 from uuid import UUID
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 
 # Supported content types (excluding 'youtube' which uses video endpoints)

@@ -153,18 +153,6 @@ class QuotaService:
             warning_thresholds=quota_type.warning_thresholds or [50, 80, 95],
         )
 
-    def get_all_quotas(self, user_id: UUID) -> Dict[str, QuotaInfo]:
-        """Get all active quotas for a user."""
-        quota_types = (
-            self.db.query(QuotaType)
-            .filter(QuotaType.is_active == True)  # noqa: E712
-            .all()
-        )
-
-        return {
-            qt.id: self.get_quota(user_id, qt.id) for qt in quota_types
-        }
-
     def check_quota(
         self,
         user_id: UUID,
@@ -291,107 +279,6 @@ class QuotaService:
 
         return self.get_quota(user_id, quota_type_id)
 
-    def set_admin_override(
-        self,
-        user_id: UUID,
-        quota_type_id: str,
-        new_limit: float,
-    ) -> QuotaInfo:
-        """
-        Set an admin override for a user's quota limit.
-
-        Args:
-            user_id: User UUID
-            quota_type_id: Quota type identifier
-            new_limit: New limit value (-1 for unlimited)
-
-        Returns:
-            Updated QuotaInfo
-        """
-        quota_type = self.db.query(QuotaType).get(quota_type_id)
-        if not quota_type:
-            raise ValueError(f"Unknown quota type: {quota_type_id}")
-
-        usage = self._get_or_create_usage(user_id, quota_type)
-        usage.limit_value = Decimal(str(new_limit))
-        usage.is_unlimited = new_limit < 0
-        usage.is_admin_override = True
-        usage.updated_at = datetime.utcnow()
-        self.db.commit()
-
-        logger.info(
-            f"Admin override set for user {user_id}, quota {quota_type_id}: "
-            f"limit={new_limit}, unlimited={new_limit < 0}"
-        )
-
-        return self.get_quota(user_id, quota_type_id)
-
-    def reset_usage(self, user_id: UUID, quota_type_id: str) -> QuotaInfo:
-        """
-        Reset usage for a quota type (admin action).
-
-        Args:
-            user_id: User UUID
-            quota_type_id: Quota type identifier
-
-        Returns:
-            Updated QuotaInfo
-        """
-        quota_type = self.db.query(QuotaType).get(quota_type_id)
-        if not quota_type:
-            raise ValueError(f"Unknown quota type: {quota_type_id}")
-
-        usage = self._get_or_create_usage(user_id, quota_type)
-        usage.used_value = Decimal("0")
-        usage.updated_at = datetime.utcnow()
-        self.db.commit()
-
-        logger.info(f"Reset quota {quota_type_id} for user {user_id}")
-
-        return self.get_quota(user_id, quota_type_id)
-
-    def refresh_limits_from_tier(self, user_id: UUID) -> None:
-        """
-        Refresh all quota limits from the user's current tier.
-
-        Called when user tier changes (upgrade/downgrade).
-        Does not affect admin overrides.
-        """
-        user = self.db.query(User).get(user_id)
-        if not user:
-            raise ValueError(f"User not found: {user_id}")
-
-        quota_types = (
-            self.db.query(QuotaType)
-            .filter(QuotaType.is_active == True)  # noqa: E712
-            .all()
-        )
-
-        for qt in quota_types:
-            usage = self._get_or_create_usage(user_id, qt)
-
-            # Skip admin overrides
-            if usage.is_admin_override:
-                continue
-
-            # Get new limit from tier
-            tier_limit = (
-                self.db.query(TierQuotaLimit)
-                .filter(
-                    TierQuotaLimit.tier == user.subscription_tier,
-                    TierQuotaLimit.quota_type_id == qt.id,
-                )
-                .first()
-            )
-
-            if tier_limit:
-                usage.limit_value = tier_limit.limit_value
-                usage.is_unlimited = tier_limit.is_unlimited
-                usage.updated_at = datetime.utcnow()
-
-        self.db.commit()
-        logger.info(f"Refreshed quota limits for user {user_id} from tier {user.subscription_tier}")
-
     def _get_or_create_usage(
         self,
         user_id: UUID,
@@ -472,9 +359,3 @@ class QuotaService:
             return period_start.replace(year=period_start.year + 1)
         else:  # "none"
             return None
-
-
-# Convenience function for getting a quota service instance
-def get_quota_service(db: Session) -> QuotaService:
-    """Get a QuotaService instance."""
-    return QuotaService(db)

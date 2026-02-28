@@ -6,7 +6,8 @@ import { usePathname } from "next/navigation";
 /**
  * Performance Logger Component
  *
- * Logs navigation timing to console to identify bottlenecks
+ * Logs navigation timing to console to identify bottlenecks.
+ * Only active in development mode.
  */
 export function PerformanceLogger() {
   const pathname = usePathname();
@@ -14,6 +15,7 @@ export function PerformanceLogger() {
   const renderCountRef = useRef(0);
 
   useEffect(() => {
+    if (process.env.NODE_ENV !== "development") return;
     renderCountRef.current++;
     const now = Date.now();
     const timeSinceStart = now - startTimeRef.current;
@@ -25,6 +27,7 @@ export function PerformanceLogger() {
   });
 
   useEffect(() => {
+    if (process.env.NODE_ENV !== "development") return;
     // Reset on pathname change
     startTimeRef.current = Date.now();
     renderCountRef.current = 0;

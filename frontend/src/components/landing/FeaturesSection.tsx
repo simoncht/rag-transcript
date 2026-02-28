@@ -56,6 +56,16 @@ const categories: FeatureCategory[] = [
       {
         icon: (
           <svg className="w-7 h-7" fill="none" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" viewBox="0 0 24 24" stroke="currentColor">
+            <path d="M9 8.25H7.5a2.25 2.25 0 00-2.25 2.25v9a2.25 2.25 0 002.25 2.25h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25H15M9 12l3 3m0 0l3-3m-3 3V2.25" />
+          </svg>
+        ),
+        title: 'Upload Documents',
+        description: 'Drop in PDFs and Word docs. Same AI processing — summaries, tags, timestamps, and citations — for everything you add.',
+        badge: 'NEW',
+      },
+      {
+        icon: (
+          <svg className="w-7 h-7" fill="none" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" viewBox="0 0 24 24" stroke="currentColor">
             <path d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
           </svg>
         ),
@@ -77,6 +87,16 @@ const categories: FeatureCategory[] = [
         ),
         title: 'Cross-Video Intelligence',
         description: 'Group videos by topic or project. Ask questions across your entire library and get answers that connect ideas from multiple sources.',
+        badge: 'NEW',
+      },
+      {
+        icon: (
+          <svg className="w-7 h-7" fill="none" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" viewBox="0 0 24 24" stroke="currentColor">
+            <path d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" />
+          </svg>
+        ),
+        title: 'Discover Themes Automatically',
+        description: 'See recurring topics, patterns, and connections across your entire collection — without reading a single transcript.',
         badge: 'NEW',
       },
       {
@@ -160,9 +180,30 @@ const categories: FeatureCategory[] = [
             <path d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
           </svg>
         ),
-        title: 'Simple or Deep',
-        description: 'Quick answer mode for fast lookups. Reasoning mode for step-by-step analysis when the question is complex.',
+        title: 'Three Ways to Ask',
+        description: 'Summarize mode for quick overviews. Deep Dive for detailed analysis. Compare Sources to see where your videos agree and disagree.',
         badge: 'PRO',
+      },
+      {
+        icon: (
+          <svg className="w-7 h-7" fill="none" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" viewBox="0 0 24 24" stroke="currentColor">
+            <path d="M12 21a9.004 9.004 0 008.716-6.747M12 21a9.004 9.004 0 01-8.716-6.747M12 21c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3m0 0a8.997 8.997 0 017.843 4.582M12 3a8.997 8.997 0 00-7.843 4.582m15.686 0A11.953 11.953 0 0112 10.5c-2.998 0-5.74-1.1-7.843-2.918m15.686 0A8.959 8.959 0 0121 12c0 .778-.099 1.533-.284 2.253m0 0A17.919 17.919 0 0112 16.5c-3.162 0-6.133-.815-8.716-2.247m0 0A9.015 9.015 0 003 12c0-1.605.42-3.113 1.157-4.418" />
+          </svg>
+        ),
+        title: 'Guided Exploration',
+        description: 'After every answer, the AI suggests follow-up questions based on what it actually found — so you always know what to ask next.',
+        badge: 'NEW',
+      },
+      {
+        icon: (
+          <svg className="w-7 h-7" fill="none" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" viewBox="0 0 24 24" stroke="currentColor">
+            <path d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
+            <path d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+          </svg>
+        ),
+        title: 'See What It Remembers',
+        description: 'Open the memory panel to see exactly what facts the AI has stored from your conversations. Edit or delete anything, anytime.',
+        badge: 'NEW',
       },
     ],
   },
@@ -249,7 +290,7 @@ export default function FeaturesSection() {
         {/* View all features link */}
         <div className="text-center mt-10">
           <p className="text-gray-500">
-            While everyone else is re-reading and rewatching, you already have the answer.
+            While everyone else is re-reading and rewatching, you&apos;re already three steps ahead — with proof to back it up.
           </p>
         </div>
       </div>

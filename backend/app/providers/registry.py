@@ -5,7 +5,7 @@ The registry is a singleton that holds all registered providers,
 allowing the application to dynamically dispatch to the correct
 provider based on source type.
 """
-from typing import Dict, Optional, List
+from typing import Dict, List
 import logging
 
 from app.providers.base import ContentProvider, DiscoveryProvider

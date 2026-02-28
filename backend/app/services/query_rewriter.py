@@ -68,7 +68,7 @@ class QueryRewriterService:
     "this", "it", "that" into specific topics from prior messages.
     """
 
-    def __init__(self, llm_service: LLMService | None = None, usage_collector=None):
+    def __init__(self, llm_service: Optional[LLMService] = None, usage_collector=None):
         """
         Initialize query rewriter service.
 
@@ -228,7 +228,7 @@ Standalone Question:"""
 
 
 # Global instance
-_query_rewriter_service: QueryRewriterService | None = None
+_query_rewriter_service: Optional[QueryRewriterService] = None
 
 
 def get_query_rewriter_service() -> QueryRewriterService:

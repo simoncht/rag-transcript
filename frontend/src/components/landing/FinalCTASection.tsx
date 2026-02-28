@@ -8,12 +8,13 @@ export default function FinalCTASection() {
       <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
         {/* Heading */}
         <h2 className="text-4xl font-bold text-white mb-4">
-          Stop Searching. Start Finding.
+          What Could You Accomplish If You Never Lost an Insight Again?
         </h2>
         <p className="text-xl text-white/90 mb-8">
-          Your next research session, your next lecture review, your next content
-          project — imagine having every answer at your fingertips. That starts
-          right now.
+          Right now, there&apos;s an answer buried in a video you watched last
+          month. You could spend an hour hunting for it — or ask a question and
+          have it, with proof, in four seconds. Try it with one video. The
+          difference speaks for itself.
         </p>
 
         {/* CTA buttons */}

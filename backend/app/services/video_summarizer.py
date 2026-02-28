@@ -10,13 +10,12 @@ Based on industry best practices from Google NotebookLM and Anthropic RAG guidel
 """
 import json
 import logging
-from typing import List, Optional, Dict, Any, Tuple
+from typing import List, Optional, Tuple
 from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from app.core.config import settings
 from app.services.llm_providers import LLMService, Message
 from app.models import Video, Chunk
 
@@ -330,8 +329,3 @@ class VideoSummarizer:
 
 # Global service instance
 video_summarizer_service = VideoSummarizer()
-
-
-def get_video_summarizer_service() -> VideoSummarizer:
-    """Get video summarizer service instance."""
-    return video_summarizer_service

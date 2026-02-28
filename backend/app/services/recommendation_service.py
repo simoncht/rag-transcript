@@ -364,9 +364,3 @@ class RecommendationEngine:
                 break
 
         return result
-
-
-# Convenience function
-def get_recommendation_engine(db: Session) -> RecommendationEngine:
-    """Get a RecommendationEngine instance."""
-    return RecommendationEngine(db)

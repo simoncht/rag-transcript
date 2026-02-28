@@ -22,7 +22,6 @@ from app.models.usage import UsageEvent
 from app.services.job_cancellation import (
     cancel_video_processing,
     CleanupOption,
-    CANCELABLE_STATUSES,
 )
 from app.services.storage_calculator import StorageCalculator
 from app.services.storage import storage_service

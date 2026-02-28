@@ -5,7 +5,7 @@ Parses WebVTT captions into transcript segments compatible with Whisper output f
 """
 import re
 import logging
-from typing import List, Dict, Optional
+from typing import List, Dict
 
 logger = logging.getLogger(__name__)
 

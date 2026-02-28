@@ -3,7 +3,7 @@ NextAuth.js JWT verification for FastAPI.
 
 Verifies JWTs issued by NextAuth.js using the NEXTAUTH_SECRET.
 """
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 from datetime import datetime
 
 from fastapi import Depends, HTTPException, status

@@ -10,7 +10,7 @@ Strategy:
 - Return original + variants for multi-query retrieval
 """
 import logging
-from typing import List
+from typing import List, Optional
 from app.services.llm_providers import LLMService, Message, llm_service as _global_llm_service
 from app.core.config import settings
 
@@ -25,7 +25,7 @@ class QueryExpansionService:
     This helps capture content that uses different terminology or phrasing.
     """
 
-    def __init__(self, llm_service: LLMService | None = None, usage_collector=None):
+    def __init__(self, llm_service: Optional[LLMService] = None, usage_collector=None):
         """
         Initialize query expansion service.
 
@@ -151,7 +151,7 @@ Variant questions:"""
 
 
 # Global instance
-_query_expansion_service: QueryExpansionService | None = None
+_query_expansion_service: Optional[QueryExpansionService] = None
 
 
 def get_query_expansion_service() -> QueryExpansionService:

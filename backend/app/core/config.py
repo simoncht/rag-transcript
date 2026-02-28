@@ -88,7 +88,6 @@ class Settings(BaseSettings):
     # Whisper Transcription
     whisper_model: Literal["tiny", "base", "small", "medium", "large"] = "base"
     whisper_device: Literal["cpu", "cuda"] = "cpu"
-    whisper_compute_type: Literal["int8", "float16", "float32"] = "int8"
 
     # Chunking Configuration
     chunk_target_tokens: int = 256
@@ -203,32 +202,15 @@ class Settings(BaseSettings):
     enable_caption_extraction: bool = True  # Try YouTube captions before Whisper
     caption_preferred_language: str = "en"  # Preferred caption language
 
-    # Usage Quotas
-    free_tier_video_limit: int = 2
-    free_tier_minutes_limit: int = 1000
-    free_tier_messages_limit: int = 50
-    free_tier_storage_mb_limit: int = 1000
-
     # Stripe Payment Integration
     stripe_secret_key: str = ""
-    stripe_publishable_key: str = ""
     stripe_webhook_secret: str = ""
-
-    # Stripe Price IDs (monthly/yearly for each tier)
-    stripe_pro_monthly_price_id: str = ""
-    stripe_pro_yearly_price_id: str = ""
-    stripe_enterprise_monthly_price_id: str = ""
-    stripe_enterprise_yearly_price_id: str = ""
-
-    # YouTube Data API
-    youtube_api_key: str = ""  # Required for YouTube search/discovery
 
     # RAG Intelligence Features
     enable_followup_questions: bool = True  # Generate follow-up question suggestions after responses
 
     # Logging
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
-    log_format: Literal["json", "text"] = "json"
 
     @model_validator(mode="after")
     def validate_production_security(self):
@@ -258,13 +240,6 @@ class Settings(BaseSettings):
 
         return self
 
-    @property
-    def is_development(self) -> bool:
-        return self.environment == "development"
-
-    @property
-    def is_production(self) -> bool:
-        return self.environment == "production"
 
 
 # Global settings instance

@@ -216,6 +216,22 @@ export default function TestimonialsSection() {
         <p className="text-center text-gray-400 text-sm mt-6">
           Join 10,000+ professionals who stopped searching and started finding
         </p>
+
+        {/* Post-testimonial CTA */}
+        <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mt-8">
+          <a
+            href="/get-started"
+            className="w-full sm:w-auto bg-primary text-white px-8 py-3 rounded-lg font-semibold text-base hover:bg-primary/90 transition-colors shadow-lg text-center"
+          >
+            See for Yourself — Free
+          </a>
+          <a
+            href="#pricing"
+            className="w-full sm:w-auto text-gray-600 px-8 py-3 rounded-lg font-semibold text-base hover:bg-gray-100 transition-colors border border-gray-200 text-center"
+          >
+            Compare Plans
+          </a>
+        </div>
       </div>
     </section>
   );

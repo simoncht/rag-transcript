@@ -430,9 +430,3 @@ class NotificationService:
             pref.frequency = frequency
 
         self.db.commit()
-
-
-# Convenience function
-def get_notification_service(db: Session) -> NotificationService:
-    """Get a NotificationService instance."""
-    return NotificationService(db)

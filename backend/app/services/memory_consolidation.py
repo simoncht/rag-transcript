@@ -10,10 +10,10 @@ This prevents fact accumulation (98→142 in one session) and keeps memory focus
 """
 import logging
 from datetime import datetime, timedelta
-from typing import List, Optional, Tuple, Dict
+from typing import List, Dict
 from collections import defaultdict
 
-from sqlalchemy import func, and_
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.conversation_fact import ConversationFact, FactCategory

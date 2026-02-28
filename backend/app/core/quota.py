@@ -3,7 +3,6 @@ Quota enforcement middleware and utilities.
 
 Provides functions to check and enforce user quotas before allowing actions.
 """
-import uuid
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 

@@ -12,7 +12,7 @@ reducing input costs by up to 90% for long conversations ($0.028/M for cache hit
 
 See docs/MODEL_RESEARCH.md for detailed analysis.
 """
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, Optional
 
 from app.core.config import settings
 
@@ -445,43 +445,4 @@ TIER_COST_TARGETS: Dict[str, Dict[str, float]] = {
         "target_margin_percent": 60.0,
     },
 }
-
-
-def calculate_stripe_net(gross_amount: float) -> float:
-    """
-    Calculate net amount after Stripe fees.
-
-    Args:
-        gross_amount: Gross payment amount in dollars
-
-    Returns:
-        Net amount after Stripe fees
-    """
-    fees = COST_CONFIG["stripe"]
-    stripe_fee = (gross_amount * fees["percentage_fee"]) + fees["fixed_fee"]
-    return gross_amount - stripe_fee
-
-
-def get_message_cost(tier: str, cached: bool = True) -> float:
-    """
-    Get estimated per-message cost for a tier.
-
-    Includes ALL LLM calls per message: main response + query rewrite +
-    query expansion + relevance grading + amortized HyDE and fact extraction.
-    Pro/Enterprise use deepseek-reasoner which adds ~1500 reasoning tokens.
-    Free tier skips expensive auxiliary features (expansion, grading, HyDE,
-    follow-ups) so costs reflect main LLM + query rewrite only.
-
-    Args:
-        tier: Subscription tier (free, pro, enterprise)
-        cached: Whether to assume DeepSeek cache hits (default True)
-
-    Returns:
-        Estimated cost per message in USD
-    """
-    costs = COST_CONFIG["per_unit"]
-    if tier in ("pro", "enterprise"):
-        return costs["message_pro_with_cache"] if cached else costs["message_pro_no_cache"]
-    return costs["message_free_with_cache"] if cached else costs["message_free_no_cache"]
-
 

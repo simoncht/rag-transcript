@@ -11,7 +11,6 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse
-from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -20,7 +19,6 @@ from app.core.rate_limit import limiter
 from app.db.base import get_db
 from app.models import Video, User, Chunk
 from app.schemas.content import (
-    DOCUMENT_CONTENT_TYPES,
     EXTENSION_TO_CONTENT_TYPE,
     ContentUploadResponse,
     ContentDetail,
@@ -36,6 +34,36 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _estimate_word_count(file_content: bytes, content_type: str) -> Optional[int]:
+    """
+    Fast word count estimation from raw file bytes.
+    Returns None if estimation not possible for this format.
+    """
+    try:
+        # Text-based formats: direct decode and split
+        if content_type in ("txt", "md", "csv", "html", "rtf"):
+            text = file_content.decode("utf-8", errors="ignore")
+            return len(text.split())
+
+        # PDF: extract text with pypdf
+        if content_type == "pdf":
+            import io
+            from pypdf import PdfReader
+
+            reader = PdfReader(io.BytesIO(file_content))
+            word_count = 0
+            for page in reader.pages:
+                text = page.extract_text() or ""
+                word_count += len(text.split())
+            return word_count
+
+        # Binary formats (docx, pptx, xlsx, epub, eml): skip
+        return None
+    except Exception:
+        # Don't block upload on estimation failure
+        return None
+
+
 def _file_extension_to_content_type(filename: str) -> Optional[str]:
     """Map file extension to content type."""
     ext = Path(filename).suffix.lower()
@@ -44,7 +72,7 @@ def _file_extension_to_content_type(filename: str) -> Optional[str]:
 
 def _extract_enrichment_progress(video: Video) -> dict:
     """Extract enrichment progress fields from video source_metadata."""
-    from datetime import datetime, timedelta
+    from datetime import datetime
 
     meta = video.source_metadata or {}
     chunks_enriched = meta.get("chunks_enriched")
@@ -243,6 +271,20 @@ async def upload_content(
 
     if file_size_bytes == 0:
         raise HTTPException(status_code=400, detail="Empty file uploaded")
+
+    # Estimate word count for supported formats (fast, upfront check)
+    max_document_words = tier_config.get("max_document_words", -1)
+    from app.core.pricing import is_unlimited
+
+    if not is_unlimited(max_document_words):
+        estimated_words = _estimate_word_count(file_content, content_type)
+        if estimated_words is not None and estimated_words > max_document_words:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Document too large: ~{estimated_words:,} words (estimated). "
+                f"Your {user_tier} plan allows up to {max_document_words:,} words per document. "
+                f"Please use a shorter document or upgrade your plan.",
+            )
 
     # Check document count quota
     from app.core.quota import check_document_quota

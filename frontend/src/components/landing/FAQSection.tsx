@@ -52,7 +52,17 @@ const faqs: FAQItem[] = [
   {
     question: 'What video sources do you support?',
     answer:
-      'Currently we support YouTube videos including public videos, unlisted videos (with URL), and videos with captions. Support for Vimeo, direct video uploads, and podcast RSS feeds is on our roadmap.',
+      'We support YouTube videos (public, unlisted, and captioned) as well as PDF and Word document uploads. Support for Vimeo, direct video uploads, and podcast RSS feeds is on our roadmap.',
+  },
+  {
+    question: 'Can I upload documents too, or just videos?',
+    answer:
+      'Yes! You can upload PDFs and Word documents. They go through the same AI processing as videos — each section is summarized, tagged, and indexed so you can search and chat with your documents just like videos.',
+  },
+  {
+    question: 'What are the different conversation modes?',
+    answer:
+      'There are three modes. Summarize gives you a quick overview across your sources. Deep Dive focuses on one topic with detailed analysis and step-by-step reasoning. Compare Sources shows where your videos agree, disagree, or offer different perspectives on the same question. Summarize is available on all plans; Deep Dive and Compare Sources are Pro features.',
   },
   {
     question: 'How accurate is the transcription?',

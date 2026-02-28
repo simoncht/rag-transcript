@@ -16,7 +16,7 @@ export default function PricingSection() {
             What Is Your Time Worth?
           </h2>
           <p className="text-xl text-gray-600 max-w-2xl mx-auto">
-            The free plan proves the value. Pro unlocks everything. Either way, you stop wasting hours.
+            If you spend just one hour a week rewatching content, Pro pays for itself in a single session. Start free — the value is obvious from your very first question.
           </p>
         </div>
 

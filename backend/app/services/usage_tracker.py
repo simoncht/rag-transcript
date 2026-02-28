@@ -17,7 +17,6 @@ from decimal import Decimal
 from sqlalchemy.orm import Session
 
 from app.models import UsageEvent, UserQuota, User
-from app.core.config import settings
 from app.core.pricing import get_quota_limits
 
 logger = logging.getLogger(__name__)

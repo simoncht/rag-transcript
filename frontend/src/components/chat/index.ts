@@ -6,8 +6,6 @@ export { ChatSidebar } from "./ChatSidebar";
 export type { ChatSidebarProps } from "./ChatSidebar";
 export { ChatHeader } from "./ChatHeader";
 export type { ChatHeaderProps } from "./ChatHeader";
-export { ContentPicker } from "./ContentPicker";
-export type { ContentPickerProps } from "./ContentPicker";
 export { SourcesPanel, SourcesPanelToggle } from "./SourcesPanel";
 export { SourcesPanelProvider, useSourcesPanel } from "./SourcesPanelContext";
 export type { SourcesPanelState, LibraryContentItem } from "./SourcesPanelContext";

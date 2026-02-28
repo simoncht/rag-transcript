@@ -9,7 +9,6 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import List, Optional, Dict, Any
-from uuid import UUID
 
 
 @dataclass

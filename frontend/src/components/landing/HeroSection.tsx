@@ -18,6 +18,12 @@ export default function HeroSection() {
             <span className="text-primary">Until Now.</span>
           </h1>
 
+          {/* Loss framing - personally verifiable, no dubious stats */}
+          <p className="text-base lg:text-lg text-gray-500 mb-4 max-w-2xl mx-auto">
+            You&apos;ve consumed hundreds of hours of content. Without the right
+            tool, most of that knowledge is gone the moment you close the tab.
+          </p>
+
           {/* Subheadline */}
           <p className="text-xl lg:text-2xl text-gray-600 mb-8 max-w-3xl mx-auto">
             Add a video or document. Ask any question about what&apos;s inside. Get

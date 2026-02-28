@@ -19,7 +19,7 @@ const steps: StepData[] = [
     title: 'Paste a Link',
     timeBadge: '~10 seconds',
     description:
-      'Paste any YouTube URL. We pull the transcript, chapters, timestamps, and speaker info automatically.',
+      'Paste a YouTube URL or upload a PDF. We pull the transcript, chapters, timestamps, and speaker info automatically.',
   },
   {
     icon: <AudioWaveform className="w-5 h-5" />,

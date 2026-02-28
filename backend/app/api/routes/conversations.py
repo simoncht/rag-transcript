@@ -127,7 +127,7 @@ def _get_best_chunk_for_videos(db: Session, video_ids: list, query: str = "") ->
     return result
 
 
-def _build_video_url(video: Video | None) -> str | None:
+def _build_video_url(video: Optional[Video]) -> Optional[str]:
     """Prefer stored YouTube URL, otherwise derive from youtube_id."""
     if not video:
         return None
@@ -138,7 +138,7 @@ def _build_video_url(video: Video | None) -> str | None:
     return None
 
 
-def _build_youtube_jump_url(video: Video | None, start_seconds: float) -> str | None:
+def _build_youtube_jump_url(video: Optional[Video], start_seconds: float) -> Optional[str]:
     """Create a timestamped YouTube link for jump actions."""
     base_url = _build_video_url(video)
     if not base_url:
@@ -148,7 +148,7 @@ def _build_youtube_jump_url(video: Video | None, start_seconds: float) -> str | 
     return f"{base_url}{separator}t={start_int}s"
 
 
-def _build_source_url(video: Video | None) -> str | None:
+def _build_source_url(video: Optional[Video]) -> Optional[str]:
     """Build URL for any content type."""
     if not video:
         return None
@@ -160,7 +160,7 @@ def _build_source_url(video: Video | None) -> str | None:
     return f"/documents/{video.id}"
 
 
-def _build_jump_url(video: Video | None, scored_chunk) -> str | None:
+def _build_jump_url(video: Optional[Video], scored_chunk) -> Optional[str]:
     """Build jump URL based on content type - timestamp for videos, page for documents."""
     if not video:
         return None
@@ -1229,7 +1229,7 @@ async def send_message(
     """
     import time
     from app.services.llm_providers import llm_service, Message as LLMMessage
-    from app.models import MessageChunkReference, Chunk, Video
+    from app.models import MessageChunkReference, Chunk
     from app.core.config import settings
     from app.services.usage_collector import LLMUsageCollector
 
@@ -1978,7 +1978,6 @@ async def send_message_stream(
     import asyncio
     import time
     from app.services.llm_providers import llm_service, Message as LLMMessage
-    from app.models import Video
     from app.core.config import settings
     from app.services.usage_collector import LLMUsageCollector
 

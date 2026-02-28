@@ -10,7 +10,7 @@ Handles:
 """
 import uuid
 from datetime import datetime, timedelta
-from typing import Optional, Dict, Any
+from typing import Dict, Any
 import stripe
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -19,16 +19,11 @@ from app.core.config import settings
 from app.core.pricing import (
     get_tier_config,
     get_quota_limits,
-    check_limit_exceeded,
-    get_usage_percentage,
     PRICING_TIERS,
 )
-from app.models import User, Subscription, Video, UsageEvent, Transcript
+from app.models import User, Subscription, Video, UsageEvent
 from app.schemas import (
     QuotaUsage,
-    SubscriptionCreate,
-    SubscriptionUpdate,
-    SubscriptionDetail,
     PricingTier,
 )
 from app.services.storage_calculator import StorageCalculator

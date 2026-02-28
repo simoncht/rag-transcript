@@ -11,7 +11,7 @@ interface ComparisonRow {
 
 const comparisons: ComparisonRow[] = [
   {
-    feature: 'Semantic search',
+    feature: 'Understands what you mean',
     ragTranscript: true,
     others: 'Keyword only',
     highlight: true,
@@ -34,12 +34,12 @@ const comparisons: ComparisonRow[] = [
     highlight: true,
   },
   {
-    feature: 'Query expansion (multi-query)',
+    feature: 'Catches answers your words would miss',
     ragTranscript: true,
     others: false,
   },
   {
-    feature: 'Cross-encoder reranking',
+    feature: 'Best answer surfaces first',
     ragTranscript: true,
     others: false,
   },
@@ -50,9 +50,26 @@ const comparisons: ComparisonRow[] = [
     highlight: true,
   },
   {
-    feature: 'Context window',
-    ragTranscript: '128K tokens',
-    others: '4K-32K',
+    feature: 'Handles hours of content',
+    ragTranscript: true,
+    others: 'Limited',
+  },
+  {
+    feature: 'Upload PDFs and Word docs',
+    ragTranscript: true,
+    others: false,
+    highlight: true,
+  },
+  {
+    feature: 'AI suggests follow-up questions',
+    ragTranscript: true,
+    others: false,
+  },
+  {
+    feature: 'Three conversation modes',
+    ragTranscript: 'Summarize · Deep Dive · Compare',
+    others: 'Single mode',
+    highlight: true,
   },
 ];
 

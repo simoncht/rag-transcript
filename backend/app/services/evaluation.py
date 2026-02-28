@@ -10,11 +10,8 @@ import json
 import logging
 import math
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence
-from uuid import UUID
 
-from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -159,8 +156,6 @@ class EvaluationReport:
             ],
         }
 
-    def to_json(self, indent: int = 2) -> str:
-        return json.dumps(self.to_dict(), indent=indent)
 
 
 class EvaluationService:
@@ -443,15 +438,3 @@ def compare_reports(
             }
 
     return deltas
-
-
-# Global instance
-_evaluation_service: Optional[EvaluationService] = None
-
-
-def get_evaluation_service() -> EvaluationService:
-    """Get or create global evaluation service instance."""
-    global _evaluation_service
-    if _evaluation_service is None:
-        _evaluation_service = EvaluationService()
-    return _evaluation_service

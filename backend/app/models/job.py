@@ -83,11 +83,6 @@ class Job(Base):
         return 0.0
 
     @property
-    def is_terminal_state(self) -> bool:
-        """Check if job is in a terminal state (completed, failed, canceled)."""
-        return self.status in ["completed", "failed", "canceled"]
-
-    @property
     def can_retry(self) -> bool:
         """Check if job can be retried."""
         return self.status == "failed" and self.retry_count < self.max_retries

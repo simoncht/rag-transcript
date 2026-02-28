@@ -46,7 +46,6 @@ from app.services.job_cancellation import (
     cancel_video_processing,
     is_cancelable,
     CleanupOption,
-    CANCELABLE_STATUSES,
 )
 from app.tasks.video_tasks import process_video_pipeline
 from app.core.rate_limit import limiter

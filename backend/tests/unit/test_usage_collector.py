@@ -286,54 +286,6 @@ class TestLLMUsageCollectorFlush:
         assert float(event.cost_usd) == pytest.approx(0.000490, abs=1e-6)
 
 
-class TestLLMUsageCollectorGetTotalCost:
-    """Tests for the get_total_cost() method."""
-
-    def test_cost_empty_collector(self):
-        collector = LLMUsageCollector(user_id=uuid.uuid4())
-        assert collector.get_total_cost() == 0.0
-
-    def test_cost_single_event(self):
-        collector = LLMUsageCollector(user_id=uuid.uuid4())
-        collector.record(
-            _make_response(input_tokens=1000, output_tokens=500),
-            CallType.CHAT,
-        )
-
-        cost = collector.get_total_cost()
-        assert cost == pytest.approx(0.000490, abs=1e-6)
-
-    def test_cost_multiple_events(self):
-        collector = LLMUsageCollector(user_id=uuid.uuid4())
-        for _ in range(10):
-            collector.record(
-                _make_response(input_tokens=1000, output_tokens=500),
-                CallType.ENRICHMENT,
-            )
-
-        cost = collector.get_total_cost()
-        assert cost == pytest.approx(0.004900, abs=1e-5)
-
-    def test_cost_with_cache_hits(self):
-        collector = LLMUsageCollector(user_id=uuid.uuid4())
-        collector.record(
-            _make_response(
-                input_tokens=1000,
-                output_tokens=500,
-                cache_hit=800,
-                cache_miss=200,
-            ),
-            CallType.ENRICHMENT,
-        )
-
-        cost = collector.get_total_cost()
-        # cache_hit: 800 * 0.028 / 1M = 0.0000224
-        # cache_miss: 200 * 0.28 / 1M = 0.0000560
-        # output: 500 * 0.42 / 1M = 0.0002100
-        # total = 0.0002884
-        assert cost == pytest.approx(0.0002884, abs=1e-6)
-
-
 class TestLLMUsageCollectorThreadSafety:
     """Tests for thread-safe concurrent access."""
 

@@ -5,9 +5,8 @@ Uses the registry pattern where quota types are defined in the database,
 not hardcoded in the schema.
 """
 from datetime import datetime
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict
 from uuid import UUID
-from decimal import Decimal
 from pydantic import BaseModel, Field
 
 

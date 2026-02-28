@@ -13,7 +13,7 @@ import threading
 import uuid
 from typing import Optional
 
-from app.models.llm_usage import LLMUsageEvent, CallType, calculate_llm_cost
+from app.models.llm_usage import LLMUsageEvent
 
 logger = logging.getLogger(__name__)
 
@@ -107,21 +107,6 @@ class LLMUsageCollector:
         )
         return count
 
-    def get_total_cost(self) -> float:
-        """Get total cost of accumulated events (for logging before flush)."""
-        with self._lock:
-            total = 0.0
-            for event_data in self._events:
-                usage = event_data["usage"]
-                cost = calculate_llm_cost(
-                    model=event_data["model"],
-                    input_tokens=usage.get("input_tokens", 0),
-                    output_tokens=usage.get("output_tokens", 0),
-                    cache_hit_tokens=usage.get("prompt_cache_hit_tokens", 0),
-                    cache_miss_tokens=usage.get("prompt_cache_miss_tokens", 0),
-                )
-                total += float(cost)
-            return total
 
     def __len__(self) -> int:
         with self._lock:

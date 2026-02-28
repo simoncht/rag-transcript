@@ -266,7 +266,6 @@ class ThemeService:
         Requires at least 3 videos with summaries.
         Falls back to simple aggregation if clustering fails.
         """
-        from app.models.collection_theme import CollectionTheme
 
         # Verify collection
         collection = (

@@ -1,0 +1,94 @@
+# Production overrides — use with: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# Prerequisites:
+#   - Set strong passwords in .env: POSTGRES_PASSWORD, REDIS_PASSWORD, QDRANT_API_KEY
+#   - Set ENVIRONMENT=production in .env (triggers backend startup validation)
+#   - Set SECRET_KEY and NEXTAUTH_SECRET to random values
+
+services:
+  qdrant:
+    # Remove host-exposed ports — only accessible via Docker internal network
+    ports: !reset []
+
+  app:
+    # Production uvicorn: no reload, 4 workers
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
+    volumes:
+      # Remove source code mount — use built image only
+      - ./storage:/app/storage
+      - ./hf_cache:/root/.cache/huggingface
+      - ./whisper_cache:/root/.cache/whisper
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-rag_transcript}
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
+      - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD}@redis:6379/0
+      - QDRANT_HOST=qdrant
+      - QDRANT_PORT=6333
+      - QDRANT_API_KEY=${QDRANT_API_KEY}
+      - STORAGE_BACKEND=local
+      - LOCAL_STORAGE_PATH=/app/storage
+      - EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
+      - HF_HOME=/root/.cache/huggingface
+      - TRANSFORMERS_CACHE=/root/.cache/huggingface
+      - SENTENCE_TRANSFORMERS_HOME=/root/.cache/huggingface
+      - HF_HUB_OFFLINE=0
+      - TRANSFORMERS_OFFLINE=0
+      - PYTHONUNBUFFERED=1
+      - ENVIRONMENT=production
+
+  worker:
+    volumes:
+      # Remove source code mount — use built image only
+      - ./storage:/app/storage
+      - ./hf_cache:/root/.cache/huggingface
+      - ./whisper_cache:/root/.cache/whisper
+      - ./cookies.txt:/etc/yt-cookies.txt
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-rag_transcript}
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
+      - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD}@redis:6379/0
+      - QDRANT_HOST=qdrant
+      - QDRANT_PORT=6333
+      - QDRANT_API_KEY=${QDRANT_API_KEY}
+      - STORAGE_BACKEND=local
+      - LOCAL_STORAGE_PATH=/app/storage
+      - EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
+      - HF_HOME=/root/.cache/huggingface
+      - TRANSFORMERS_CACHE=/root/.cache/huggingface
+      - SENTENCE_TRANSFORMERS_HOME=/root/.cache/huggingface
+      - HF_HUB_OFFLINE=0
+      - TRANSFORMERS_OFFLINE=0
+      - PYTHONUNBUFFERED=1
+      - ENVIRONMENT=production
+
+  beat:
+    volumes:
+      # Remove source code mount — use built image only
+      - ./hf_cache:/root/.cache/huggingface
+      - ./whisper_cache:/root/.cache/whisper
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-rag_transcript}
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
+      - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD}@redis:6379/0
+      - EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
+      - HF_HOME=/root/.cache/huggingface
+      - TRANSFORMERS_CACHE=/root/.cache/huggingface
+      - SENTENCE_TRANSFORMERS_HOME=/root/.cache/huggingface
+      - HF_HUB_OFFLINE=0
+      - TRANSFORMERS_OFFLINE=0
+      - PYTHONUNBUFFERED=1
+      - ENVIRONMENT=production
+
+  frontend:
+    # Production Next.js: build then serve
+    command: sh -c "npm run build && npm run start"
+    volumes:
+      # No source code mount — use built image only
+      - /app/node_modules
+    environment:
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+      - NEXT_PUBLIC_API_V1_PREFIX=/api/v1
+      - BACKEND_INTERNAL_URL=http://app:8000

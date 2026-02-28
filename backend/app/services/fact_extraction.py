@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from app.models.conversation_fact import ConversationFact, FactCategory
 from app.models.message import Message
 from app.models.conversation import Conversation
-from app.services.llm_providers import Message as LLMMessage, LLMService, llm_service as _global_llm_service
+from app.services.llm_providers import Message as LLMMessage, llm_service as _global_llm_service
 
 logger = logging.getLogger(__name__)
 

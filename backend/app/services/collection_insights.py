@@ -11,11 +11,11 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import datetime
-from typing import List, Optional, Sequence, Tuple
+from typing import List, Optional, Tuple
 
 from sqlalchemy.orm import Session
 
-from app.models import Collection, CollectionVideo, Video, Chunk
+from app.models import Collection, CollectionVideo, Video
 from app.models.collection_insight import CollectionInsight
 from app.services.insights import (
     ConversationInsightsService,

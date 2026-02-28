@@ -440,11 +440,6 @@ class AzureBlobStorageService(StorageService):
     """
 
     def __init__(self):
-        # TODO: Initialize Azure Blob Storage client
-        # from azure.storage.blob import BlobServiceClient
-        # self.blob_service_client = BlobServiceClient.from_connection_string(
-        #     settings.azure_storage_connection_string
-        # )
         raise NotImplementedError(
             "Azure Blob Storage not yet implemented. Use local storage for now."
         )

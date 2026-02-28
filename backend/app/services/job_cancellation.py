@@ -20,8 +20,7 @@ from sqlalchemy.orm import Session
 
 from app.models import Video, Transcript, Chunk, Job, CollectionVideo
 from app.services.vector_store import vector_store_service
-from app.services.storage import storage_service
-from app.services.storage_calculator import StorageCalculator, BYTES_PER_VECTOR
+from app.services.storage_calculator import BYTES_PER_VECTOR
 
 
 class CleanupOption(str, Enum):

@@ -8,7 +8,6 @@ Endpoints:
 - GET /subscriptions/pricing - Get available pricing tiers
 - GET /subscriptions/current - Get current subscription details
 """
-import uuid
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session

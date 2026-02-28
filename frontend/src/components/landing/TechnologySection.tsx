@@ -124,7 +124,7 @@ export default function TechnologySection() {
             <PillarCard
               icon={<CoherentIcon />}
               headline="It remembers what matters to you"
-              body="In long research sessions, the system remembers what you've established. No need to repeat yourself or start over."
+              body="In long research sessions, the system remembers what you've established. You can see exactly what it remembers — and edit or delete any fact. No need to repeat yourself or start over."
               accentColor="primary"
             />
           </motion.div>

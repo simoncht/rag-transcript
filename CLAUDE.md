@@ -262,34 +262,9 @@ Different subscription tiers use different DeepSeek models:
 - Keep API responses typed via Pydantic schemas
 - Frontend: Use existing Shadcn primitives, follow App Router conventions
 
-## Pre-Plan Consultation (MANDATORY — Plan Mode)
+## Behavioral Contracts
 
-**When the user asks you to plan, design, or propose changes to the files below, you MUST read the corresponding prompt BEFORE proposing anything.** This applies in plan mode, when discussing architecture, or when the user asks "how should we..." questions. Do NOT propose an approach until you have read the prompt.
-
-| If the plan involves... | MUST read first | Section to focus on |
-|------------------------|-----------------|---------------------|
-| RAG services (vector_store, chunking, enrichment, embeddings, query_expansion, reranker, llm_providers, fact_extraction, conversations.py) | `.claude/prompts/rag-architect.md` | Mode 1: Planning Review — evaluate approach against best practices, check anti-patterns |
-| Content pipeline (providers, models, tasks) | `.claude/prompts/product-builder.md` | Mode 3: Architecture Check — multi-content compatibility, provider abstraction |
-| Intent classification, retrieval routing | `.claude/prompts/rag-quality-gate.md` | Full prompt — intent routing contracts, coverage metrics |
-| Memory, citations, fact extraction behavior | `.claude/references/behavioral-contracts.md` | Relevant contract IDs — know which promises exist before changing behavior |
-| Any feature or fix (all cases) | `.claude/prompts/test-generate.md` | Section 2-4 — plan what tests are needed as part of the design, not as an afterthought |
-
-## Pre-Edit Consultation (MANDATORY — Edit Mode)
-
-**BEFORE editing any files listed below, you MUST read the corresponding prompt first.** Do NOT skip this step. Do NOT start writing code until you have read the prompt and confirmed your approach aligns with its guidance. Skipping this causes bandaid fixes and architectural drift.
-
-| If you're about to edit... | MUST read first | Why |
-|---------------------------|-----------------|-----|
-| Any RAG service file (vector_store, chunking, enrichment, embeddings, query_expansion, reranker, llm_providers, fact_extraction) | `.claude/prompts/rag-architect.md` (Mode 1: Planning Review) | Prevents anti-patterns, checks tradeoffs before committing to approach |
-| `backend/app/api/routes/conversations.py` | `.claude/prompts/rag-architect.md` (Mode 1) | RAG pipeline entry point — changes here cascade |
-| `backend/app/providers/**`, `backend/app/models/**`, `backend/app/tasks/**` | `.claude/prompts/product-builder.md` (Mode 3: Architecture Check) | Ensures multi-content compatibility, provider abstraction |
-| `backend/app/services/intent_classifier.py`, `backend/app/services/two_level_retriever.py` | `.claude/prompts/rag-quality-gate.md` | Intent routing and retrieval quality contracts |
-| Any behavioral contract file (memory, citations, fact extraction) | `.claude/references/behavioral-contracts.md` | Check which contracts exist before changing behavior |
-
-**After completing any feature or fix**, plan tests alongside the code:
-- Read `.claude/prompts/test-generate.md` for test patterns and conventions
-- Write tests for the changed code BEFORE considering the task done
-- This is not optional — untested code is unfinished code
+Before editing memory, citations, or fact extraction behavior, read `.claude/references/behavioral-contracts.md` to check which promises exist and their current status (PASS/BROKEN/FIXED).
 
 ## Key Configuration Files
 

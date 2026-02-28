@@ -93,7 +93,7 @@ export default function UseCasesSection() {
           </h2>
           <p className="text-xl text-[var(--color-text-secondary)] max-w-2xl mx-auto">
             Researchers, students, creators, and professionals all face the same
-            problem: too much content, not enough time. Here&apos;s how they solved it.
+            problem: too many videos and documents, not enough time. Here&apos;s how they solved it.
           </p>
         </div>
 

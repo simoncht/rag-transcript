@@ -25,7 +25,7 @@ class ConversationCreateRequest(BaseModel):
         description="List of video IDs to include in conversation scope",
     )
     # Optional: set true to auto-select new collection videos (default behaviour)
-    auto_sync_collection: bool | None = Field(
+    auto_sync_collection: Optional[bool] = Field(
         None,
         description="If provided with collection_id, automatically sync new collection videos. Defaults to true.",
     )

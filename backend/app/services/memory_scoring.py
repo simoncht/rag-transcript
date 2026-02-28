@@ -12,11 +12,10 @@ Target: 80%+ early fact recall.
 """
 import logging
 import math
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
-from sqlalchemy import case, func, text
 from sqlalchemy.orm import Session
 
 from app.models.conversation_fact import ConversationFact, FactCategory

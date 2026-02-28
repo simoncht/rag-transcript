@@ -171,17 +171,12 @@
       "prompt": ".claude/prompts/ux-audit.md"
     },
     {
-      "name": "product-builder",
-      "description": "Product architect — turns feature ideas into detailed implementation specs. Three modes: feature spec, roadmap review, architecture check.",
+      "name": "co-founder",
+      "description": "Technical co-founder — validates features against market demand and research trends, picks proven technology, scopes MVPs, and orchestrates other skills for thorough planning.",
       "trigger": {
-        "manual": true,
-        "patterns": [
-          "backend/app/providers/**/*.py",
-          "backend/app/models/**/*.py",
-          "backend/app/tasks/**/*.py"
-        ]
+        "manual": true
       },
-      "prompt": ".claude/prompts/product-builder.md"
+      "prompt": ".claude/prompts/co-founder.md"
     },
     {
       "name": "behavioral-contracts",
