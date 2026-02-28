@@ -193,7 +193,7 @@ class UserDeleteResponse(BaseModel):
     deleted_email: str
     deleted_records: Dict[str, int] = Field(
         default_factory=dict,
-        description="Count of deleted records by table (subscriptions, etc.)"
+        description="Count of deleted records by table (subscriptions, etc.)",
     )
 
 
@@ -205,7 +205,7 @@ class QuotaRecalculateResponse(BaseModel):
     users_updated: int
     corrections: List[Dict[str, Any]] = Field(
         default_factory=list,
-        description="List of quota corrections made (user_id, field, old_value, new_value)"
+        description="List of quota corrections made (user_id, field, old_value, new_value)",
     )
 
 
@@ -460,6 +460,8 @@ class ConversationSummary(BaseModel):
     total_tokens: int = 0
     started_at: datetime
     last_message_at: Optional[datetime] = None
+    is_deleted: bool = False
+    deleted_at: Optional[datetime] = None
 
 
 class ConversationListResponse(BaseModel):
@@ -484,6 +486,8 @@ class ConversationDetailResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     last_message_at: Optional[datetime] = None
+    is_deleted: bool = False
+    deleted_at: Optional[datetime] = None
     messages: List[ConversationMessage]
 
 
@@ -540,6 +544,8 @@ class LLMUsageItem(BaseModel):
     user_id: UUID
     user_email: Optional[str] = None
     conversation_id: Optional[UUID] = None
+    call_type: Optional[str] = None
+    content_id: Optional[UUID] = None
     model: str
     provider: str
     input_tokens: int
@@ -590,9 +596,19 @@ class LLMUsageByUser(BaseModel):
     cache_hit_rate: float = 0.0
 
 
+class LLMUsageByCallType(BaseModel):
+    """LLM usage grouped by call type."""
+
+    call_type: Optional[str] = None
+    total_requests: int = 0
+    total_tokens: int = 0
+    total_cost_usd: float = 0.0
+
+
 class LLMUsageResponse(BaseModel):
     """Response for LLM usage endpoint."""
 
     stats: LLMUsageStats
     by_user: List[LLMUsageByUser] = Field(default_factory=list)
+    by_call_type: List[LLMUsageByCallType] = Field(default_factory=list)
     recent_events: List[LLMUsageItem] = Field(default_factory=list)

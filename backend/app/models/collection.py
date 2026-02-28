@@ -45,6 +45,10 @@ class Collection(Base):
     # Default collection flag (e.g., "Uncategorized")
     is_default = Column(Boolean, default=False, nullable=False)
 
+    # Soft delete
+    is_deleted = Column(Boolean, default=False, nullable=False, index=True)
+    deleted_at = Column(DateTime, nullable=True)
+
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(

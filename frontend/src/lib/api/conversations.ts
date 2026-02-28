@@ -15,6 +15,17 @@ export const conversationsApi = {
     return response.data;
   },
 
+  async findBySource(options: {
+    videoId?: string;
+    collectionId?: string;
+  }): Promise<ConversationListResponse> {
+    const params: Record<string, string> = { limit: "1" };
+    if (options.videoId) params.video_id = options.videoId;
+    if (options.collectionId) params.collection_id = options.collectionId;
+    const response = await apiClient.get("/conversations", { params });
+    return response.data;
+  },
+
   async get(conversationId: string): Promise<ConversationWithMessages> {
     const response = await apiClient.get(`/conversations/${conversationId}`);
     return response.data;

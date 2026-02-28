@@ -10,6 +10,7 @@ from datetime import datetime
 
 from sqlalchemy import Column, DateTime, Float, ForeignKey, Integer, String
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
+from sqlalchemy.orm import relationship
 
 from app.db.base import Base
 
@@ -45,6 +46,9 @@ class ConversationInsight(Base):
     generation_time_seconds = Column(Float, nullable=True)
 
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+    # Relationships
+    conversation = relationship("Conversation", back_populates="insights")
 
     def __repr__(self) -> str:
         return (

@@ -133,13 +133,6 @@ def _extract_document(content_id: str):
                     f"Please upgrade your plan or use a shorter document."
                 )
 
-            max_pages = tier_config.get("max_document_pages", -1)
-            if not is_unlimited(max_pages) and page_count > max_pages:
-                raise ValueError(
-                    f"Document too large: {page_count:,} pages exceeds your "
-                    f"{user_tier} tier limit of {max_pages:,} pages. "
-                    f"Please upgrade your plan or use a shorter document."
-                )
         except ValueError:
             raise
         except Exception as e:
@@ -173,15 +166,43 @@ def _chunk_and_enrich_document(content_id: str, extracted_data: dict):
 
     try:
         logger.info(f"[Document Pipeline] Chunk/enrich start for content={content_id}")
-        _update_status(db, content_uuid, "chunking", 35.0)
-
-        # Clean up old chunks from previous runs to avoid duplicates on reprocess
-        old_count = db.query(ChunkModel).filter(ChunkModel.video_id == content_uuid).delete()
-        if old_count:
-            logger.info(f"[Document Pipeline] Deleted {old_count} old chunks for content={content_id}")
-            db.commit()
 
         video = db.query(Video).filter(Video.id == content_uuid).first()
+
+        # Check for enriched chunks from a previous interrupted run
+        existing_enriched = (
+            db.query(ChunkModel)
+            .filter(
+                ChunkModel.video_id == content_uuid,
+                ChunkModel.enriched_at.isnot(None),
+            )
+            .count()
+        )
+
+        if existing_enriched > 0:
+            # Resume mode: keep already-enriched chunks, only delete unenriched ones
+            unenriched_deleted = (
+                db.query(ChunkModel)
+                .filter(
+                    ChunkModel.video_id == content_uuid,
+                    ChunkModel.enriched_at.is_(None),
+                )
+                .delete()
+            )
+            if unenriched_deleted:
+                db.commit()
+            logger.info(
+                f"[Document Pipeline] Resume mode: {existing_enriched} enriched chunks kept, "
+                f"{unenriched_deleted} unenriched deleted for content={content_id}"
+            )
+        else:
+            # Fresh run: clean up any old chunks
+            old_count = db.query(ChunkModel).filter(ChunkModel.video_id == content_uuid).delete()
+            if old_count:
+                logger.info(f"[Document Pipeline] Deleted {old_count} old chunks for content={content_id}")
+                db.commit()
+
+        _update_status(db, content_uuid, "chunking", 35.0)
 
         # Reconstruct pages from extracted data
         from app.services.document_extractor import ExtractedPage
@@ -214,12 +235,39 @@ def _chunk_and_enrich_document(content_id: str, extracted_data: dict):
 
         _update_status(db, content_uuid, "enriching", 50.0)
 
+        # Build set of already-enriched chunk indices for resume
+        enriched_indices = set()
+        if existing_enriched > 0:
+            enriched_indices = set(
+                row[0] for row in
+                db.query(ChunkModel.chunk_index)
+                .filter(
+                    ChunkModel.video_id == content_uuid,
+                    ChunkModel.enriched_at.isnot(None),
+                )
+                .all()
+            )
+            logger.info(
+                f"[Document Pipeline] Skipping {len(enriched_indices)} already-enriched chunks "
+                f"for content={content_id}"
+            )
+
+        # Filter to only chunks that need enrichment
+        chunks_to_enrich = [c for c in doc_chunks if c.chunk_index not in enriched_indices]
+
         # Enrich chunks with full document text for contextual grounding
         from app.services.enrichment import ContextualEnricher
+        from app.services.usage_collector import LLMUsageCollector
+
         full_document_text = extracted_data.get("full_text", "")
+        usage_collector = LLMUsageCollector(
+            user_id=video.user_id, content_id=content_uuid
+        )
         enricher = ContextualEnricher(
             content_type=video.content_type,
             full_text=full_document_text,
+            usage_collector=usage_collector,
+            content_id=content_uuid,
         )
         enricher.set_source_context(video.title, video.description)
 
@@ -227,7 +275,7 @@ def _chunk_and_enrich_document(content_id: str, extracted_data: dict):
         from app.services.chunking import Chunk as ChunkData
 
         chunk_data_list = []
-        for doc_chunk in doc_chunks:
+        for doc_chunk in chunks_to_enrich:
             chunk_data = ChunkData(
                 text=doc_chunk.text,
                 start_timestamp=doc_chunk.start_timestamp,
@@ -244,70 +292,120 @@ def _chunk_and_enrich_document(content_id: str, extracted_data: dict):
         import time as _time
 
         enrichment_started_at = _time.time()
+        total_chunks = len(doc_chunks)
+        already_done = len(enriched_indices)
         video.source_metadata = video.source_metadata or {}
-        video.source_metadata["total_chunks"] = len(doc_chunks)
-        video.source_metadata["chunks_enriched"] = 0
+        video.source_metadata["total_chunks"] = total_chunks
+        video.source_metadata["chunks_enriched"] = already_done
         video.source_metadata["enrichment_started_at"] = enrichment_started_at
         flag_modified(video, "source_metadata")
         db.commit()
 
-        def _on_enrichment_progress(completed: int, total: int):
+        # Batch DB commits every N chunks to reduce Postgres round-trips
+        # while still persisting progress for resume on failure.
+        # Also embed each batch during enrichment to overlap CPU work with LLM wait time.
+        _COMMIT_BATCH_SIZE = 20
+
+        # Pre-compute embeddings during enrichment (overlap CPU with LLM network wait)
+        from app.services.embeddings import embedding_service
+        _pending_embed_texts = []  # (embedding_text, chunk_index) awaiting embedding
+        _precomputed_embeddings = {}  # chunk_index -> embedding vector
+
+        def _embed_pending_batch():
+            """Embed accumulated texts using idle CPU while LLM threads wait on network."""
+            if not _pending_embed_texts:
+                return
+            texts = [t for t, _ in _pending_embed_texts]
+            indices = [idx for _, idx in _pending_embed_texts]
+            try:
+                vectors = embedding_service.embed_batch(texts, show_progress=False)
+                for idx, vec in zip(indices, vectors):
+                    _precomputed_embeddings[idx] = vec
+            except Exception as e:
+                logger.warning(f"[Document Pipeline] Progressive embedding failed, will retry later: {e}")
+            _pending_embed_texts.clear()
+
+        def _on_enrichment_progress(completed: int, total_to_enrich: int):
+            overall_done = already_done + completed
             elapsed = _time.time() - enrichment_started_at
             rate = completed / elapsed if elapsed > 0 else 0
-            remaining = total - completed
+            remaining = total_to_enrich - completed
             eta_seconds = int(remaining / rate) if rate > 0 else None
 
-            video.source_metadata["chunks_enriched"] = completed
+            video.source_metadata["chunks_enriched"] = overall_done
+            video.source_metadata["last_progress_at"] = datetime.utcnow().isoformat()
             if eta_seconds is not None:
                 video.source_metadata["eta_seconds"] = eta_seconds
             flag_modified(video, "source_metadata")
 
-            progress = 50.0 + completed / total * 30.0
+            progress = 50.0 + overall_done / total_chunks * 30.0
             video.progress_percent = progress
-            db.commit()
 
-        # Use concurrent enrichment for ~5x speedup
-        enriched_results = enricher.enrich_chunks_concurrent(
-            chunk_data_list,
-            max_workers=settings.enrichment_max_workers,
-            on_progress=_on_enrichment_progress,
-        )
+            # Commit in batches: every _COMMIT_BATCH_SIZE chunks or on the last chunk
+            if completed % _COMMIT_BATCH_SIZE == 0 or completed == total_to_enrich:
+                db.commit()
+                # Embed the batch we just committed (CPU work while LLM threads wait)
+                _embed_pending_batch()
 
-        enriched_chunks = list(zip(enriched_results, doc_chunks))
+        if chunk_data_list:
+            # Build index from chunk_index -> doc_chunk for DB save
+            doc_chunk_by_index = {c.chunk_index: c for c in chunks_to_enrich}
 
-        # Save chunks to database
-        for enriched_chunk, doc_chunk in enriched_chunks:
-            chunk = enriched_chunk.chunk
-            db_chunk = ChunkModel(
-                video_id=content_uuid,
-                user_id=video.user_id,
-                content_type=video.content_type,
-                chunk_index=chunk.chunk_index,
-                text=chunk.text,
-                token_count=chunk.token_count,
-                start_timestamp=chunk.start_timestamp,
-                end_timestamp=chunk.end_timestamp,
-                duration_seconds=0.0,
-                page_number=doc_chunk.page_number,
-                section_heading=doc_chunk.section_heading,
-                chunk_summary=enriched_chunk.summary,
-                chunk_title=enriched_chunk.title,
-                keywords=enriched_chunk.keywords,
-                embedding_text=enriched_chunk.embedding_text,
-                enriched_at=datetime.utcnow(),
+            def _on_chunk_enriched(enriched_chunk):
+                """Add chunk to session and queue for progressive embedding."""
+                chunk = enriched_chunk.chunk
+                doc_chunk = doc_chunk_by_index[chunk.chunk_index]
+                db_chunk = ChunkModel(
+                    video_id=content_uuid,
+                    user_id=video.user_id,
+                    content_type=video.content_type,
+                    chunk_index=chunk.chunk_index,
+                    text=chunk.text,
+                    token_count=chunk.token_count,
+                    start_timestamp=chunk.start_timestamp,
+                    end_timestamp=chunk.end_timestamp,
+                    duration_seconds=0.0,
+                    page_number=doc_chunk.page_number,
+                    section_heading=doc_chunk.section_heading,
+                    chunk_summary=enriched_chunk.summary,
+                    chunk_title=enriched_chunk.title,
+                    keywords=enriched_chunk.keywords,
+                    embedding_text=enriched_chunk.embedding_text,
+                    enriched_at=datetime.utcnow(),
+                )
+                db.add(db_chunk)
+                # Queue for progressive embedding
+                _pending_embed_texts.append((enriched_chunk.embedding_text or chunk.text, chunk.chunk_index))
+
+            # Use concurrent enrichment for ~5x speedup
+            enricher.enrich_chunks_concurrent(
+                chunk_data_list,
+                max_workers=settings.enrichment_max_workers,
+                on_progress=_on_enrichment_progress,
+                on_chunk_complete=_on_chunk_enriched,
             )
-            db.add(db_chunk)
+            # Final commit + embed for any remaining chunks
+            db.commit()
+            _embed_pending_batch()
+        else:
+            logger.info(f"[Document Pipeline] All chunks already enriched for content={content_id}")
 
-        video.chunk_count = len(enriched_chunks)
+        video.chunk_count = total_chunks
         video.status = "chunked"
         video.progress_percent = 80.0
+
+        # Flush LLM usage events
+        usage_count = usage_collector.flush(db)
         db.commit()
 
+        precomputed_count = len(_precomputed_embeddings)
         logger.info(
             f"[Document Pipeline] Chunk/enrich complete for content={content_id}, "
-            f"chunks={len(enriched_chunks)}"
+            f"total={total_chunks}, newly_enriched={len(chunks_to_enrich)}, "
+            f"resumed={already_done}, pre_embedded={precomputed_count}, "
+            f"llm_usage_events={usage_count}"
         )
-        return {"chunk_count": len(enriched_chunks)}
+        return {"chunk_count": total_chunks, "precomputed_embeddings": _precomputed_embeddings}
 
     except Exception as e:
         _update_status(db, content_uuid, "failed", 0.0, f"Chunking failed: {str(e)}")
@@ -316,10 +414,17 @@ def _chunk_and_enrich_document(content_id: str, extracted_data: dict):
         db.close()
 
 
-def _embed_and_index_document(content_id: str):
-    """Embed document chunks and index in vector store."""
+def _embed_and_index_document(content_id: str, precomputed_embeddings: dict = None):
+    """Embed document chunks and index in vector store.
+
+    Args:
+        content_id: Content UUID string
+        precomputed_embeddings: Optional dict of chunk_index -> embedding vector,
+            pre-computed during enrichment to overlap CPU work with LLM wait time
+    """
     db = SessionLocal()
     content_uuid = UUID(content_id)
+    precomputed_embeddings = precomputed_embeddings or {}
 
     try:
         logger.info(f"[Document Pipeline] Embed/index start for content={content_id}")
@@ -338,11 +443,32 @@ def _embed_and_index_document(content_id: str):
             _update_status(db, content_uuid, "completed", 100.0)
             return {"indexed_count": 0}
 
-        # Generate embeddings
+        # Use pre-computed embeddings where available, only embed the rest
         from app.services.embeddings import embedding_service, resolve_collection_name
 
-        embedding_texts = [chunk.embedding_text or chunk.text for chunk in chunks]
-        embeddings = embedding_service.embed_batch(embedding_texts, show_progress=False)
+        embeddings = []
+        missing_indices = []
+        missing_texts = []
+        for i, chunk in enumerate(chunks):
+            if chunk.chunk_index in precomputed_embeddings:
+                embeddings.append(precomputed_embeddings[chunk.chunk_index])
+            else:
+                embeddings.append(None)
+                missing_indices.append(i)
+                missing_texts.append(chunk.embedding_text or chunk.text)
+
+        if missing_texts:
+            logger.info(
+                f"[Document Pipeline] Embedding {len(missing_texts)}/{len(chunks)} chunks "
+                f"({len(chunks) - len(missing_texts)} pre-computed) for content={content_id}"
+            )
+            fresh_embeddings = embedding_service.embed_batch(missing_texts, show_progress=False)
+            for idx, emb in zip(missing_indices, fresh_embeddings):
+                embeddings[idx] = emb
+        else:
+            logger.info(
+                f"[Document Pipeline] All {len(chunks)} embeddings pre-computed for content={content_id}"
+            )
 
         _update_status(db, content_uuid, "indexing", 92.0)
 
@@ -415,8 +541,27 @@ def _embed_and_index_document(content_id: str):
         db.close()
 
 
+def _sample_chunks_uniformly(chunks: list, max_chunks: int = 30) -> list:
+    """Uniformly sample chunks across the full document.
+
+    Uses the same strategy as VideoSummarizer._sample_chunks_for_summary()
+    to ensure representative coverage instead of just the first N chunks.
+    """
+    if len(chunks) <= max_chunks:
+        return chunks
+
+    step = len(chunks) / max_chunks
+    sampled_indices = [int(i * step) for i in range(max_chunks)]
+    return [chunks[i] for i in sampled_indices]
+
+
 def _generate_document_summary(content_id: str):
-    """Generate document-level summary for two-level retrieval."""
+    """Generate document-level summary for two-level retrieval.
+
+    Uses uniform sampling across ALL chunks (not just the first 10) to ensure
+    the summary reflects the document's actual purpose and scope, not just the
+    table of contents or introduction.
+    """
     db = SessionLocal()
     content_uuid = UUID(content_id)
 
@@ -425,21 +570,36 @@ def _generate_document_summary(content_id: str):
         if not video:
             return {"success": False, "error": "Content not found"}
 
-        # Get first few chunks for summary context
-        chunks = (
+        # Get ALL chunks ordered by position, then uniformly sample
+        all_chunks = (
             db.query(ChunkModel)
             .filter(ChunkModel.video_id == content_uuid)
             .order_by(ChunkModel.chunk_index)
-            .limit(10)
             .all()
         )
 
-        if not chunks:
+        if not all_chunks:
             return {"success": False, "error": "No chunks to summarize"}
 
-        # Build context from chunks
-        chunk_texts = [c.text for c in chunks]
-        combined_text = "\n\n".join(chunk_texts)[:8000]  # Limit to ~8K chars
+        sampled = _sample_chunks_uniformly(all_chunks, max_chunks=30)
+
+        # Build context preferring chunk_summary (more concise) over raw text
+        context_parts = []
+        for chunk in sampled:
+            text = chunk.chunk_summary if chunk.chunk_summary else chunk.text
+            if len(text) > 1000:
+                text = text[:1000].rsplit(" ", 1)[0] + "..."
+
+            metadata = []
+            if chunk.page_number:
+                metadata.append(f"Page {chunk.page_number}")
+            if chunk.section_heading:
+                metadata.append(f"Section: {chunk.section_heading}")
+            meta_str = f" ({', '.join(metadata)})" if metadata else ""
+
+            context_parts.append(f"[Chunk {chunk.chunk_index}]{meta_str}\n{text}")
+
+        combined_text = "\n\n---\n\n".join(context_parts)[:16000]
 
         from app.services.llm_providers import llm_service, Message
 
@@ -447,14 +607,25 @@ def _generate_document_summary(content_id: str):
             Message(
                 role="system",
                 content=(
-                    "You are an expert document summarizer. Generate a concise summary "
-                    "(200-500 words) and list 3-7 key topics for the following document content. "
+                    "You are an expert document summarizer. Generate a comprehensive summary "
+                    "(200-500 words) and list 5-10 key topics for the following document.\n\n"
+                    "Focus on:\n"
+                    "- The document's PRIMARY PURPOSE and intended audience\n"
+                    "- The SCOPE of what it covers (not minor examples)\n"
+                    "- MAIN TOPICS and their relative importance\n"
+                    "- Key conclusions or recommendations\n\n"
+                    "The excerpts are uniformly sampled from throughout the entire document, "
+                    "so you have representative coverage of all sections.\n\n"
                     "Return JSON: {\"summary\": \"...\", \"key_topics\": [\"topic1\", ...]}"
                 ),
             ),
             Message(
                 role="user",
-                content=f"Document title: {video.title}\n\nContent:\n{combined_text}",
+                content=(
+                    f"Document title: {video.title}\n"
+                    f"Total chunks: {len(all_chunks)}, sampled: {len(sampled)}\n\n"
+                    f"Content excerpts (sampled from throughout the document):\n\n{combined_text}"
+                ),
             ),
         ]
 
@@ -480,7 +651,10 @@ def _generate_document_summary(content_id: str):
             video.summary_generated_at = datetime.utcnow()
             db.commit()
 
-            logger.info(f"[Document Pipeline] Summary generated for content={content_id}")
+            logger.info(
+                f"[Document Pipeline] Summary generated for content={content_id} "
+                f"(sampled {len(sampled)}/{len(all_chunks)} chunks)"
+            )
             return {"success": True}
 
         except Exception as e:
@@ -494,8 +668,8 @@ def _generate_document_summary(content_id: str):
         db.close()
 
 
-@celery_app.task
-def process_document_pipeline(content_id: str):
+@celery_app.task(bind=True)
+def process_document_pipeline(self, content_id: str):
     """
     Orchestrate the full document processing pipeline.
 
@@ -508,22 +682,64 @@ def process_document_pipeline(content_id: str):
     Args:
         content_id: Content UUID (video table, content_type != 'youtube')
     """
+    import redis as _redis
+
     db = SessionLocal()
 
     try:
+        # Idempotency guard: skip if already completed
+        video = db.query(Video).filter(Video.id == UUID(content_id)).first()
+        if video and video.status == "completed":
+            logger.info(
+                f"[Document Pipeline] Skipping already-completed content={content_id}"
+            )
+            return {"status": "skipped", "reason": "already_completed"}
+
+        # Deduplication lock: prevent concurrent processing of the same document
+        # Uses Redis SET NX with a TTL matching the task time limit
+        lock_key = f"doc_pipeline_lock:{content_id}"
+        redis_client = _redis.from_url(celery_app.conf.broker_url)
+        lock_acquired = redis_client.set(lock_key, self.request.id, nx=True, ex=14400)
+        if not lock_acquired:
+            existing_task = redis_client.get(lock_key)
+            logger.warning(
+                f"[Document Pipeline] Skipping duplicate for content={content_id}, "
+                f"already processing by task={existing_task}"
+            )
+            return {"status": "skipped", "reason": "duplicate_task"}
+
         logger.info(f"[Document Pipeline] Starting pipeline for content={content_id}")
 
         # Step 1: Extract text
         extracted_data = _extract_document(content_id)
 
-        # Step 2: Chunk and enrich
+        # Step 2: Chunk and enrich (the slowest step - run ASAP after extraction)
+        # Also pre-computes embeddings during enrichment to overlap CPU with LLM wait
         chunk_result = _chunk_and_enrich_document(content_id, extracted_data)
 
-        # Step 3: Embed and index
-        index_result = _embed_and_index_document(content_id)
+        # Step 3: Embed and index (uses pre-computed embeddings, only embeds stragglers)
+        index_result = _embed_and_index_document(
+            content_id,
+            precomputed_embeddings=chunk_result.get("precomputed_embeddings"),
+        )
 
-        # Step 4: Generate summary (non-blocking)
+        # Step 4: Generate summary (non-blocking, after document is already queryable)
         summary_result = _generate_document_summary(content_id)
+
+        # Step 5: Generate PDF preview (moved off critical path - document is already usable)
+        try:
+            video = db.query(Video).filter(Video.id == UUID(content_id)).first()
+            if video and video.document_file_path:
+                preview_path = storage_service.generate_pdf_preview(
+                    video.user_id, UUID(content_id),
+                    video.document_file_path, video.content_type,
+                )
+                if preview_path:
+                    logger.info(f"[Document Pipeline] PDF preview generated for content={content_id}")
+                else:
+                    logger.warning(f"[Document Pipeline] PDF preview generation failed for content={content_id}")
+        except Exception as e:
+            logger.warning(f"[Document Pipeline] PDF preview skipped for content={content_id}: {e}")
 
         logger.info(
             f"[Document Pipeline] Complete for content={content_id}, "
@@ -546,4 +762,10 @@ def process_document_pipeline(content_id: str):
         }
 
     finally:
+        # Release deduplication lock
+        try:
+            redis_client = _redis.from_url(celery_app.conf.broker_url)
+            redis_client.delete(f"doc_pipeline_lock:{content_id}")
+        except Exception:
+            pass
         db.close()

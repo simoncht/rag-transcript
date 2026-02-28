@@ -29,7 +29,7 @@ export default function PricingPage() {
                 Sign In
               </a>
               <a
-                href="/login"
+                href="/get-started"
                 className="bg-primary text-white px-6 py-2 rounded-lg hover:bg-primary-light transition-colors"
               >
                 Get Started

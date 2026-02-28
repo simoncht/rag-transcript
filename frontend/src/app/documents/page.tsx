@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useState, useCallback, useEffect, useMemo } from "react";
+import { Suspense, useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import Link from "next/link";
@@ -46,6 +46,7 @@ import {
   Upload,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { ToastAction } from "@/components/ui/toast";
 import { useAuthState } from "@/lib/auth";
 import { contentApi } from "@/lib/api/content";
 import { DocumentRow } from "@/components/documents/DocumentRow";
@@ -81,6 +82,14 @@ function DocumentsPageContent() {
 
   // Selection
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+  // Auto-close timer for upload modal
+  const autoCloseRef = useRef<NodeJS.Timeout>();
+  useEffect(() => {
+    return () => {
+      if (autoCloseRef.current) clearTimeout(autoCloseRef.current);
+    };
+  }, []);
 
   // Dialogs
   const [showUpload, setShowUpload] = useState(false);
@@ -506,7 +515,13 @@ function DocumentsPageContent() {
         </Card>
 
         {/* Upload dialog */}
-        <Dialog open={showUpload} onOpenChange={setShowUpload}>
+        <Dialog open={showUpload} onOpenChange={(open) => {
+          if (!open && autoCloseRef.current) {
+            clearTimeout(autoCloseRef.current);
+            autoCloseRef.current = undefined;
+          }
+          setShowUpload(open);
+        }}>
           <DialogContent className="sm:max-w-lg">
             <DialogHeader>
               <DialogTitle>Upload documents</DialogTitle>
@@ -516,8 +531,45 @@ function DocumentsPageContent() {
               </DialogDescription>
             </DialogHeader>
             <DocumentUploadZone
-              onUploadComplete={() => {
+              onUploadComplete={(result) => {
                 queryClient.invalidateQueries({ queryKey: ["documents"] });
+                queryClient.invalidateQueries({ queryKey: ["document-counts"] });
+
+                if (result.failedCount > 0) return;
+
+                autoCloseRef.current = setTimeout(() => {
+                  setShowUpload(false);
+                }, 2000);
+
+                if (result.successCount === 1 && result.uploadedIds[0]) {
+                  const docId = result.uploadedIds[0];
+                  toast({
+                    title: "Document uploaded",
+                    description: "Processing has started. You can chat with it once ready.",
+                    action: (
+                      <ToastAction
+                        altText="View document"
+                        onClick={() => router.push(`/documents/${docId}`)}
+                      >
+                        View
+                      </ToastAction>
+                    ),
+                  });
+                } else {
+                  toast({
+                    title: `${result.successCount} documents uploaded`,
+                    description: "Processing has started.",
+                  });
+                }
+              }}
+              onViewDocument={(id) => {
+                if (autoCloseRef.current) clearTimeout(autoCloseRef.current);
+                setShowUpload(false);
+                router.push(`/documents/${id}`);
+              }}
+              onViewDocuments={() => {
+                if (autoCloseRef.current) clearTimeout(autoCloseRef.current);
+                setShowUpload(false);
               }}
             />
           </DialogContent>

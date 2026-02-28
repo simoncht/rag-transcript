@@ -171,7 +171,7 @@ export default function PricingComparison({
 
       {/* Additional info */}
       <div className="text-center mt-12 text-sm text-gray-500">
-        <p>All plans include AI-powered transcription and semantic search</p>
+        <p>Every plan includes the full AI engine. Pro simply removes the limits.</p>
         <p className="mt-2">
           Need a custom plan?{' '}
           <a href="mailto:support@example.com" className="text-primary hover:underline">

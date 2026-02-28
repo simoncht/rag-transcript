@@ -36,6 +36,9 @@ from app.models.quota import (
 # Collection theme models
 from app.models.collection_theme import CollectionTheme
 
+# Collection insight models
+from app.models.collection_insight import CollectionInsight
+
 # Notification models
 from app.models.notification import (
     NotificationEventType,
@@ -80,4 +83,6 @@ __all__ = [
     "NotificationDelivery",
     # Collection theme models
     "CollectionTheme",
+    # Collection insight models
+    "CollectionInsight",
 ]

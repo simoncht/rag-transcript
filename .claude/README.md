@@ -8,7 +8,8 @@ This directory contains automated skills that help with development workflow on 
 
 | Skill | Triggers After | What It Does |
 |-------|---------------|--------------|
-| **test-runner** | `backend/app/**/*.py`, `backend/tests/**/*.py` | Runs `pytest` to validate code changes |
+| **test-targeted** | `backend/app/**/*.py`, `backend/tests/**/*.py` | Runs only tests matching changed files |
+| **test-before-complete** | Manual (`/test-before-complete`) | Comprehensive test coverage check with gap analysis, uses sub-agents |
 | **quality-check** | `backend/app/**/*.py` | Runs `black --check` and `ruff check` |
 | **type-check** | `frontend/src/**/*.{ts,tsx}` | Runs `npm run type-check` |
 
@@ -16,7 +17,7 @@ This directory contains automated skills that help with development workflow on 
 
 | Skill | Triggers After | What It Does |
 |-------|---------------|--------------|
-| **docker-health** | `docker-compose.yml`, `Dockerfile`, session start | Checks all 7 Docker services + Ollama + Qdrant |
+| **docker-health** | `docker-compose.yml`, `Dockerfile`, session start | Checks all 7 Docker services + Qdrant |
 
 ### RAG Pipeline Skills
 
@@ -62,7 +63,7 @@ Run any skill manually:
 .claude/skills/pipeline-status.sh
 
 # Run tests
-.claude/skills/test-runner.sh
+.claude/skills/test-targeted.sh
 
 # Check code quality
 .claude/skills/quality-check.sh
@@ -79,7 +80,6 @@ Run any skill manually:
 ### docker-health.sh
 Verifies your development environment is ready:
 - All 7 Docker containers running (postgres, redis, qdrant, app, worker, beat, frontend)
-- Ollama LLM service accessible
 - PostgreSQL accepting connections
 - Redis responding to ping
 - Qdrant API available
@@ -100,6 +100,32 @@ System diagnostics for debugging:
 - Celery queue depth
 - Conversation statistics
 - Current RAG configuration
+
+### test-coverage-check.sh (test-before-complete)
+Comprehensive test coverage verification with gap analysis:
+1. **Change Detection**: Identifies modified files (staged, unstaged, recent commits)
+2. **Test Mapping**: Maps source files to their corresponding test files
+3. **Test Execution**: Runs relevant unit and integration tests
+4. **Gap Analysis**: Identifies files without tests, new functions without coverage
+5. **Recommendations**: Suggests specific tests to add
+
+**Usage with Claude Code (recommended):**
+```bash
+# Invoke as skill - uses sub-agents for parallel analysis
+/test-before-complete
+```
+
+**Manual usage:**
+```bash
+./.claude/skills/test-coverage-check.sh
+```
+
+**Sub-agents used:**
+- `unit-test-runner` - Runs unit tests in parallel
+- `integration-test-runner` - Runs integration tests in parallel
+- `coverage-analyzer` - Analyzes test coverage gaps
+
+See `.claude/prompts/test-before-complete.md` for the full Claude Code prompt with sub-agent configuration.
 
 ### update-claude-md.sh
 Analyzes codebase for changes that should be documented in CLAUDE.md:
@@ -130,12 +156,7 @@ The skill also provides a structured prompt in `.claude/prompts/update-claude-md
    docker compose up -d
    ```
 
-2. **Ollama** must be running (for LLM calls):
-   ```bash
-   curl http://localhost:11434/api/tags
-   ```
-
-3. **Frontend dependencies** (for type-check):
+2. **Frontend dependencies** (for type-check):
    ```bash
    cd frontend && npm install
    ```

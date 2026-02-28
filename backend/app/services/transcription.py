@@ -1,16 +1,16 @@
 """
-Transcription service using OpenAI Whisper.
+Transcription service using faster-whisper (CTranslate2).
 
 Handles audio transcription with:
 - Segment timestamps
 - Language detection
-- Speaker diarization (if supported by model)
+- INT8 quantization for ~4x CPU speedup vs openai-whisper
 - Progress tracking
 """
 import os
 from typing import List, Dict, Optional, Callable
 from dataclasses import dataclass
-import whisper
+from faster_whisper import WhisperModel
 
 from app.core.config import settings
 from app.services.chunking import TranscriptSegment
@@ -38,26 +38,31 @@ class TranscriptResult:
 
 class WhisperTranscriptionService:
     """
-    Whisper transcription service.
+    Whisper transcription service using faster-whisper (CTranslate2).
 
-    Uses OpenAI's Whisper model for speech-to-text with high accuracy.
+    ~4x faster than openai-whisper on CPU with INT8 quantization.
     """
 
     def __init__(self, model_name: str = None, device: str = None):
         """
-        Initialize Whisper transcription service.
+        Initialize faster-whisper transcription service.
 
         Args:
-            model_name: Whisper model name (tiny, base, small, medium, large)
+            model_name: Whisper model name (tiny, base, small, medium, large-v3)
             device: Device to run on ("cpu" or "cuda")
         """
         self.model_name = model_name or settings.whisper_model
         self.device = device or settings.whisper_device
 
-        # Load Whisper model
-        print(f"Loading Whisper model: {self.model_name}")
-        self.model = whisper.load_model(self.model_name, device=self.device)
-        print(f"Whisper model loaded on {self.device}")
+        self.compute_type = getattr(settings, "whisper_compute_type", "int8")
+
+        print(f"Loading faster-whisper model: {self.model_name} ({self.compute_type})")
+        self.model = WhisperModel(
+            self.model_name,
+            device=self.device,
+            compute_type=self.compute_type,
+        )
+        print(f"faster-whisper model loaded on {self.device} ({self.compute_type})")
 
     def transcribe(
         self,
@@ -86,11 +91,10 @@ class WhisperTranscriptionService:
         if progress_callback:
             progress_callback({"status": "loading", "message": "Loading audio file..."})
 
-        # Transcribe with Whisper
         try:
             transcribe_options = {
-                "verbose": False,
-                "word_timestamps": False,  # Set to True if you want word-level timestamps
+                "beam_size": 5,
+                "word_timestamps": False,
             }
 
             if language:
@@ -101,15 +105,29 @@ class WhisperTranscriptionService:
                     {"status": "transcribing", "message": "Transcribing audio..."}
                 )
 
-            result = self.model.transcribe(audio_path, **transcribe_options)
+            # faster-whisper returns (segments_generator, info)
+            segments_gen, info = self.model.transcribe(
+                audio_path, **transcribe_options
+            )
 
             if progress_callback:
                 progress_callback(
                     {"status": "processing", "message": "Processing transcript..."}
                 )
 
-            # Extract segments
-            segments = self._extract_segments(result["segments"])
+            # Consume the generator into a list of segments
+            segments = []
+            for seg in segments_gen:
+                text = seg.text.strip()
+                if text:
+                    segments.append(
+                        TranscriptSegment(
+                            text=text,
+                            start=seg.start,
+                            end=seg.end,
+                            speaker=None,
+                        )
+                    )
 
             # Build full text
             full_text = " ".join(seg.text.strip() for seg in segments)
@@ -120,8 +138,8 @@ class WhisperTranscriptionService:
             # Count words
             word_count = len(full_text.split())
 
-            # Detect language
-            detected_language = result.get("language", "unknown")
+            # Language from info
+            detected_language = info.language or "unknown"
 
             if progress_callback:
                 progress_callback(
@@ -142,39 +160,6 @@ class WhisperTranscriptionService:
                     {"status": "failed", "message": f"Transcription failed: {str(e)}"}
                 )
             raise Exception(f"Transcription failed: {str(e)}")
-
-    def _extract_segments(
-        self, whisper_segments: List[Dict]
-    ) -> List[TranscriptSegment]:
-        """
-        Convert Whisper segments to TranscriptSegment objects.
-
-        Args:
-            whisper_segments: Raw segments from Whisper
-
-        Returns:
-            List of TranscriptSegment objects
-        """
-        segments = []
-
-        for seg in whisper_segments:
-            # Extract basic info
-            text = seg["text"].strip()
-            start = seg["start"]
-            end = seg["end"]
-
-            # Speaker info (if available from diarization)
-            # Note: Basic Whisper doesn't include speaker labels
-            # You'd need a separate diarization model for this
-            speaker = None
-
-            segment = TranscriptSegment(
-                text=text, start=start, end=end, speaker=speaker
-            )
-
-            segments.append(segment)
-
-        return segments
 
     def get_model_info(self) -> Dict:
         """Get information about the loaded model."""
@@ -233,5 +218,12 @@ class TranscriptionService:
         return info
 
 
-# Global transcription service instance
-transcription_service = TranscriptionService()
+# Lazy global instance — only loads model when first accessed
+_transcription_service = None
+
+
+def get_transcription_service() -> TranscriptionService:
+    global _transcription_service
+    if _transcription_service is None:
+        _transcription_service = TranscriptionService()
+    return _transcription_service

@@ -18,7 +18,7 @@ import logging
 import re
 from typing import List, Optional
 
-from app.services.llm_providers import LLMService, Message
+from app.services.llm_providers import LLMService, Message, llm_service as _global_llm_service
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -68,17 +68,19 @@ class QueryRewriterService:
     "this", "it", "that" into specific topics from prior messages.
     """
 
-    def __init__(self, llm_service: LLMService | None = None):
+    def __init__(self, llm_service: LLMService | None = None, usage_collector=None):
         """
         Initialize query rewriter service.
 
         Args:
             llm_service: Optional LLM service. If None, creates new instance.
+            usage_collector: Optional LLMUsageCollector for tracking costs.
         """
-        self.llm_service = llm_service or LLMService()
+        self.llm_service = llm_service or _global_llm_service
         self.enabled = settings.enable_query_rewriting
         self.history_limit = settings.query_rewrite_history_limit
         self.model = settings.query_rewrite_model
+        self.usage_collector = usage_collector
 
     def rewrite_query(
         self,
@@ -179,6 +181,9 @@ Standalone Question:"""
             max_tokens=200,  # Short response expected
             temperature=0.1,  # Very low temp for consistent, focused output
         )
+
+        if self.usage_collector and response.usage:
+            self.usage_collector.record(response, "query_rewrite")
 
         # Extract and clean the response
         rewritten = response.content.strip()

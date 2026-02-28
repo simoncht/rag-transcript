@@ -2,7 +2,7 @@
 
 Machine-readable list of behavioral promises the system makes to users. Each contract has a unique ID, a description of what it promises, where it's implemented, and how to validate it.
 
-**Last updated:** 2026-02-23
+**Last updated:** 2026-02-25
 
 ---
 
@@ -10,7 +10,7 @@ Machine-readable list of behavioral promises the system makes to users. Each con
 
 | ID | Promise | Implementation | Validation |
 |----|---------|----------------|------------|
-| MEM-001 | No memory dead zone: fact extraction covers turns before they leave history window | `conversations.py:1242` `.limit(10)` + fact threshold `>= 15` at `conversations.py:1445` | Assert `FACT_THRESHOLD <= HISTORY_LIMIT * 2` OR bridging mechanism exists (e.g., facts extracted before old messages truncated) |
+| MEM-001 | No memory dead zone: fact injection threshold <= history limit | `conversations.py:1472` threshold `>= 10` (was 15), history `.limit(10)` at `conversations.py:1262` | **FIXED.** Threshold lowered to 10 to match history limit. Facts are extracted every turn unconditionally; threshold only gates injection into prompt. |
 | MEM-002 | Identity facts survive indefinitely | `memory_consolidation.py:24-28` identity skip + `memory_scoring.py:38-44` category priority 1.0 | Identity facts from turn 1 still present at turn 100 — consolidation must not prune identity-category facts |
 | MEM-003 | Consolidation runs during active conversations when fact count > threshold | `memory_consolidation.py` only runs for stale convos (24h inactive via beat task) | Assert consolidation triggered inline when facts > `MAX_FACTS_PER_CONVERSATION` (currently 50) |
 | MEM-004 | Fact values merge on update (not silently dropped) | `fact_extraction.py` dedup checks key only | When fact "speaker=X" is updated to "speaker=X Y", new value replaces old — not skipped as duplicate |
@@ -21,8 +21,8 @@ Machine-readable list of behavioral promises the system makes to users. Each con
 
 | ID | Promise | Implementation | Validation |
 |----|---------|----------------|------------|
-| CIT-001 | `was_used_in_response` reflects actual LLM output, not always True | `message.py:114-116` default=True, never set to False anywhere in codebase | Parse LLM response for `[N]` markers after generation, set `was_used_in_response=False` for unreferenced chunks |
-| CIT-002 | All `[N]` markers in LLM output map to valid retrieved chunks | `conversations.py` system prompt + chunk_refs | Assert `max(N)` in LLM output `<= len(chunk_refs_response)` — no orphan citation markers |
+| CIT-001 | `was_used_in_response` reflects actual LLM output | `conversations.py` `_extract_used_markers()` → sets `was_used_in_response=(rank in used_markers)` on `MessageChunkReference` | **FIXED.** Both streaming and non-streaming paths parse `[N]` markers and set `was_used_in_response` accordingly. `chunks_used_count` also set on Message. |
+| CIT-002 | All `[N]` markers in LLM output map to valid retrieved chunks | `conversations.py` `_validate_citation_markers()` | **FIXED.** Logs warning for out-of-bounds markers. Called in both streaming and non-streaming paths. |
 | CIT-003 | Jump URLs have correct timestamps | `conversations.py` `_build_youtube_jump_url` | Assert URL `t=` parameter matches `chunk.start_timestamp` (within 1s tolerance) |
 
 ---
@@ -31,9 +31,9 @@ Machine-readable list of behavioral promises the system makes to users. Each con
 
 | ID | Promise | Implementation | Validation |
 |----|---------|----------------|------------|
-| ACC-001 | Storage vector size calculation uses actual embedding dimensions | `storage_calculator.py:23` hardcodes `BYTES_PER_VECTOR = 5 * 1024` assuming 1536 dims | Assert `BYTES_PER_VECTOR` matches `(embedding_model_dimensions * 4) + overhead`. BGE-base uses 768 dims, not 1536. |
+| ACC-001 | Storage vector size calculation uses actual embedding dimensions | `storage_calculator.py` `_calculate_bytes_per_vector()` dynamically reads `settings.embedding_model` | **FIXED.** `BYTES_PER_VECTOR` now computed from model dimensions lookup, not hardcoded. |
 | ACC-002 | Token estimates within 20% of actual | `conversations.py` uses `word_count * 1.3` heuristic | Compare streaming token estimates vs actual token counts from LLM response usage metadata |
-| ACC-003 | BM25 not skipped for entity/name queries | `bm25_search.py:50-52` skips queries with `<3` non-stopword tokens | Queries with proper nouns (e.g., "Ken Robinson") must bypass the min-token gate or treat proper nouns as content tokens |
+| ACC-003 | BM25 not skipped for entity/name queries | `bm25_search.py:50-65` `_has_proper_noun()` bypasses min-token gate | **FIXED.** `_should_skip_bm25()` checks for proper nouns before applying token count threshold. |
 
 ---
 
@@ -42,7 +42,7 @@ Machine-readable list of behavioral promises the system makes to users. Each con
 | ID | Promise | Implementation | Validation |
 |----|---------|----------------|------------|
 | PAR-001 | Documents get same enrichment quality as videos | `document_tasks.py` vs `video_tasks.py` | Both call `ContextualEnricher` with equivalent params (full_text, content_type, usage_collector) |
-| PAR-002 | Enrichment logs warning when full-text is truncated | `enrichment.py:94` silently truncates at 48K chars | Assert `logger.warning()` called when `len(full_text) > 48000` before truncation |
+| PAR-002 | Enrichment logs warning when full-text is truncated | `enrichment.py:97-101` `logger.warning()` with char counts and content_id | **FIXED.** Truncation now emits warning with original size, truncated size, and content ID. |
 
 ---
 

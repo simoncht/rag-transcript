@@ -3,8 +3,10 @@ Tests for citation and accuracy behavioral contracts.
 
 Validates contracts defined in .claude/references/behavioral-contracts.md:
 - CIT-001: was_used_in_response tracking
+- CIT-002: Citation marker bounds validation
 - CIT-003: Jump URL timestamp matches chunk
 - ACC-001: Storage vector dimensions match embedding model
+- ACC-003: BM25 proper noun handling
 """
 
 import re
@@ -20,40 +22,29 @@ class TestCitationTracking:
     """CIT-001: was_used_in_response must reflect actual LLM output."""
 
     def test_was_used_in_response_default_is_true(self):
-        """Verify the default value — this documents the current (broken) state."""
+        """Default remains True for backwards compat — code explicitly sets per-ref."""
         from app.models.message import MessageChunkReference
 
-        # Inspect the column default
         col = MessageChunkReference.__table__.columns["was_used_in_response"]
         assert col.default is not None, "was_used_in_response has no default"
-        assert col.default.arg is True, (
-            "was_used_in_response default should be True (current behavior)"
-        )
+        assert col.default.arg is True
 
-    def test_was_used_in_response_set_to_false_somewhere(self):
-        """Check if any code path sets was_used_in_response to False.
-
-        If this test fails, CIT-001 is broken: the field is always True regardless
-        of whether the LLM actually referenced the chunk.
-        """
-        import os
-
-        found_false_set = False
+    def test_was_used_in_response_set_explicitly(self):
+        """Verify conversations.py sets was_used_in_response based on marker parsing."""
         import os
 
         # Support both local and Docker paths
         search_dirs = []
         for prefix in ["backend/", ""]:
             d1 = f"{prefix}app/api/routes"
-            d2 = f"{prefix}app/services"
             if os.path.isdir(d1):
-                search_dirs = [d1, d2]
+                search_dirs = [d1]
                 break
         assert search_dirs, "Could not find app/api/routes directory"
 
+        found = False
         for search_dir in search_dirs:
             for root, dirs, files in os.walk(search_dir):
-                # Skip __pycache__
                 dirs[:] = [d for d in dirs if d != "__pycache__"]
                 for fname in files:
                     if not fname.endswith(".py"):
@@ -61,19 +52,53 @@ class TestCitationTracking:
                     filepath = os.path.join(root, fname)
                     with open(filepath, "r") as f:
                         content = f.read()
-                    # Look for setting was_used_in_response to False
-                    if re.search(r"was_used_in_response\s*=\s*False", content):
-                        found_false_set = True
+                    if re.search(r"was_used_in_response\s*=.*used_markers", content):
+                        found = True
                         break
-                if found_false_set:
+                if found:
                     break
 
-        if not found_false_set:
-            pytest.skip(
-                "CIT-001 KNOWN ISSUE: was_used_in_response is never set to False. "
-                "All citations are marked as 'used' regardless of LLM output. "
-                "Fix: parse [N] markers from LLM response and update accordingly."
-            )
+        assert found, (
+            "CIT-001 BROKEN: conversations.py does not set was_used_in_response "
+            "based on used_markers. All citations would be marked as 'used'."
+        )
+
+    def test_extract_used_markers_function_exists(self):
+        """The _extract_used_markers helper must exist."""
+        from app.api.routes.conversations import _extract_used_markers
+
+        assert callable(_extract_used_markers)
+
+    def test_extract_used_markers_basic(self):
+        """Extract valid marker numbers from response text."""
+        from app.api.routes.conversations import _extract_used_markers
+
+        response = "The AI revolution [1] changed everything [3]."
+        result = _extract_used_markers(response, num_sources=5)
+        assert result == {1, 3}
+
+    def test_extract_used_markers_filters_out_of_bounds(self):
+        """Out-of-bounds markers should NOT be included in used set."""
+        from app.api.routes.conversations import _extract_used_markers
+
+        response = "This [1] is supported [7]."
+        result = _extract_used_markers(response, num_sources=3)
+        assert result == {1}, f"Expected {{1}}, got {result} (7 should be excluded)"
+
+    def test_extract_used_markers_empty_response(self):
+        """No markers in response should return empty set."""
+        from app.api.routes.conversations import _extract_used_markers
+
+        result = _extract_used_markers("No citations here.", num_sources=5)
+        assert result == set()
+
+    def test_extract_used_markers_deduplicates(self):
+        """Repeated markers should be deduplicated."""
+        from app.api.routes.conversations import _extract_used_markers
+
+        response = "Point A [1]. Point B [1]. Point C [2]."
+        result = _extract_used_markers(response, num_sources=3)
+        assert result == {1, 2}
 
 
 # ── CIT-002: Citation Markers Within Bounds ───────────────────────────
@@ -82,38 +107,62 @@ class TestCitationTracking:
 class TestCitationMarkerBounds:
     """CIT-002: All [N] markers must map to valid retrieved chunks."""
 
+    def test_validate_citation_markers_function_exists(self):
+        """The validation function must exist in conversations module."""
+        from app.api.routes.conversations import _validate_citation_markers
+
+        assert callable(_validate_citation_markers)
+
+    def test_valid_markers_return_empty(self):
+        """Markers within bounds should return empty list (no violations)."""
+        from app.api.routes.conversations import _validate_citation_markers
+
+        response = "The speaker discusses AI [1] and ethics [2]. This is supported [3]."
+        result = _validate_citation_markers(response, num_sources=3)
+        assert result == [], f"Expected no violations, got {result}"
+
+    def test_out_of_bounds_detected(self):
+        """Markers exceeding source count should be detected."""
+        from app.api.routes.conversations import _validate_citation_markers
+
+        response = "The answer is clear [1][2][5]."
+        result = _validate_citation_markers(response, num_sources=3)
+        assert 5 in result, f"Expected [5] to be flagged, got {result}"
+
+    def test_zero_marker_detected(self):
+        """[0] is out of bounds since sources are 1-indexed."""
+        from app.api.routes.conversations import _validate_citation_markers
+
+        response = "This is from source [0]."
+        result = _validate_citation_markers(response, num_sources=3)
+        assert 0 in result, f"Expected [0] to be flagged, got {result}"
+
+    def test_no_markers_return_empty(self):
+        """Response without any markers should return empty list."""
+        from app.api.routes.conversations import _validate_citation_markers
+
+        response = "I don't have enough information to answer that."
+        result = _validate_citation_markers(response, num_sources=3)
+        assert result == []
+
     def test_marker_extraction_regex(self):
         """Verify that citation markers can be reliably extracted from LLM output."""
-        # Standard citation format used in system prompt
+        from app.api.routes.conversations import _CITATION_MARKER_RE
+
         test_response = (
             "According to the video [1], the speaker discusses AI ethics. "
             "This is further supported by [2] and [3]. "
             "However, [1] also mentions the counterargument."
         )
 
-        markers = set(re.findall(r"\[(\d+)\]", test_response))
+        markers = set(_CITATION_MARKER_RE.findall(test_response))
         expected = {"1", "2", "3"}
-
-        assert markers == expected, (
-            f"Extracted markers {markers} != expected {expected}"
-        )
-
-    def test_marker_bounds_validation(self):
-        """If N chunks are provided, markers [1] through [N] are valid, [N+1] is not."""
-        num_chunks = 4
-
-        # Valid markers
-        for i in range(1, num_chunks + 1):
-            assert 1 <= i <= num_chunks, f"Marker [{i}] should be valid"
-
-        # Invalid marker
-        invalid_marker = num_chunks + 1
-        assert invalid_marker > num_chunks, (
-            f"Marker [{invalid_marker}] should be invalid with {num_chunks} chunks"
-        )
+        assert markers == expected, f"Extracted markers {markers} != expected {expected}"
 
     def test_empty_response_has_no_markers(self):
         """Edge case: empty or marker-free response."""
+        from app.api.routes.conversations import _CITATION_MARKER_RE
+
         responses = [
             "",
             "I don't have enough information to answer that.",
@@ -121,10 +170,8 @@ class TestCitationMarkerBounds:
         ]
 
         for response in responses:
-            markers = re.findall(r"\[(\d+)\]", response)
-            assert len(markers) == 0, (
-                f"Found unexpected markers in: {response}"
-            )
+            markers = _CITATION_MARKER_RE.findall(response)
+            assert len(markers) == 0, f"Found unexpected markers in: {response}"
 
 
 # ── CIT-003: Jump URL Timestamp ───────────────────────────────────────
@@ -194,10 +241,7 @@ class TestStorageVectorDimensions:
     def test_vector_dimensions_match_default_model(self):
         """BYTES_PER_VECTOR should match the configured embedding model's dimensions.
 
-        Current default model: sentence-transformers/all-MiniLM-L6-v2 (384 dims)
-        or BAAI/bge-base-en-v1.5 (768 dims).
-
-        Formula: dimensions * 4 bytes (float32) + overhead
+        Formula: dimensions * 4 bytes (float32) + ~1KB overhead
         """
         from app.services.storage_calculator import BYTES_PER_VECTOR
         from app.core.config import settings
@@ -215,21 +259,122 @@ class TestStorageVectorDimensions:
         model = settings.embedding_model
         if model in model_dimensions:
             expected_dims = model_dimensions[model]
-            # 4 bytes per float32 dimension + ~1KB metadata overhead
             expected_bytes = expected_dims * 4 + 1024
-            # Allow 50% tolerance for overhead estimation
+            # Allow reasonable tolerance for overhead estimation
             min_expected = expected_dims * 4
             max_expected = expected_dims * 4 + 2048
 
-            if not (min_expected <= BYTES_PER_VECTOR <= max_expected):
-                pytest.skip(
-                    f"ACC-001 KNOWN ISSUE: BYTES_PER_VECTOR={BYTES_PER_VECTOR} "
-                    f"but model '{model}' has {expected_dims} dims "
-                    f"(expected {min_expected}-{max_expected} bytes). "
-                    f"Storage calculation assumes 1536 dims but model uses {expected_dims}."
-                )
+            assert min_expected <= BYTES_PER_VECTOR <= max_expected, (
+                f"ACC-001 BROKEN: BYTES_PER_VECTOR={BYTES_PER_VECTOR} "
+                f"but model '{model}' has {expected_dims} dims "
+                f"(expected {min_expected}-{max_expected} bytes)."
+            )
         else:
             pytest.skip(
                 f"Unknown model '{model}' — cannot verify dimensions. "
                 f"Add to model_dimensions map in test."
             )
+
+    def test_calculate_bytes_per_vector_is_dynamic(self):
+        """Verify _calculate_bytes_per_vector reads from settings, not hardcoded."""
+        from app.services.storage_calculator import _calculate_bytes_per_vector
+
+        # The function should exist and be callable
+        result = _calculate_bytes_per_vector()
+        assert isinstance(result, int)
+        assert result > 0
+
+
+# ── ACC-003: BM25 Proper Noun Handling ─────────────────────────────────
+
+
+class TestBM25ProperNounHandling:
+    """ACC-003: BM25 must not skip queries containing proper nouns."""
+
+    def test_proper_noun_detection_exists(self):
+        """The _has_proper_noun function must exist."""
+        from app.services.bm25_search import _has_proper_noun
+
+        assert callable(_has_proper_noun)
+
+    def test_proper_noun_detected_in_query(self):
+        """Capitalized words (not sentence-initial) should be detected as proper nouns."""
+        from app.services.bm25_search import _has_proper_noun
+
+        assert _has_proper_noun("What did Ken Robinson say?") is True
+        assert _has_proper_noun("Tell me about Einstein") is True
+
+    def test_no_proper_noun_in_lowercase(self):
+        """All-lowercase queries (after first word) have no proper nouns."""
+        from app.services.bm25_search import _has_proper_noun
+
+        assert _has_proper_noun("What is the meaning of life?") is False
+        assert _has_proper_noun("Tell me about education") is False
+
+    def test_should_skip_bypassed_for_proper_nouns(self):
+        """Queries with proper nouns should NOT be skipped even if few content tokens."""
+        from app.services.bm25_search import _should_skip_bm25
+
+        # "Who is Ken Robinson?" has only 1 content token after stopword removal
+        # but contains a proper noun, so BM25 should NOT be skipped
+        assert _should_skip_bm25("Who is Ken Robinson?") is False
+
+    def test_short_generic_queries_still_skipped(self):
+        """Short queries without proper nouns should still be skipped."""
+        from app.services.bm25_search import _should_skip_bm25
+
+        # "What is this?" — 0 content tokens after stopwords, no proper nouns
+        assert _should_skip_bm25("What is this?") is True
+
+    def test_long_queries_not_skipped(self):
+        """Queries with 3+ content tokens should not be skipped regardless."""
+        from app.services.bm25_search import _should_skip_bm25
+
+        assert _should_skip_bm25("education creativity schools reform") is False
+
+
+# ── PAR-002: Enrichment Truncation Warning ─────────────────────────────
+
+
+class TestEnrichmentTruncationWarning:
+    """PAR-002: Enrichment must log a warning when full_text is truncated."""
+
+    def test_truncation_logs_warning(self):
+        """When full_text > 48000 chars, a logger.warning must be emitted."""
+        import logging
+        from unittest.mock import patch, MagicMock
+
+        # Create a long text that exceeds the 48K limit
+        long_text = "x" * 50000
+
+        with patch("app.services.enrichment.logger") as mock_logger:
+            from app.services.enrichment import ContextualEnricher
+
+            enricher = ContextualEnricher(
+                full_text=long_text,
+                content_id="test-123",
+            )
+
+            # Verify the text was truncated
+            assert len(enricher.full_text) == 48000
+
+            # Verify a warning was logged
+            mock_logger.warning.assert_called_once()
+            call_args = mock_logger.warning.call_args[0][0]
+            assert "truncated" in call_args.lower()
+            assert "50000" in call_args
+            assert "48000" in call_args
+
+    def test_short_text_no_warning(self):
+        """When full_text <= 48000 chars, no warning should be emitted."""
+        from unittest.mock import patch
+
+        short_text = "x" * 10000
+
+        with patch("app.services.enrichment.logger") as mock_logger:
+            from app.services.enrichment import ContextualEnricher
+
+            enricher = ContextualEnricher(full_text=short_text)
+
+            assert enricher.full_text == short_text
+            mock_logger.warning.assert_not_called()

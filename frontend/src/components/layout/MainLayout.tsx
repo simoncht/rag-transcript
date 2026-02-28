@@ -20,7 +20,7 @@ import {
 } from "@/components/ui/sheet";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
-import { Folder, LogOut, Menu, MessageSquare, Video, Shield, User } from "lucide-react";
+import { FileText, Folder, LogOut, Menu, MessageSquare, Video, Shield, User, Rss } from "lucide-react";
 import { ThemeToggle } from "./ThemeToggle";
 import { useAuth, useAuthState } from "@/lib/auth";
 import { apiClient } from "@/lib/api/client";
@@ -30,11 +30,14 @@ import { useQuery } from "@tanstack/react-query";
 import type { QuotaUsage } from "@/lib/types";
 import QuotaDisplay from "../subscription/QuotaDisplay";
 import { useBreadcrumb } from "@/contexts/BreadcrumbContext";
+import { NotificationBell } from "../notifications/NotificationBell";
 
 const navigation = [
+  { name: "Chat", href: "/chat", icon: MessageSquare },
   { name: "Videos", href: "/videos", icon: Video },
+  { name: "Documents", href: "/documents", icon: FileText },
   { name: "Collections", href: "/collections", icon: Folder },
-  { name: "Conversations", href: "/conversations", icon: MessageSquare },
+  // { name: "Discovery", href: "/discovery", icon: Rss }, // Hidden until feature is complete
   { name: "Account", href: "/account", icon: User },
 ];
 
@@ -225,6 +228,7 @@ export const MainLayout = ({ children }: { children: React.ReactNode }) => {
               )}
             </div>
             <div className="flex items-center gap-2">
+              <NotificationBell />
               <ThemeToggle />
               {user && (
                 <Button

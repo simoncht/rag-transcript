@@ -98,7 +98,9 @@ class MemoryConsolidationService:
             )
             stats["total_after"] = remaining
         else:
-            stats["total_after"] = stats["total_before"] - stats["merged"] - stats["pruned"]
+            stats["total_after"] = (
+                stats["total_before"] - stats["merged"] - stats["pruned"]
+            )
 
         logger.info(
             f"[Memory Consolidation] Conversation {conversation_id}: "
@@ -156,7 +158,8 @@ class MemoryConsolidationService:
                         if fact.access_count > keeper.access_count:
                             keeper.access_count = fact.access_count
                         if fact.last_accessed and (
-                            not keeper.last_accessed or fact.last_accessed > keeper.last_accessed
+                            not keeper.last_accessed
+                            or fact.last_accessed > keeper.last_accessed
                         ):
                             keeper.last_accessed = fact.last_accessed
 
@@ -247,8 +250,7 @@ class MemoryConsolidationService:
 
             if is_stale and fact.importance > MIN_IMPORTANCE_THRESHOLD:
                 new_importance = max(
-                    MIN_IMPORTANCE_THRESHOLD,
-                    fact.importance - DECAY_PENALTY
+                    MIN_IMPORTANCE_THRESHOLD, fact.importance - DECAY_PENALTY
                 )
 
                 if new_importance < fact.importance:
@@ -350,6 +352,7 @@ class MemoryConsolidationService:
         stale_threshold = datetime.utcnow() - timedelta(hours=stale_hours)
 
         # Find conversations with facts that are stale
+        # Skip deleted conversations
         stale_conversations = (
             db.query(ConversationFact.conversation_id)
             .distinct()
@@ -357,6 +360,7 @@ class MemoryConsolidationService:
             .filter(
                 Conversation.last_message_at < stale_threshold,
                 Conversation.last_message_at.isnot(None),
+                Conversation.is_deleted.is_(False),
             )
             .all()
         )

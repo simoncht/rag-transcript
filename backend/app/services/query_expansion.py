@@ -11,7 +11,7 @@ Strategy:
 """
 import logging
 from typing import List
-from app.services.llm_providers import LLMService, Message
+from app.services.llm_providers import LLMService, Message, llm_service as _global_llm_service
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -25,16 +25,18 @@ class QueryExpansionService:
     This helps capture content that uses different terminology or phrasing.
     """
 
-    def __init__(self, llm_service: LLMService | None = None):
+    def __init__(self, llm_service: LLMService | None = None, usage_collector=None):
         """
         Initialize query expansion service.
 
         Args:
             llm_service: Optional LLM service. If None, creates new instance.
+            usage_collector: Optional LLMUsageCollector for tracking costs.
         """
-        self.llm_service = llm_service or LLMService()
+        self.llm_service = llm_service or _global_llm_service
         self.enabled = settings.enable_query_expansion
         self.num_variants = settings.query_expansion_variants
+        self.usage_collector = usage_collector
 
     def expand_query(self, query: str) -> List[str]:
         """
@@ -50,6 +52,14 @@ class QueryExpansionService:
         # Fast path: if disabled, return original only
         if not self.enabled:
             logger.debug("Query expansion disabled, returning original query")
+            return [query]
+
+        # Skip expansion for short/simple queries — LLM call adds no value
+        word_count = len(query.split())
+        if word_count <= settings.query_expansion_min_words:
+            logger.debug(
+                f"[Query Expansion] Skipping for short query ({word_count} words)"
+            )
             return [query]
 
         # Always include original query first
@@ -116,6 +126,9 @@ Variant questions:"""
                 max_tokens=150,  # Short responses
                 temperature=0.3,  # Low temperature for consistency
             )
+
+            if self.usage_collector and response.usage:
+                self.usage_collector.record(response, "query_expansion")
 
             # Parse response - expect one variant per line
             variants = []

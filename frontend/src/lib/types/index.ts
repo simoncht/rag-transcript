@@ -3,8 +3,12 @@ export interface Video {
   youtube_url: string;
   youtube_id: string;
   title: string;
+  description?: string;
+  channel_name?: string;
   thumbnail_url?: string;
   duration_seconds: number;
+  upload_date?: string;
+  language?: string;
   status:
     | "pending"
     | "processing"
@@ -26,6 +30,12 @@ export interface Video {
   storage_total_mb?: number;
   created_at: string;
   updated_at: string;
+}
+
+export interface VideoFilterValues {
+  channels: { name: string; count: number }[];
+  tags: { name: string; count: number }[];
+  statuses: { name: string; count: number }[];
 }
 
 // Cancel types
@@ -127,6 +137,29 @@ export interface Conversation {
   last_message_preview?: string;
 }
 
+export interface ConfidenceInfo {
+  level: "strong" | "moderate" | "limited";
+  avg_relevance: number;
+  chunk_count: number;
+  unique_videos: number;
+}
+
+export interface RetrievalMetadata {
+  original_query?: string;
+  effective_query?: string | null;
+  retrieval_type?: string;
+  total_retrieved?: number;
+  total_after_filter?: number;
+  total_after_rerank?: number;
+  final_chunks?: number;
+  unique_videos?: number;
+  timing?: {
+    retrieval_ms?: number;
+    llm_ms?: number;
+    total_ms?: number;
+  };
+}
+
 export interface Message {
   id: string;
   conversation_id: string;
@@ -137,6 +170,12 @@ export interface Message {
   response_time_seconds?: number;
   created_at: string;
   chunk_references?: ChunkReference[];
+  // RAG intelligence features
+  confidence?: ConfidenceInfo;
+  retrieval_metadata?: RetrievalMetadata;
+  reasoning_content?: string;
+  reasoning_tokens?: number;
+  followup_questions?: string[];
 }
 
 export interface ChunkReference {
@@ -431,6 +470,12 @@ export interface ConversationInsightsMetadata {
 
 export interface ConversationInsightsResponse {
   conversation_id: string;
+  graph: InsightGraph;
+  metadata: ConversationInsightsMetadata;
+}
+
+export interface CollectionInsightsResponse {
+  collection_id: string;
   graph: InsightGraph;
   metadata: ConversationInsightsMetadata;
 }
@@ -819,6 +864,8 @@ export interface LLMUsageItem {
   user_id: string;
   user_email?: string;
   conversation_id?: string;
+  call_type?: string;
+  content_id?: string;
   model: string;
   provider: string;
   input_tokens: number;
@@ -856,9 +903,17 @@ export interface LLMUsageByUser {
   cache_hit_rate: number;
 }
 
+export interface LLMUsageByCallType {
+  call_type?: string;
+  total_requests: number;
+  total_tokens: number;
+  total_cost_usd: number;
+}
+
 export interface LLMUsageResponse {
   stats: LLMUsageStats;
   by_user: LLMUsageByUser[];
+  by_call_type: LLMUsageByCallType[];
   recent_events: LLMUsageItem[];
 }
 
@@ -1214,6 +1269,9 @@ export interface ContentItem {
   total_chunks?: number;
   eta_seconds?: number;
   is_active?: boolean;
+  activity_status?: "active" | "slow" | "stalled" | "unresponsive";
+  seconds_since_update?: number;
+  processing_rate?: number;
   chunk_count?: number;
   summary?: string;
   key_topics?: string[];
@@ -1256,4 +1314,7 @@ export interface ContentStatusUpdate {
   total_chunks?: number;
   eta_seconds?: number;
   is_active?: boolean;
+  activity_status?: "active" | "slow" | "stalled" | "unresponsive";
+  seconds_since_update?: number;
+  processing_rate?: number;
 }

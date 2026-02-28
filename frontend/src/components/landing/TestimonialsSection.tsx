@@ -124,10 +124,10 @@ export default function TestimonialsSection() {
         {/* Section header */}
         <div className="text-center mb-12">
           <h2 className="text-4xl font-bold text-gray-900 mb-4">
-            Loved by Researchers and Professionals
+            They Were Skeptical Too. Then They Tried It.
           </h2>
           <p className="text-xl text-gray-600 max-w-2xl mx-auto">
-            See how teams are transforming their video content into searchable knowledge.
+            Real results from professionals who used to do things the hard way.
           </p>
         </div>
 
@@ -214,7 +214,7 @@ export default function TestimonialsSection() {
 
         {/* Note about testimonials */}
         <p className="text-center text-gray-400 text-sm mt-6">
-          Join 10,000+ professionals transforming how they work with video
+          Join 10,000+ professionals who stopped searching and started finding
         </p>
       </div>
     </section>

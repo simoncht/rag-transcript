@@ -114,6 +114,7 @@ services:
       - ./storage:/app/storage
       - ./hf_cache:/root/.cache/huggingface  # Pre-downloaded HF models
       - ./whisper_cache:/root/.cache/whisper  # Pre-downloaded Whisper models
+      - ./cookies.txt:/etc/yt-cookies.txt  # YouTube cookies for anti-bot auth (optional)
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/rag_transcript
       - REDIS_URL=redis://:${REDIS_PASSWORD:-changeme}@redis:6379/0
@@ -187,6 +188,7 @@ services:
     environment:
       - NEXT_PUBLIC_API_URL=http://localhost:8000
       - NEXT_PUBLIC_API_V1_PREFIX=/api/v1
+      - BACKEND_INTERNAL_URL=http://app:8000
       - WATCHPACK_POLLING=true  # Enable hot reload in Docker
     depends_on:
       - app

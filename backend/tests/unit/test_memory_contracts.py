@@ -67,16 +67,15 @@ class TestMemoryDeadZone:
         # Document the gap for visibility
         min_history_limit = min(history_limits)
 
-        # The contract: threshold should be <= history_limit * 2 to avoid dead zones,
-        # OR there should be a bridging mechanism (incremental extraction)
-        # With limit=10 and threshold=15, turns 11-14 are in the dead zone
-        if fact_threshold > min_history_limit:
-            gap = fact_threshold - min_history_limit
-            pytest.skip(
-                f"MEM-001 KNOWN ISSUE: Dead zone of {gap} turns "
-                f"(history_limit={min_history_limit}, fact_threshold={fact_threshold}). "
-                f"Messages {min_history_limit + 1}-{fact_threshold - 1} may be lost."
-            )
+        # The contract: injection threshold should be <= history_limit to ensure
+        # facts are available in prompt as soon as they could be lost from history.
+        # Note: facts are extracted unconditionally on every turn — the threshold
+        # only gates when facts are INJECTED into the LLM prompt.
+        assert fact_threshold <= min_history_limit, (
+            f"MEM-001 BROKEN: Fact injection threshold ({fact_threshold}) > history limit "
+            f"({min_history_limit}). Facts extracted from turns {min_history_limit + 1}-"
+            f"{fact_threshold - 1} exist in DB but won't be injected into the prompt."
+        )
 
     def test_fact_threshold_is_reasonable(self):
         """Fact threshold should not be so high that many turns are missed."""

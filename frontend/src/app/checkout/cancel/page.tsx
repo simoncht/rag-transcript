@@ -54,7 +54,7 @@ export default function CheckoutCancelPage() {
                 >
                   <path d="M5 13l4 4L19 7" />
                 </svg>
-                <span>2 videos</span>
+                <span>10 videos</span>
               </li>
               <li className="flex items-start gap-2">
                 <svg
@@ -68,7 +68,7 @@ export default function CheckoutCancelPage() {
                 >
                   <path d="M5 13l4 4L19 7" />
                 </svg>
-                <span>50 messages per month</span>
+                <span>200 messages per month</span>
               </li>
               <li className="flex items-start gap-2">
                 <svg
@@ -96,7 +96,7 @@ export default function CheckoutCancelPage() {
                 >
                   <path d="M5 13l4 4L19 7" />
                 </svg>
-                <span>60 minutes per month</span>
+                <span>1000 minutes per month</span>
               </li>
             </ul>
           </div>

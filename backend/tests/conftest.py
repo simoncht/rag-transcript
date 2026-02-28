@@ -153,6 +153,18 @@ def db():
         Base.metadata.drop_all(bind=engine)
 
 
+@pytest.fixture(scope="function")
+def test_session_factory(db):
+    """Expose test DB session factory for patching SessionLocal in integration tests.
+
+    When generate_stream() creates its own SessionLocal() instances (for thread safety),
+    those calls bypass the get_db dependency override. This fixture lets tests patch
+    app.db.base.SessionLocal so all sessions use the same in-memory SQLite engine.
+    """
+    engine = db.get_bind()
+    return sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+
 @pytest.fixture
 def free_user(db):
     """Create a free tier user for testing."""

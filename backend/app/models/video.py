@@ -1,5 +1,8 @@
 """
 Video model for storing YouTube video metadata and processing status.
+
+Also serves as the universal content model for documents (PDF, DOCX, etc.)
+via the content_type discriminator column.
 """
 import uuid
 from datetime import datetime
@@ -8,6 +11,7 @@ from sqlalchemy import (
     String,
     DateTime,
     Integer,
+    BigInteger,
     Boolean,
     Text,
     ForeignKey,
@@ -20,7 +24,7 @@ from app.db.base import Base
 
 
 class Video(Base):
-    """Video model with rich metadata."""
+    """Video model with rich metadata. Also used for documents via content_type."""
 
     __tablename__ = "videos"
 
@@ -32,9 +36,12 @@ class Video(Base):
         index=True,
     )
 
-    # YouTube metadata
-    youtube_id = Column(String(50), nullable=False, index=True)
-    youtube_url = Column(String(500), nullable=False)
+    # Content type discriminator: 'youtube', 'pdf', 'docx', 'pptx', 'xlsx', 'txt', 'md', 'html', 'epub', 'csv', 'rtf', 'email'
+    content_type = Column(String(50), nullable=False, default="youtube", index=True)
+
+    # YouTube metadata (nullable for non-video content)
+    youtube_id = Column(String(50), nullable=True, index=True)
+    youtube_url = Column(String(500), nullable=True)
     title = Column(String(500), nullable=False)
     description = Column(Text, nullable=True)
     channel_name = Column(String(255), nullable=True)
@@ -79,6 +86,22 @@ class Video(Base):
         String(50), nullable=True
     )  # Source of transcript: "captions" or "whisper"
     chunk_count = Column(Integer, default=0, nullable=False)  # Number of chunks created
+
+    # Video-level summary (for two-level retrieval)
+    summary = Column(Text, nullable=True)  # LLM-generated summary (200-500 words)
+    key_topics = Column(
+        ARRAY(Text), nullable=True
+    )  # Main themes/topics ["machine learning", "neural networks", ...]
+    summary_generated_at = Column(DateTime, nullable=True)  # When summary was generated
+
+    # Document-specific fields (used when content_type != 'youtube')
+    original_filename = Column(String(500), nullable=True)  # Original uploaded filename
+    file_size_bytes = Column(BigInteger, nullable=True)  # File size in bytes
+    source_url = Column(String(2000), nullable=True)  # URL if document was fetched from web
+    page_count = Column(Integer, nullable=True)  # Number of pages (PDF, DOCX, PPTX)
+    source_metadata = Column(JSONB, nullable=True)  # Type-specific metadata (author, creation_date, etc.)
+    document_file_path = Column(String(500), nullable=True)  # Path to original uploaded file
+    extracted_text_path = Column(String(500), nullable=True)  # Path to extracted text JSON
 
     # Soft delete
     is_deleted = Column(Boolean, default=False, nullable=False, index=True)

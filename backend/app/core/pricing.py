@@ -97,7 +97,7 @@ def get_model_for_tier(tier: str) -> str:
         tier: Subscription tier (free, pro, enterprise)
 
     Returns:
-        Model ID string in Ollama format (e.g., "qwen3-vl:235b")
+        Model ID string (e.g., "deepseek-chat")
 
     Raises:
         ValueError: If tier is invalid
@@ -176,18 +176,22 @@ PRICING_TIERS: Dict[str, Dict[str, Any]] = {
         "stripe_price_id_monthly": None,
         "stripe_price_id_yearly": None,
         "features": [
-            "10 videos",
-            "200 messages per month",
-            "1GB storage",
-            "1000 minutes of video per month",
-            "AI-powered summaries",
+            "AI-powered transcription & summaries",
+            "Semantic search across all content",
             "Conversation memory for long chats",
+            "Citation links to exact sources",
+            "Up to 20 MB file uploads",
             "Community support",
         ],
+        # Free tier uses basic RAG pipeline: vector search + BM25 + reranking + query rewrite (8K max output)
+        # Pro features disabled: query expansion, relevance grading, HyDE, follow-up questions (64K max output)
         "video_limit": 10,
+        "document_limit": 50,
         "message_limit": 200,
         "storage_limit_mb": 1000,
         "minutes_limit": 1000,
+        "max_document_words": 50_000,  # ~100 pages, ~1 min enrichment
+        "max_upload_size_mb": 20,
         "model_tier": "free",
     },
     "pro": {
@@ -198,20 +202,22 @@ PRICING_TIERS: Dict[str, Dict[str, Any]] = {
         "stripe_price_id_monthly": "price_1SugDfRmTkZwB6fLSa2jHi9B",
         "stripe_price_id_yearly": "price_1SugDlRmTkZwB6fLQRsvGWqN",
         "features": [
-            "Unlimited videos",
-            "Unlimited messages",
-            "Unlimited video minutes",
-            "50GB storage",
-            "AI with step-by-step reasoning",
-            "Conversation memory for long chats",
-            "Priority support",
-            "Advanced analytics",
+            "Everything in Free",
+            "Advanced AI that reasons through complex questions",
+            "In-depth answers and full-length summaries",
+            "Searches your content from multiple angles",
+            "Smart follow-up question suggestions",
+            "100 MB uploads & 500K-word documents",
             "Export conversations",
+            "Priority support",
         ],
         "video_limit": -1,  # -1 means unlimited
+        "document_limit": -1,
         "message_limit": -1,
         "storage_limit_mb": 50000,
         "minutes_limit": -1,
+        "max_document_words": 500_000,  # matches NotebookLM, ~6 min enrichment
+        "max_upload_size_mb": 100,
         "model_tier": "pro",
     },
     "enterprise": {
@@ -223,10 +229,7 @@ PRICING_TIERS: Dict[str, Dict[str, Any]] = {
         "stripe_price_id_yearly": "price_1SugDoRmTkZwB6fLgO05P9wH",
         "features": [
             "Everything in Pro",
-            "Unlimited storage",
-            "Unlimited video minutes",
-            "AI with step-by-step reasoning",
-            "Conversation memory for long chats",
+            "Unlimited document size",
             "Custom integrations",
             "Dedicated account manager",
             "SLA guarantee (99.9% uptime)",
@@ -234,9 +237,12 @@ PRICING_TIERS: Dict[str, Dict[str, Any]] = {
             "Team collaboration features",
         ],
         "video_limit": -1,
+        "document_limit": -1,
         "message_limit": -1,
         "storage_limit_mb": -1,  # -1 means unlimited
         "minutes_limit": -1,
+        "max_document_words": -1,  # unlimited
+        "max_upload_size_mb": 100,
         "model_tier": "enterprise",
     },
 }
@@ -261,19 +267,6 @@ def get_tier_config(tier: str) -> Dict[str, Any]:
     return PRICING_TIERS[tier]
 
 
-def get_all_tiers() -> List[Dict[str, Any]]:
-    """
-    Get all pricing tiers with their configurations.
-
-    Returns:
-        List of tier configurations
-    """
-    return [
-        {"tier": tier, **config}
-        for tier, config in PRICING_TIERS.items()
-    ]
-
-
 def get_quota_limits(tier: str) -> Dict[str, int]:
     """
     Get quota limits for a specific tier.
@@ -288,6 +281,7 @@ def get_quota_limits(tier: str) -> Dict[str, int]:
 
     return {
         "video_limit": config["video_limit"],
+        "document_limit": config["document_limit"],
         "message_limit": config["message_limit"],
         "storage_limit_mb": config["storage_limit_mb"],
         "minutes_limit": config["minutes_limit"],
@@ -355,7 +349,7 @@ QUOTA_WARNING_THRESHOLD_CRITICAL = 100.0  # Send critical warning at 100%
 # =============================================================================
 #
 # These values are used for internal cost monitoring and profitability analysis.
-# Updated based on Railway and DeepSeek pricing as of January 2025.
+# Updated based on Railway and DeepSeek pricing as of February 2026.
 #
 # Sources:
 # - Railway: https://docs.railway.com/reference/pricing/plans
@@ -375,11 +369,16 @@ COST_CONFIG: Dict[str, Any] = {
         "input_cache_hit_per_million": 0.028,  # $0.028/M tokens (90% cheaper)
         "output_per_million": 0.42,  # $0.42/M tokens
     },
-    # Estimated per-unit costs
+    # Estimated per-unit costs (split by tier due to different models)
+    # Includes ALL LLM calls per message: main + query rewrite + expansion + relevance grading
+    # Auxiliary calls add ~$0.00034/msg (rewrite $0.067, expansion $0.032, grading $0.196,
+    # HyDE+facts amortized $0.048) — only for Pro/Enterprise (free tier skips expensive features)
     "per_unit": {
-        "message_no_cache": 0.0016,  # ~$0.0016/message (5100 in + 500 out, no cache)
-        "message_with_cache": 0.0010,  # ~$0.0010/message (50% cache hit rate)
-        "video_processing": 0.05,  # ~$0.05/video (transcription + chunking + embedding)
+        "message_free_no_cache": 0.0016,  # deepseek-chat: main $0.0012 + aux $0.00034
+        "message_free_with_cache": 0.0012,  # deepseek-chat: 50% cache on main + aux $0.00034
+        "message_pro_no_cache": 0.0023,  # deepseek-reasoner: main $0.0019 + aux $0.00034
+        "message_pro_with_cache": 0.0019,  # deepseek-reasoner: 50% cache on main + aux $0.00034
+        "video_processing": 0.015,  # ~34 chunks × enrichment (was $0.05, overestimated)
         "storage_per_gb_month": 0.15,  # Railway volume storage
     },
     # Stripe fees
@@ -388,7 +387,14 @@ COST_CONFIG: Dict[str, Any] = {
         "fixed_fee": 0.30,  # $0.30 per transaction
     },
     # Base infrastructure cost (7 containers)
-    "base_infrastructure_monthly": 100.00,  # ~$100/month fixed costs
+    "base_infrastructure_monthly": 76.00,  # ~$76/month fixed costs at minimum specs
+    # Infrastructure scaling model (Railway)
+    # Base: 7 containers. Scales with users/data.
+    "infrastructure_scaling": {
+        "base_monthly": 76.00,  # 7 containers at minimum specs
+        "per_1000_users_monthly": 80.00,  # Additional compute/memory
+        "per_100gb_vectors_monthly": 40.00,  # Qdrant RAM scaling (~5KB/vector)
+    },
 }
 
 
@@ -399,9 +405,10 @@ COST_CONFIG: Dict[str, Any] = {
 # Thresholds for identifying heavy users who may exceed cost targets.
 # Users exceeding these thresholds should be reviewed for fair use compliance.
 #
-# Based on profitability analysis:
-# - Pro tier costs ~$7.30/month for medium usage
-# - Heavy users (2000+ messages) cost ~$23.70/month (exceeds $20 price)
+# Based on profitability analysis (corrected Feb 2026):
+# - Pro tier costs ~$1.25/month for medium usage (500 msgs)
+# - Heavy users (3000+ messages) cost ~$6.00/month
+# - Power users (6000+ messages) cost ~$13.14/month
 
 HEAVY_USER_THRESHOLDS: Dict[str, Dict[str, int]] = {
     "pro": {
@@ -418,99 +425,26 @@ HEAVY_USER_THRESHOLDS: Dict[str, Dict[str, int]] = {
 
 
 # Per-tier profitability targets (monthly)
-# Updated January 2025: Pro tier increased to $23.99, Enterprise to $99.99
+# Updated Feb 2026: Corrected for auxiliary LLM costs and feature gating
 TIER_COST_TARGETS: Dict[str, Dict[str, float]] = {
     "free": {
-        "max_cost_per_user": 1.25,  # Acceptable as loss-leader (updated for 200 messages)
-        "expected_cost": 0.91,  # Typical free user cost with 200 messages
+        "max_cost_per_user": 1.50,  # Acceptable as loss-leader (corrected for aux LLM costs)
+        "expected_cost": 0.29,  # 200 msgs × $0.0012 + minimal storage + infra share
     },
     "pro": {
         "max_cost_per_user": 23.99,  # Should not exceed subscription price
-        "expected_cost_light": 2.41,  # Light user (20 videos, 100 messages) - 90% margin
-        "expected_cost_medium": 7.30,  # Medium user (50 videos, 500 messages) - 70% margin
-        "expected_cost_heavy": 23.70,  # Heavy user (200 videos, 2000 messages) - ~break-even
+        "expected_cost_light": 0.49,  # 100 msgs × $0.0019 + 2GB storage
+        "expected_cost_medium": 1.25,  # 500 msgs × $0.0019 + 5GB storage
+        "expected_cost_heavy": 6.00,  # 3000 msgs × $0.0019 + 15GB storage
+        "expected_cost_power": 13.14,  # 6000 msgs × $0.0019 + 50GB storage + 100 videos
         "target_margin_percent": 50.0,  # Target 50% margin
     },
     "enterprise": {
         "max_cost_per_user": 79.99,
-        "expected_cost": 50.00,  # Higher usage expected
-        "target_margin_percent": 50.0,
+        "expected_cost": 25.00,  # Higher usage expected
+        "target_margin_percent": 60.0,
     },
 }
-
-
-def estimate_user_cost(
-    messages: int,
-    videos: int,
-    storage_gb: float,
-    cache_hit_rate: float = 0.5,
-) -> float:
-    """
-    Estimate monthly cost for a user based on usage.
-
-    Args:
-        messages: Number of messages sent
-        videos: Number of videos processed
-        storage_gb: Storage used in GB
-        cache_hit_rate: Estimated DeepSeek cache hit rate (0-1)
-
-    Returns:
-        Estimated cost in dollars
-    """
-    per_unit = COST_CONFIG["per_unit"]
-
-    # Message cost (weighted by cache hit rate)
-    message_cost = messages * (
-        per_unit["message_no_cache"] * (1 - cache_hit_rate)
-        + per_unit["message_with_cache"] * cache_hit_rate
-    )
-
-    # Video processing cost (one-time per video)
-    video_cost = videos * per_unit["video_processing"]
-
-    # Storage cost
-    storage_cost = storage_gb * per_unit["storage_per_gb_month"]
-
-    # Infrastructure share (simplified allocation)
-    # Assumes costs are distributed across active users
-    infra_share = 0.50  # Base allocation per active user
-
-    return message_cost + video_cost + storage_cost + infra_share
-
-
-def check_heavy_user(
-    tier: str,
-    messages: int,
-    videos: int,
-    storage_gb: float,
-) -> Dict[str, bool]:
-    """
-    Check if user exceeds heavy usage thresholds.
-
-    Args:
-        tier: User's subscription tier
-        messages: Messages sent this month
-        videos: Videos processed this month
-        storage_gb: Storage used in GB
-
-    Returns:
-        Dictionary with exceeded flags for each metric
-    """
-    if tier not in HEAVY_USER_THRESHOLDS:
-        return {"messages": False, "videos": False, "storage": False}
-
-    thresholds = HEAVY_USER_THRESHOLDS[tier]
-
-    return {
-        "messages": messages > thresholds["messages_per_month"],
-        "videos": videos > thresholds["videos_per_month"],
-        "storage": storage_gb > thresholds["storage_used_gb"],
-        "any_exceeded": (
-            messages > thresholds["messages_per_month"]
-            or videos > thresholds["videos_per_month"]
-            or storage_gb > thresholds["storage_used_gb"]
-        ),
-    }
 
 
 def calculate_stripe_net(gross_amount: float) -> float:
@@ -528,7 +462,26 @@ def calculate_stripe_net(gross_amount: float) -> float:
     return gross_amount - stripe_fee
 
 
-def get_pro_net_revenue() -> float:
-    """Get net revenue from Pro subscription after Stripe fees."""
-    pro_price = PRICING_TIERS["pro"]["price_monthly"] / 100  # Convert cents to dollars
-    return calculate_stripe_net(pro_price)
+def get_message_cost(tier: str, cached: bool = True) -> float:
+    """
+    Get estimated per-message cost for a tier.
+
+    Includes ALL LLM calls per message: main response + query rewrite +
+    query expansion + relevance grading + amortized HyDE and fact extraction.
+    Pro/Enterprise use deepseek-reasoner which adds ~1500 reasoning tokens.
+    Free tier skips expensive auxiliary features (expansion, grading, HyDE,
+    follow-ups) so costs reflect main LLM + query rewrite only.
+
+    Args:
+        tier: Subscription tier (free, pro, enterprise)
+        cached: Whether to assume DeepSeek cache hits (default True)
+
+    Returns:
+        Estimated cost per message in USD
+    """
+    costs = COST_CONFIG["per_unit"]
+    if tier in ("pro", "enterprise"):
+        return costs["message_pro_with_cache"] if cached else costs["message_pro_no_cache"]
+    return costs["message_free_with_cache"] if cached else costs["message_free_no_cache"]
+
+

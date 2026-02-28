@@ -33,7 +33,9 @@ async def get_conversation_insights(
     conversation = (
         db.query(Conversation)
         .filter(
-            Conversation.id == conversation_id, Conversation.user_id == current_user.id
+            Conversation.id == conversation_id,
+            Conversation.user_id == current_user.id,
+            Conversation.is_deleted.is_(False),
         )
         .first()
     )
@@ -96,7 +98,9 @@ async def get_topic_chunks(
     conversation = (
         db.query(Conversation)
         .filter(
-            Conversation.id == conversation_id, Conversation.user_id == current_user.id
+            Conversation.id == conversation_id,
+            Conversation.user_id == current_user.id,
+            Conversation.is_deleted.is_(False),
         )
         .first()
     )

@@ -50,14 +50,6 @@
       }
     },
     {
-      "name": "frontend-test-setup",
-      "description": "One-time bootstrap of Jest + React Testing Library for Next.js 14 frontend",
-      "trigger": {
-        "manual": true
-      },
-      "prompt": ".claude/prompts/frontend-test-setup.md"
-    },
-    {
       "name": "test-api-contract",
       "command": ".claude/skills/test-api-contract.sh",
       "description": "Validate API route changes match Pydantic schemas",
@@ -104,9 +96,9 @@
       }
     },
     {
-      "name": "docker-health",
-      "command": ".claude/skills/docker-health.sh",
-      "description": "Check all Docker services are running and healthy",
+      "name": "infra-health",
+      "command": ".claude/skills/infra-health.sh",
+      "description": "Check Docker services and connectivity. Use --pipeline for full RAG smoke test (embedding, retrieval, LLM).",
       "trigger": {
         "proactive": true,
         "patterns": [
@@ -119,41 +111,11 @@
       }
     },
     {
-      "name": "rag-smoke-test",
-      "command": ".claude/skills/rag-smoke-test.sh",
-      "description": "Test the RAG pipeline end-to-end (embedding, retrieval, LLM) - requires live infrastructure",
-      "trigger": {
-        "manual": true
-      }
-    },
-    {
-      "name": "pipeline-status",
-      "command": ".claude/skills/pipeline-status.sh",
-      "description": "Show video processing pipeline status and system diagnostics",
-      "trigger": {
-        "manual": true
-      }
-    },
-    {
-      "name": "update-claude-md",
-      "command": ".claude/skills/update-claude-md.sh",
-      "description": "Check if CLAUDE.md needs updating based on recent code changes",
-      "trigger": {
-        "manual": true,
-        "patterns": [
-          "backend/app/services/**/*.py",
-          "backend/alembic/versions/**/*.py",
-          "backend/.env.example",
-          "docker-compose.yml",
-          "backend/app/api/routes/conversations.py"
-        ]
-      }
-    },
-    {
       "name": "rag-architect",
-      "description": "RAG architecture advisor - evaluates pipeline decisions against best practices. Two modes: planning review (auto-consulted for RAG file changes) and full audit (/rag-architect)",
+      "command": null,
+      "description": "RAG architecture advisor - evaluates pipeline decisions against best practices. Auto-consulted on RAG file changes; /rag-architect for full audit.",
       "trigger": {
-        "manual": true,
+        "proactive": true,
         "patterns": [
           "backend/app/services/vector_store.py",
           "backend/app/services/chunking.py",
@@ -167,35 +129,6 @@
         ]
       },
       "prompt": ".claude/prompts/rag-architect.md"
-    },
-    {
-      "name": "ux-review",
-      "description": "UX reviewer - visual inspection + code analysis of frontend pages. Two modes: page review (specify route) and full audit (walks all key routes). Uses browser automation for screenshots, accessibility trees, responsive testing, and dark mode validation.",
-      "trigger": {
-        "manual": true
-      },
-      "prompt": ".claude/prompts/ux-review.md"
-    },
-    {
-      "name": "ux-flows",
-      "description": "Usability and engagement analyst - traces user journeys through the running app to find friction, dead ends, and missed engagement opportunities. Two modes: single flow (specify journey) and full assessment (all 6 core flows).",
-      "trigger": {
-        "manual": true
-      },
-      "prompt": ".claude/prompts/ux-flows.md"
-    },
-    {
-      "name": "product-builder",
-      "description": "Product architect — turns feature ideas into detailed implementation specs. Three modes: feature spec (ready-to-build plan for new content types or features), roadmap review (what to build next), and architecture check (multi-content compatibility).",
-      "trigger": {
-        "manual": true,
-        "patterns": [
-          "backend/app/providers/**/*.py",
-          "backend/app/models/**/*.py",
-          "backend/app/tasks/**/*.py"
-        ]
-      },
-      "prompt": ".claude/prompts/product-builder.md"
     },
     {
       "name": "rag-quality-gate",
@@ -215,7 +148,7 @@
     {
       "name": "rag-eval",
       "command": ".claude/skills/rag-eval.sh",
-      "description": "Run retrieval evaluation against golden dataset. Computes recall@K, NDCG@K, MRR, answer quality.",
+      "description": "Run retrieval evaluation against golden dataset. Supports --baseline, --compare [NAME], --k N, --tags.",
       "trigger": {
         "manual": true,
         "patterns": [
@@ -230,71 +163,29 @@
       }
     },
     {
-      "name": "rag-eval-compare",
-      "command": ".claude/skills/rag-eval-compare.sh",
-      "description": "Compare current RAG metrics against saved baseline. Shows delta per metric.",
+      "name": "ux-audit",
+      "description": "UX auditor - visual inspection, accessibility, responsive testing, and user journey analysis. Modes: page review (/ux-audit /videos), flow analysis (/ux-audit flow onboarding), or full audit (/ux-audit).",
       "trigger": {
         "manual": true
-      }
+      },
+      "prompt": ".claude/prompts/ux-audit.md"
     },
     {
-      "name": "reembed-chunks",
-      "command": ".claude/skills/reembed-chunks.sh",
-      "description": "Re-embed all chunks after embedding model change. Supports --dry-run, --batch-size, --video-id.",
+      "name": "product-builder",
+      "description": "Product architect — turns feature ideas into detailed implementation specs. Three modes: feature spec, roadmap review, architecture check.",
       "trigger": {
-        "manual": true
-      }
-    },
-    {
-      "name": "conversation-quality",
-      "command": ".claude/skills/conversation-quality.sh",
-      "description": "Validate conversation behavioral contracts: memory retention, history limits, fact extraction timing",
-      "trigger": {
-        "proactive": true,
+        "manual": true,
         "patterns": [
-          "backend/app/api/routes/conversations.py",
-          "backend/app/api/utils.py",
-          "backend/app/services/fact_extraction.py",
-          "backend/app/services/memory_scoring.py",
-          "backend/app/services/memory_consolidation.py"
+          "backend/app/providers/**/*.py",
+          "backend/app/models/**/*.py",
+          "backend/app/tasks/**/*.py"
         ]
       },
-      "prompt": ".claude/prompts/conversation-quality.md"
-    },
-    {
-      "name": "citation-accuracy",
-      "command": ".claude/skills/citation-accuracy.sh",
-      "description": "Validate citation grounding: was_used_in_response tracking, jump URL correctness, citation marker consistency",
-      "trigger": {
-        "proactive": true,
-        "patterns": [
-          "backend/app/api/routes/conversations.py",
-          "backend/app/models/message.py",
-          "backend/app/services/two_level_retriever.py",
-          "frontend/src/components/shared/CitationBadge.tsx"
-        ]
-      },
-      "prompt": ".claude/prompts/citation-accuracy.md"
-    },
-    {
-      "name": "content-parity",
-      "command": ".claude/skills/content-parity.sh",
-      "description": "Validate document and video processing parity: enrichment, chunking, citation consistency",
-      "trigger": {
-        "proactive": true,
-        "patterns": [
-          "backend/app/tasks/document_tasks.py",
-          "backend/app/tasks/video_tasks.py",
-          "backend/app/services/document_chunker.py",
-          "backend/app/services/chunking.py",
-          "backend/app/services/enrichment.py"
-        ]
-      },
-      "prompt": ".claude/prompts/content-parity.md"
+      "prompt": ".claude/prompts/product-builder.md"
     },
     {
       "name": "behavioral-contracts",
-      "description": "Full audit of all behavioral promises: memory, citations, accuracy, content parity. Run before major releases.",
+      "description": "Full audit of all behavioral promises: memory, citations, accuracy, content parity. Subsumes conversation-quality, citation-accuracy, and content-parity checks.",
       "trigger": {
         "manual": true
       },

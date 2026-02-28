@@ -12,10 +12,13 @@ from pathlib import Path
 
 from decimal import Decimal
 
+from sqlalchemy import func
+
 from app.core.celery_app import celery_app
 from app.core.config import settings
 from app.db.base import SessionLocal
 from app.models import Video, User, UserQuota, Chunk, CollectionVideo
+from app.models.usage import UsageEvent
 from app.services.job_cancellation import (
     cancel_video_processing,
     CleanupOption,
@@ -391,32 +394,133 @@ def consolidate_conversation_memory():
         db.close()
 
 
-@celery_app.task
-def backfill_fact_scores_task():
+def _find_heavy_users(db):
     """
-    One-time task to backfill importance and category scores for existing facts.
+    Shared logic for identifying heavy users who exceed cost thresholds.
 
-    This scores facts that were created before the multi-factor scoring system
-    was implemented. Uses heuristic patterns to estimate scores based on:
-    - Key patterns (identity facts get high importance)
-    - Source turn (early facts often establish context)
-    - Category inference from key names
+    Returns a dict with users_checked count and list of heavy_users with breach details.
+    Used by both the scheduled task and the admin endpoint.
+    """
+    from app.core.pricing import HEAVY_USER_THRESHOLDS
 
-    Safe to run multiple times - only updates facts with NULL values.
+    cutoff = datetime.utcnow() - timedelta(days=30)
+
+    # Get active paid users
+    paid_users = (
+        db.query(User)
+        .filter(
+            User.subscription_tier.in_(["pro", "enterprise"]),
+            User.subscription_status == "active",
+            User.is_active.is_(True),
+        )
+        .all()
+    )
+
+    if not paid_users:
+        return {"users_checked": 0, "heavy_users": []}
+
+    heavy_users = []
+
+    for user in paid_users:
+        tier = user.subscription_tier.lower()
+        thresholds = HEAVY_USER_THRESHOLDS.get(tier)
+        if not thresholds:
+            continue
+
+        # Count messages in last 30 days
+        message_count = (
+            db.query(func.count(UsageEvent.id))
+            .filter(
+                UsageEvent.user_id == user.id,
+                UsageEvent.event_type == "chat_message_sent",
+                UsageEvent.event_timestamp >= cutoff,
+            )
+            .scalar()
+        ) or 0
+
+        # Count videos processed in last 30 days
+        video_count = (
+            db.query(func.count(UsageEvent.id))
+            .filter(
+                UsageEvent.user_id == user.id,
+                UsageEvent.event_type == "video_ingested",
+                UsageEvent.event_timestamp >= cutoff,
+            )
+            .scalar()
+        ) or 0
+
+        # Get storage from UserQuota
+        quota = db.query(UserQuota).filter(UserQuota.user_id == user.id).first()
+        storage_gb = float(quota.storage_mb_used) / 1024.0 if quota else 0.0
+
+        # Check thresholds
+        breaches = []
+        if message_count > thresholds["messages_per_month"]:
+            breaches.append(
+                f"messages: {message_count}/{thresholds['messages_per_month']}"
+            )
+        if video_count > thresholds["videos_per_month"]:
+            breaches.append(
+                f"videos: {video_count}/{thresholds['videos_per_month']}"
+            )
+        if storage_gb > thresholds["storage_used_gb"]:
+            breaches.append(
+                f"storage: {storage_gb:.1f}GB/{thresholds['storage_used_gb']}GB"
+            )
+
+        if breaches:
+            heavy_users.append({
+                "user_id": str(user.id),
+                "email": user.email,
+                "tier": tier,
+                "messages_30d": message_count,
+                "videos_30d": video_count,
+                "storage_gb": round(storage_gb, 2),
+                "breaches": breaches,
+            })
+
+    return {
+        "users_checked": len(paid_users),
+        "heavy_users": heavy_users,
+    }
+
+
+@celery_app.task
+def check_heavy_users():
+    """
+    Periodic task to check for users exceeding heavy usage thresholds.
+
+    Queries paid users (pro/enterprise), counts messages and videos in the
+    last 30 days, and compares against HEAVY_USER_THRESHOLDS from pricing.py.
+    Logs breaches for admin review.
     """
     db = SessionLocal()
 
     try:
-        from app.services.fact_extraction import backfill_fact_scores
+        result = _find_heavy_users(db)
 
-        updated_count = backfill_fact_scores(db=db, dry_run=False)
+        if not result["heavy_users"]:
+            print(
+                f"[heavy-user-check] Checked {result['users_checked']} paid users, "
+                "no heavy users found"
+            )
+            return result
 
-        print(f"[backfill] Fact score backfill complete: updated={updated_count} facts")
+        for hu in result["heavy_users"]:
+            print(
+                f"[heavy-user-check] HEAVY USER: {hu['email']} ({hu['tier']}) - "
+                f"breaches: {', '.join(hu['breaches'])}"
+            )
 
-        return {"updated": updated_count}
+        print(
+            f"[heavy-user-check] Complete: checked={result['users_checked']}, "
+            f"heavy_users={len(result['heavy_users'])}"
+        )
+
+        return result
 
     except Exception as e:
-        print(f"[backfill] Fact score backfill task failed: {e}")
+        print(f"[heavy-user-check] Task failed: {e}")
         raise
 
     finally:

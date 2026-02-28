@@ -75,10 +75,10 @@ export default function ComparisonSection() {
         {/* Section header */}
         <div className="text-center mb-12">
           <h2 className="text-4xl font-bold text-gray-900 mb-4">
-            How We Compare
+            Why Settle for Transcription When You Can Have Understanding?
           </h2>
           <p className="text-xl text-gray-600 max-w-2xl mx-auto">
-            Purpose-built for video knowledge extraction, not a generic transcription tool.
+            Generic tools give you words. We give you answers you can cite, verify, and trust.
           </p>
         </div>
 
@@ -126,7 +126,7 @@ export default function ComparisonSection() {
 
         {/* Summary */}
         <p className="text-center text-gray-500 mt-8 text-sm">
-          Comparison based on publicly available features of common video transcription and AI chat tools.
+          Most tools stop at transcription. We start there.
         </p>
       </div>
     </section>

@@ -35,12 +35,15 @@ celery_app.conf.update(
     timezone="UTC",
     enable_utc=True,
     task_track_started=True,
-    task_time_limit=7200,  # 2 hour hard limit
-    task_soft_time_limit=6900,  # 115 minutes soft limit
+    task_time_limit=14400,  # 4 hour hard limit (large documents need 2-3h for enrichment)
+    task_soft_time_limit=14100,  # 3h55m soft limit
     worker_prefetch_multiplier=1,  # Take one task at a time
     worker_max_tasks_per_child=50,  # Restart worker after 50 tasks to prevent memory leaks
     task_acks_late=True,  # Acknowledge task after completion
     task_reject_on_worker_lost=True,  # Requeue task if worker dies
+    # Redis visibility timeout must exceed task_time_limit to prevent redelivery
+    # Default is 3600s (1h) which causes duplicate task execution for long-running tasks
+    broker_transport_options={"visibility_timeout": 18000},  # 5 hours
 )
 
 # Task routes (assign tasks to specific queues)
@@ -67,6 +70,15 @@ celery_app.conf.beat_schedule = {
     "consolidate-conversation-memory": {
         "task": "app.tasks.cleanup_tasks.consolidate_conversation_memory",
         "schedule": crontab(minute=45, hour=4),  # Daily at 4:45 AM UTC
+    },
+    "check-heavy-users": {
+        "task": "app.tasks.cleanup_tasks.check_heavy_users",
+        "schedule": crontab(minute=45, hour="*/6"),  # Every 6 hours at :45
+    },
+    # Video summary backfill (for two-level retrieval COVERAGE path)
+    "backfill-video-summaries": {
+        "task": "backfill_video_summaries",
+        "schedule": crontab(minute=0, hour=4),  # Daily at 4:00 AM UTC
     },
     # Discovery tasks
     "check-discovery-sources": {

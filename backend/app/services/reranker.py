@@ -138,3 +138,7 @@ class RerankerService:
 
 
 reranker_service = RerankerService()
+
+# Pre-warm: load the model at import time to avoid first-request latency
+if reranker_service.enabled:
+    reranker_service._ensure_model()

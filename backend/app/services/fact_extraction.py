@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from app.models.conversation_fact import ConversationFact, FactCategory
 from app.models.message import Message
 from app.models.conversation import Conversation
-from app.services.llm_providers import Message as LLMMessage, LLMService
+from app.services.llm_providers import Message as LLMMessage, LLMService, llm_service as _global_llm_service
 
 logger = logging.getLogger(__name__)
 
@@ -62,11 +62,12 @@ IMPORTANT: Identity facts should almost always have importance >= 0.85"""
 class FactExtractionService:
     """Extract factual claims from conversation messages."""
 
-    def __init__(self):
+    def __init__(self, usage_collector=None):
         """Initialize the fact extraction service."""
-        self.llm_service = LLMService()
+        self.llm_service = _global_llm_service
         self.temperature = 0.2  # Low temperature for consistency
         self.max_tokens = 500  # Enough for JSON response
+        self.usage_collector = usage_collector
 
     def extract_facts(
         self, db: Session, message: Message, conversation: Conversation, user_query: str
@@ -94,6 +95,13 @@ class FactExtractionService:
                 max_tokens=self.max_tokens,
                 retry=False,  # Handle retries here
             )
+
+            # Track LLM usage (fact_extraction has DB access via caller)
+            if self.usage_collector and response.usage:
+                self.usage_collector.record(
+                    response, "fact_extraction",
+                    conversation_id=conversation.id,
+                )
 
             # Parse JSON response
             facts_data = self._parse_facts_response(response.content)

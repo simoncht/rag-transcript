@@ -21,8 +21,10 @@ export default function CitationBadge({
   const [isExpanded, setIsExpanded] = useState(false);
 
   const relevancePercentage = Math.round((citation.relevance_score || 0) * 100);
-  const videoTitle = citation.video_title || 'Unknown Video';
-  const timestamp = citation.timestamp_display || '--:--';
+  const videoTitle = citation.video_title || 'Unknown Source';
+  const isDocument = citation.content_type && citation.content_type !== 'youtube';
+  const locationDisplay = citation.location_display || citation.timestamp_display || (isDocument ? `Page ${citation.page_number || '?'}` : '--:--');
+  const isInternalLink = isDocument && citation.jump_url?.startsWith('/');
 
   return (
     <div className="inline-block">
@@ -67,8 +69,23 @@ export default function CitationBadge({
               <p className="text-xs text-text-secondary">
                 Citation {index}
               </p>
-              {/* Phase 1: Contextual metadata */}
-              {(citation.channel_name || citation.chapter_title || (citation.speakers && citation.speakers.length > 0)) && (
+              {/* Contextual metadata */}
+              {isDocument ? (
+                <div className="mt-1 flex flex-col gap-0.5 text-[10px] text-text-muted">
+                  {citation.content_type && (
+                    <span className="flex items-center gap-1">
+                      <span className="opacity-60">📄</span>
+                      {citation.content_type.toUpperCase()}
+                    </span>
+                  )}
+                  {citation.section_heading && (
+                    <span className="flex items-center gap-1">
+                      <span className="opacity-60">🏷️</span>
+                      {citation.section_heading}
+                    </span>
+                  )}
+                </div>
+              ) : (citation.channel_name || citation.chapter_title || (citation.speakers && citation.speakers.length > 0)) ? (
                 <div className="mt-1 flex flex-col gap-0.5 text-[10px] text-text-muted">
                   {citation.channel_name && (
                     <span className="flex items-center gap-1">
@@ -89,7 +106,7 @@ export default function CitationBadge({
                     </span>
                   )}
                 </div>
-              )}
+              ) : null}
             </div>
             <button
               onClick={() => setIsExpanded(false)}
@@ -104,36 +121,62 @@ export default function CitationBadge({
             </button>
           </div>
 
-          {/* Timestamp */}
+          {/* Location (timestamp for video, page for document) */}
           <div className="mb-3 pb-3 border-b border-border-default">
             {citation.jump_url ? (
-              <a
-                href={citation.jump_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={() => {
-                  onTimestampClick?.(timestamp);
-                  setIsExpanded(false);
-                }}
-                className="
-                  inline-flex items-center gap-2
-                  text-sm text-primary hover:text-primary-light
-                  transition-colors duration-200
-                  font-medium
-                "
-              >
-                <span className="text-lg">⏱</span>
-                <span className="font-mono">{timestamp}</span>
-                <span className="text-text-muted">→</span>
-              </a>
+              isInternalLink ? (
+                <a
+                  href={citation.jump_url}
+                  onClick={(e) => {
+                    onTimestampClick?.(locationDisplay);
+                    setIsExpanded(false);
+                  }}
+                  className="
+                    inline-flex items-center gap-2
+                    text-sm text-primary hover:text-primary-light
+                    transition-colors duration-200
+                    font-medium
+                  "
+                >
+                  <span className="text-lg">{isDocument ? '📄' : '⏱'}</span>
+                  <span className="font-mono">{locationDisplay}</span>
+                  <span className="text-text-muted">→</span>
+                </a>
+              ) : (
+                <a
+                  href={citation.jump_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={() => {
+                    onTimestampClick?.(locationDisplay);
+                    setIsExpanded(false);
+                  }}
+                  className="
+                    inline-flex items-center gap-2
+                    text-sm text-primary hover:text-primary-light
+                    transition-colors duration-200
+                    font-medium
+                  "
+                >
+                  <span className="text-lg">⏱</span>
+                  <span className="font-mono">{locationDisplay}</span>
+                  <span className="text-text-muted">→</span>
+                </a>
+              )
             ) : (
               <div className="inline-flex items-center gap-2 text-sm text-text-muted">
-                <span className="text-lg">⏱</span>
-                <span className="font-mono">{timestamp}</span>
+                <span className="text-lg">{isDocument ? '📄' : '⏱'}</span>
+                <span className="font-mono">{locationDisplay}</span>
               </div>
             )}
             <p className="text-xs text-text-muted mt-1">
-              {citation.jump_url ? 'Click to jump to video timestamp' : 'Video link unavailable'}
+              {citation.jump_url
+                ? isDocument
+                  ? 'Click to view in document'
+                  : 'Click to jump to video timestamp'
+                : isDocument
+                  ? 'Document link unavailable'
+                  : 'Video link unavailable'}
             </p>
           </div>
 

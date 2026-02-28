@@ -69,7 +69,7 @@ class YouTubeService:
         if referer:
             headers["Referer"] = referer
 
-        return {
+        opts = {
             "http_headers": headers,
             "extractor_args": {
                 "youtube": {
@@ -83,6 +83,24 @@ class YouTubeService:
             # Force IPv4 to avoid IPv6-only blocks that can manifest as 403s
             "source_address": "0.0.0.0",
         }
+
+        # Pass browser cookies to bypass YouTube bot detection (only if file has real cookies)
+        if settings.youtube_cookies_file:
+            from pathlib import Path
+            cookie_path = Path(settings.youtube_cookies_file)
+            if cookie_path.exists():
+                try:
+                    content = cookie_path.read_text().strip()
+                    has_cookies = any(
+                        line and not line.startswith("#")
+                        for line in content.splitlines()
+                    )
+                    if has_cookies:
+                        opts["cookiefile"] = str(cookie_path)
+                except Exception:
+                    pass
+
+        return opts
 
     def extract_video_id(self, url: str) -> str:
         """
@@ -490,26 +508,69 @@ class YouTubeService:
             logger.warning(f"[Captions] Caption extraction failed for {video_id}: {e}")
             return None
 
-    def _download_vtt(self, url: str) -> Optional[str]:
+    def _download_vtt(self, url: str, max_retries: int = 15) -> Optional[str]:
         """
-        Download VTT content from URL.
+        Download VTT content from URL with Google-style exponential backoff.
+
+        Uses Google's official retry pattern for handling rate limits:
+        - Initial interval: 0.5s
+        - Multiplier: 1.5x per retry
+        - Max backoff: 60s
+        - Jitter: ±50% randomization
+
+        This pattern is more resilient to YouTube's rate limiting during bulk uploads.
+        Reference: https://cloud.google.com/storage/docs/retry-strategy
 
         Args:
             url: URL to VTT file
+            max_retries: Maximum retry attempts for 429 errors (default: 10)
 
         Returns:
             VTT content as string, or None on failure
         """
         import urllib.request
         import urllib.error
+        import time
+        import random
 
-        try:
-            req = urllib.request.Request(url, headers=self._default_headers)
-            with urllib.request.urlopen(req, timeout=30) as response:
-                return response.read().decode("utf-8")
-        except (urllib.error.URLError, Exception) as e:
-            logger.warning(f"[Captions] Failed to download VTT: {e}")
-            return None
+        initial_interval = 0.5  # 500ms
+        multiplier = 1.5
+        max_backoff = 60.0  # 60 seconds
+        jitter_factor = 0.5  # ±50%
+
+        for attempt in range(max_retries):
+            try:
+                req = urllib.request.Request(url, headers=self._default_headers)
+                with urllib.request.urlopen(req, timeout=30) as response:
+                    return response.read().decode("utf-8")
+            except urllib.error.HTTPError as e:
+                if e.code == 429:  # Too Many Requests
+                    # Calculate base backoff: initial * (multiplier ^ attempt)
+                    base_backoff = initial_interval * (multiplier**attempt)
+
+                    # Cap at max backoff
+                    base_backoff = min(base_backoff, max_backoff)
+
+                    # Add jitter: ±50% randomization to prevent thundering herd
+                    jitter = base_backoff * jitter_factor
+                    wait_time = base_backoff + random.uniform(-jitter, jitter)
+                    wait_time = max(0.1, wait_time)  # Ensure positive
+
+                    logger.warning(
+                        f"[Captions] Rate limited (429), waiting {wait_time:.1f}s "
+                        f"(attempt {attempt + 1}/{max_retries})"
+                    )
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    logger.warning(f"[Captions] Failed to download VTT: HTTP {e.code}")
+                    return None
+            except (urllib.error.URLError, Exception) as e:
+                logger.warning(f"[Captions] Failed to download VTT: {e}")
+                return None
+
+        logger.warning(f"[Captions] Failed to download VTT after {max_retries} retries")
+        return None
 
 
 # Global YouTube service instance

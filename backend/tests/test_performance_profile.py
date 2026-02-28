@@ -34,9 +34,7 @@ def profile_rag_pipeline(
     print(f"\nQuery: {query}")
     print("Configuration:")
     print(f"  - LLM Provider: {settings.llm_provider}")
-    print(
-        f"  - LLM Model: {settings.ollama_model if settings.llm_provider == 'ollama' else 'N/A'}"
-    )
+    print(f"  - LLM Model: {settings.llm_model}")
     print(f"  - Retrieval Top K: {settings.retrieval_top_k}")
     print(f"  - Reranking Enabled: {settings.enable_reranking}")
     print(f"  - Reranking Top K: {settings.reranking_top_k}")
@@ -167,7 +165,7 @@ def profile_rag_pipeline(
                 print(f"    Speed: {tokens_per_sec:.1f} tokens/second")
     except Exception as e:
         print(f"  ✗ Failed: {e}")
-        print("    Note: Make sure Ollama is running and model is pulled")
+        print("    Note: Check LLM provider configuration")
         return timings
 
     # Summary
@@ -193,8 +191,8 @@ def profile_rag_pipeline(
     if timings.get("llm_generation", 0) > 10:
         print("  ⚠️  LLM generation is very slow (>10s)")
         print("      → Consider switching to a smaller/faster model")
-        print(f"      → Current: {settings.ollama_model}")
-        print("      → Try: qwen2.5-coder:7b or llama3:8b")
+        print(f"      → Current: {settings.llm_model}")
+        print("      → Try: deepseek-chat for faster responses")
 
     if timings.get("reranking", 0) > 2:
         print("  ⚠️  Reranking is taking >2s")

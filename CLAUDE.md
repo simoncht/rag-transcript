@@ -93,7 +93,7 @@ npm run type-check
 | `chunking.py` | Semantic text chunking (512 token target, 80 overlap) |
 | `enrichment.py` | LLM-generated summaries, titles, keywords per chunk |
 | `embeddings.py` | Vector embeddings (local sentence-transformers, OpenAI, or Azure) |
-| `llm_providers.py` | LLM abstraction (DeepSeek/Ollama/OpenAI/Anthropic) with streaming |
+| `llm_providers.py` | LLM abstraction (DeepSeek/OpenAI/Anthropic) with streaming |
 | `vector_store.py` | Qdrant integration for similarity search |
 | `transcription.py` | Whisper STT with timestamps |
 | `youtube.py` | yt-dlp video download and metadata extraction |
@@ -151,16 +151,24 @@ Cleanup operations automatically credit freed storage back to user quota.
 **Query Processing (in conversations.py send_message endpoint):**
 ```
 1. Query Expansion: Generate 2-3 semantic variants (0.8s)
-2. Multi-Query Search: Embed each variant → search Qdrant → merge by max score
-3. Reranking: Cross-encoder reranks top candidates (if enabled)
-4. Relevance Filtering: Apply score thresholds (0.50 primary, 0.15 fallback)
-5. Deduplication: Remove nearby chunks from same video (30s buckets)
-6. Context Building: Assemble top chunks with metadata
-7. Conversation Memory: Load facts for conversations with 15+ messages
-8. LLM Generation: Stream response with citations
+2. Diversity-Aware Search: MMR-based retrieval balances relevance + video diversity
+3. Multi-Query Merge: Combine results from variants, keep highest scores
+4. Reranking: Cross-encoder reranks top candidates (if enabled)
+5. Relevance Filtering: Apply score thresholds (0.50 primary, 0.15 fallback)
+6. Deduplication: Remove nearby chunks from same video (30s buckets)
+7. Context Building: Assemble top chunks with metadata (adaptive limit)
+8. Conversation Memory: Load facts for conversations with 15+ messages
+9. LLM Generation: Stream response with citations
 ```
 
 **Performance:** ~4s total (1s query expansion, 0.5s retrieval, 2.5s LLM)
+
+**Diversity-Aware Retrieval (MMR):**
+- Ensures multi-video queries return chunks from multiple videos, not just the most similar
+- Adaptive diversity factor: 0.3-0.5 for single video, 0.5-0.7 for multi-video collections
+- Adaptive chunk limit: 4-12 based on video count and mode (summarize gets more)
+- Implementation: `vector_store.py:search_with_diversity()` uses client-side MMR
+- Helper functions: `_get_diversity_factor()`, `_get_chunk_limit()` in conversations.py
 
 **Configuration:**
 - `ENABLE_QUERY_EXPANSION=True` - Multi-query retrieval for better recall
@@ -254,6 +262,35 @@ Different subscription tiers use different DeepSeek models:
 - Keep API responses typed via Pydantic schemas
 - Frontend: Use existing Shadcn primitives, follow App Router conventions
 
+## Pre-Plan Consultation (MANDATORY — Plan Mode)
+
+**When the user asks you to plan, design, or propose changes to the files below, you MUST read the corresponding prompt BEFORE proposing anything.** This applies in plan mode, when discussing architecture, or when the user asks "how should we..." questions. Do NOT propose an approach until you have read the prompt.
+
+| If the plan involves... | MUST read first | Section to focus on |
+|------------------------|-----------------|---------------------|
+| RAG services (vector_store, chunking, enrichment, embeddings, query_expansion, reranker, llm_providers, fact_extraction, conversations.py) | `.claude/prompts/rag-architect.md` | Mode 1: Planning Review — evaluate approach against best practices, check anti-patterns |
+| Content pipeline (providers, models, tasks) | `.claude/prompts/product-builder.md` | Mode 3: Architecture Check — multi-content compatibility, provider abstraction |
+| Intent classification, retrieval routing | `.claude/prompts/rag-quality-gate.md` | Full prompt — intent routing contracts, coverage metrics |
+| Memory, citations, fact extraction behavior | `.claude/references/behavioral-contracts.md` | Relevant contract IDs — know which promises exist before changing behavior |
+| Any feature or fix (all cases) | `.claude/prompts/test-generate.md` | Section 2-4 — plan what tests are needed as part of the design, not as an afterthought |
+
+## Pre-Edit Consultation (MANDATORY — Edit Mode)
+
+**BEFORE editing any files listed below, you MUST read the corresponding prompt first.** Do NOT skip this step. Do NOT start writing code until you have read the prompt and confirmed your approach aligns with its guidance. Skipping this causes bandaid fixes and architectural drift.
+
+| If you're about to edit... | MUST read first | Why |
+|---------------------------|-----------------|-----|
+| Any RAG service file (vector_store, chunking, enrichment, embeddings, query_expansion, reranker, llm_providers, fact_extraction) | `.claude/prompts/rag-architect.md` (Mode 1: Planning Review) | Prevents anti-patterns, checks tradeoffs before committing to approach |
+| `backend/app/api/routes/conversations.py` | `.claude/prompts/rag-architect.md` (Mode 1) | RAG pipeline entry point — changes here cascade |
+| `backend/app/providers/**`, `backend/app/models/**`, `backend/app/tasks/**` | `.claude/prompts/product-builder.md` (Mode 3: Architecture Check) | Ensures multi-content compatibility, provider abstraction |
+| `backend/app/services/intent_classifier.py`, `backend/app/services/two_level_retriever.py` | `.claude/prompts/rag-quality-gate.md` | Intent routing and retrieval quality contracts |
+| Any behavioral contract file (memory, citations, fact extraction) | `.claude/references/behavioral-contracts.md` | Check which contracts exist before changing behavior |
+
+**After completing any feature or fix**, plan tests alongside the code:
+- Read `.claude/prompts/test-generate.md` for test patterns and conventions
+- Write tests for the changed code BEFORE considering the task done
+- This is not optional — untested code is unfinished code
+
 ## Key Configuration Files
 
 - `.env` - Environment variables (LLM provider, RAG settings, API keys)
@@ -263,3 +300,38 @@ Different subscription tiers use different DeepSeek models:
 - `backend/requirements.txt` - Python dependencies
 - `frontend/package.json` - Node.js dependencies
 - `docs/MODEL_RESEARCH.md` - LLM model research and tier selection rationale
+
+## Future Enhancements (Planned)
+
+### Two-Level Hierarchical Summarization
+For large collections (50+ videos), current chunk-level retrieval has coverage limitations.
+**Planned approach:** LlamaIndex-style two-level hierarchy:
+- Level 1: Video summaries (for "summarize these 100 videos" queries)
+- Level 2: Chunks (for specific detail queries)
+
+**Implementation requires:**
+1. Add `summary`, `key_topics` columns to `videos` table
+2. Generate video-level summary at end of processing pipeline
+3. Query routing logic to detect collection-level vs specific queries
+
+### RAPTOR (Future - When Multi-Content Support Added)
+RAPTOR (Recursive Abstractive Processing for Tree-Organized Retrieval) builds full hierarchical trees.
+**When to consider:** When expanding to support PDFs, Word docs, and mixed content collections.
+- More valuable for documents with complex nested structure
+- Enables cross-document theme discovery
+- Higher indexing cost (~$0.008/video vs ~$0.001 for two-level)
+
+**Multi-content architecture vision:**
+```
+Collection
+├── 📹 Videos (transcripts)
+├── 📄 PDFs (extracted text + structure)
+└── 📝 Word docs (extracted text)
+    ↓
+Unified chunks → Hierarchical summaries → Cross-content retrieval
+```
+
+### Current Limitations
+- With 100 videos and 12-chunk limit, only ~12% of videos represented in single query
+- No video-level summaries yet (relies on chunk retrieval only)
+- Single content type (videos) supported

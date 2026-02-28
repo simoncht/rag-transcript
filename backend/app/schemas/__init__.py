@@ -67,6 +67,7 @@ from app.schemas.usage import (
 )
 from app.schemas.insights import (
     ConversationInsightsResponse,
+    CollectionInsightsResponse,
     TopicChunksResponse,
 )
 from app.schemas.admin import (
@@ -112,6 +113,8 @@ from app.schemas.subscription import (
     SubscriptionDetail,
     CheckoutSessionRequest,
     CheckoutSessionResponse,
+    CancelSubscriptionRequest,
+    CancelSubscriptionResponse,
     CustomerPortalRequest,
     CustomerPortalResponse,
     QuotaUsage,
@@ -236,6 +239,7 @@ __all__ = [
     "QuotaStat",
     # Insights
     "ConversationInsightsResponse",
+    "CollectionInsightsResponse",
     "TopicChunksResponse",
     # Admin
     "UserSummary",
@@ -279,6 +283,8 @@ __all__ = [
     "SubscriptionDetail",
     "CheckoutSessionRequest",
     "CheckoutSessionResponse",
+    "CancelSubscriptionRequest",
+    "CancelSubscriptionResponse",
     "CustomerPortalRequest",
     "CustomerPortalResponse",
     "QuotaUsage",

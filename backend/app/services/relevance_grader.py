@@ -68,9 +68,10 @@ class RelevanceGraderService:
     Sends all chunks in a single LLM call for efficiency (~0.5-1s).
     """
 
-    def __init__(self, llm_service: Optional[Any] = None):
+    def __init__(self, llm_service: Optional[Any] = None, usage_collector=None):
         self.llm_service = llm_service
         self.enabled = getattr(settings, "enable_relevance_grading", False)
+        self.usage_collector = usage_collector
 
     def _ensure_llm(self):
         if self.llm_service is None:
@@ -182,6 +183,9 @@ class RelevanceGraderService:
             messages=messages, temperature=0.1, max_tokens=200
         )
 
+        if self.usage_collector and response.usage:
+            self.usage_collector.record(response, "relevance_grading")
+
         # Parse response
         raw = response.content.strip()
         if raw.startswith("```"):
@@ -231,6 +235,9 @@ class RelevanceGraderService:
             response = self.llm_service.complete(
                 messages=messages, temperature=0.3, max_tokens=100
             )
+
+            if self.usage_collector and response.usage:
+                self.usage_collector.record(response, "relevance_grading")
 
             reformulated = response.content.strip().strip('"').strip("'")
             if reformulated and len(reformulated) > 5:

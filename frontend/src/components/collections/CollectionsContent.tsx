@@ -16,7 +16,7 @@ import { useState, Suspense } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
-import { Plus, Folder, Trash2, Edit, MessageSquare, MinusCircle, Loader2 } from "lucide-react";
+import { Plus, Folder, Trash2, Edit, MessageSquare, MinusCircle, Loader2, Tags, ChevronDown, ChevronUp } from "lucide-react";
 import {
   getCollections,
   deleteCollection,
@@ -62,6 +62,7 @@ export function CollectionsContent() {
   const [editingCollection, setEditingCollection] = useState<Collection | null>(null);
   const [expandedCollectionId, setExpandedCollectionId] = useState<string | null>(null);
   const [collectionForAddModal, setCollectionForAddModal] = useState<Collection | null>(null);
+  const [themesExpandedId, setThemesExpandedId] = useState<string | null>(null);
 
   // Performance: Parallel auth + data fetch
   // Auth and getCollections() run concurrently instead of sequentially
@@ -145,7 +146,7 @@ export function CollectionsContent() {
       try {
         const existing = await conversationsApi.findBySource({ collectionId: collection.id });
         if (existing.total > 0) {
-          router.push(`/conversations/${existing.conversations[0].id}`);
+          router.push(`/chat/${existing.conversations[0].id}`);
           toast({
             title: "Resumed conversation",
             description: existing.conversations[0].title || collection.name,
@@ -157,7 +158,7 @@ export function CollectionsContent() {
                     `Chat: ${collection.name}`,
                     { collectionId: collection.id }
                   );
-                  router.push(`/conversations/${conv.id}`);
+                  router.push(`/chat/${conv.id}`);
                 }}
               >
                 New chat
@@ -173,7 +174,7 @@ export function CollectionsContent() {
         `Chat: ${collection.name}`,
         { collectionId: collection.id }
       );
-      router.push(`/conversations/${conversation.id}`);
+      router.push(`/chat/${conversation.id}`);
     } catch (err) {
       console.error("Failed to create conversation:", err);
       setChattingCollectionId(null);
@@ -287,13 +288,13 @@ export function CollectionsContent() {
                     <div className="flex flex-1 items-start gap-3">
                       <div
                         className={cn(
-                          "flex h-9 w-9 items-center justify-center rounded-md border",
+                          "flex h-9 w-9 shrink-0 items-center justify-center rounded-md border",
                           collection.is_default ? "border-muted text-muted-foreground" : "border-primary/40 text-primary",
                         )}
                       >
                         <Folder className="h-4 w-4" />
                       </div>
-                      <div className="space-y-2">
+                      <div className="min-w-0 flex-1 space-y-2">
                         <div className="flex flex-wrap items-center gap-2">
                           <h3 className="text-base font-semibold leading-none">
                             {collection.name}
@@ -344,16 +345,36 @@ export function CollectionsContent() {
                           </div>
                         )}
                         {collection.video_count > 0 && (
-                          <CollectionThemes
-                            collectionId={collection.id}
-                            enabled={canFetch}
-                          />
-                        )}
-                        {collection.video_count >= 2 && (
-                          <CollectionInsightMap
-                            collectionId={collection.id}
-                            videoCount={collection.video_count}
-                          />
+                          <div>
+                            <button
+                              onClick={() => setThemesExpandedId(themesExpandedId === collection.id ? null : collection.id)}
+                              className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                            >
+                              <Tags className="h-3.5 w-3.5" />
+                              <span>Explore topics</span>
+                              {themesExpandedId === collection.id ? (
+                                <ChevronUp className="h-3 w-3" />
+                              ) : (
+                                <ChevronDown className="h-3 w-3" />
+                              )}
+                            </button>
+                            {themesExpandedId === collection.id && (
+                              <div className="mt-2 rounded-lg border bg-muted/30 p-3 space-y-3">
+                                <CollectionThemes
+                                  collectionId={collection.id}
+                                  enabled={canFetch}
+                                />
+                                {collection.video_count >= 2 && (
+                                  <div className="border-t pt-2">
+                                    <CollectionInsightMap
+                                      collectionId={collection.id}
+                                      videoCount={collection.video_count}
+                                    />
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
                         )}
                       </div>
                     </div>

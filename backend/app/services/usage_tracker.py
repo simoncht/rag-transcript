@@ -57,6 +57,9 @@ class UsageTracker:
         """
         Get or create user quota for current period.
 
+        Also syncs quota limits with user's current subscription tier
+        to handle tier upgrades/downgrades.
+
         Args:
             user_id: User ID
 
@@ -87,6 +90,50 @@ class UsageTracker:
             # Create new quota
             quota = self._create_initial_quota(user_id, user.subscription_tier)
             self.db.add(quota)
+            self.db.commit()
+
+        # Sync quota limits with current subscription tier (handles tier changes)
+        quota = self._sync_quota_limits(quota, user.subscription_tier)
+
+        return quota
+
+    def _sync_quota_limits(self, quota: UserQuota, tier: str) -> UserQuota:
+        """
+        Sync quota limits with the user's current subscription tier.
+
+        This ensures quota limits are updated when users upgrade/downgrade
+        their subscription without waiting for period reset.
+
+        Args:
+            quota: Existing UserQuota object
+            tier: Current subscription tier
+
+        Returns:
+            Updated UserQuota object
+        """
+        pricing_limits = get_quota_limits(tier)
+        UNLIMITED = 999999
+
+        # Calculate expected limits for current tier
+        expected_videos = pricing_limits["video_limit"] if pricing_limits["video_limit"] != -1 else UNLIMITED
+        expected_minutes = Decimal(pricing_limits["minutes_limit"]) if pricing_limits["minutes_limit"] != -1 else Decimal(UNLIMITED)
+        expected_messages = pricing_limits["message_limit"] if pricing_limits["message_limit"] != -1 else UNLIMITED
+        expected_storage = Decimal(pricing_limits["storage_limit_mb"]) if pricing_limits["storage_limit_mb"] != -1 else Decimal(UNLIMITED)
+
+        # Check if limits need updating
+        needs_update = (
+            quota.videos_limit != expected_videos or
+            quota.minutes_limit != expected_minutes or
+            quota.messages_limit != expected_messages or
+            quota.storage_mb_limit != expected_storage
+        )
+
+        if needs_update:
+            logger.info(f"Syncing quota limits for user {quota.user_id} to tier '{tier}'")
+            quota.videos_limit = expected_videos
+            quota.minutes_limit = expected_minutes
+            quota.messages_limit = expected_messages
+            quota.storage_mb_limit = expected_storage
             self.db.commit()
 
         return quota

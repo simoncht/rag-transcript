@@ -47,8 +47,21 @@ def _content_tokens(text: str) -> List[str]:
     return [t for t in _tokenize(text) if t not in STOPWORDS]
 
 
+def _has_proper_noun(query: str) -> bool:
+    """Detect likely proper nouns (capitalized words that aren't sentence-initial)."""
+    words = query.split()
+    # Skip first word (always capitalized in a sentence)
+    return any(w[0].isupper() and w.lower() not in STOPWORDS for w in words[1:] if w)
+
+
 def _should_skip_bm25(query: str) -> bool:
-    """Skip BM25 when query has fewer than 3 non-stopword tokens (S6)."""
+    """Skip BM25 when query has fewer than 3 non-stopword tokens.
+
+    Exception: never skip if query contains proper nouns — BM25 excels at
+    exact-match retrieval for names and entities (e.g., "Ken Robinson").
+    """
+    if _has_proper_noun(query):
+        return False
     return len(_content_tokens(query)) < 3
 
 
@@ -87,6 +100,11 @@ class BM25SearchService:
 
     def __init__(self) -> None:
         self._bm25_available: Optional[bool] = None
+        # TTL cache for BM25 index to avoid rebuilding on every query
+        # key: (user_id, frozenset(video_ids)) -> (bm25, chunks, tokenized_corpus, timestamp)
+        self._index_cache: dict = {}
+        self._cache_ttl: int = 300  # 5 minutes
+        self._cache_max_size: int = 32
 
     @property
     def enabled(self) -> bool:
@@ -128,41 +146,58 @@ class BM25SearchService:
         if not video_ids:
             return []
 
+        import time as _time
         from rank_bm25 import BM25Okapi
 
         from app.models.chunk import Chunk
 
-        # Query chunks from PostgreSQL
-        try:
-            chunks = (
-                db.query(Chunk)
-                .filter(
-                    Chunk.user_id == user_id,
-                    Chunk.video_id.in_(video_ids),
-                    Chunk.is_indexed == True,  # noqa: E712
+        # Check cache for pre-built BM25 index
+        cache_key = (str(user_id), frozenset(str(vid) for vid in video_ids))
+        cached = self._index_cache.get(cache_key)
+        now = _time.time()
+
+        if cached and (now - cached[3]) < self._cache_ttl:
+            bm25, chunks, tokenized_corpus = cached[0], cached[1], cached[2]
+            logger.debug("[BM25] Using cached index")
+        else:
+            # Query chunks from PostgreSQL
+            try:
+                chunks = (
+                    db.query(Chunk)
+                    .filter(
+                        Chunk.user_id == user_id,
+                        Chunk.video_id.in_(video_ids),
+                        Chunk.is_indexed == True,  # noqa: E712
+                    )
+                    .all()
                 )
-                .all()
-            )
-        except Exception as exc:
-            logger.warning(f"[BM25] DB query failed: {exc}")
-            return []
+            except Exception as exc:
+                logger.warning(f"[BM25] DB query failed: {exc}")
+                return []
 
-        if not chunks:
-            return []
+            if not chunks:
+                return []
 
-        # Build corpus from embedding_text (S5) — richer keyword surface
-        corpus_texts = []
-        for chunk in chunks:
-            text = chunk.embedding_text or chunk.text or ""
-            corpus_texts.append(text)
+            # Build corpus from embedding_text (S5) — richer keyword surface
+            corpus_texts = []
+            for chunk in chunks:
+                text = chunk.embedding_text or chunk.text or ""
+                corpus_texts.append(text)
 
-        tokenized_corpus = [_tokenize(t) for t in corpus_texts]
+            tokenized_corpus = [_tokenize(t) for t in corpus_texts]
 
-        # Guard against empty corpus (all empty texts)
-        if not any(tokenized_corpus):
-            return []
+            # Guard against empty corpus (all empty texts)
+            if not any(tokenized_corpus):
+                return []
 
-        bm25 = BM25Okapi(tokenized_corpus)
+            bm25 = BM25Okapi(tokenized_corpus)
+
+            # Cache the index
+            if len(self._index_cache) >= self._cache_max_size:
+                # Evict oldest entry
+                oldest_key = min(self._index_cache, key=lambda k: self._index_cache[k][3])
+                del self._index_cache[oldest_key]
+            self._index_cache[cache_key] = (bm25, chunks, tokenized_corpus, now)
 
         query_tokens = _tokenize(query)
         if not query_tokens:

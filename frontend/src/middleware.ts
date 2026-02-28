@@ -5,6 +5,13 @@ export function middleware(req: NextRequest) {
   const path = req.nextUrl.pathname
   console.log(`[Middleware] Request to ${path}`)
 
+  // Document file proxy: allow same-origin iframe embedding
+  if (/^\/api\/content\/[^/]+\/file$/.test(path)) {
+    const response = NextResponse.next()
+    response.headers.set("X-Frame-Options", "SAMEORIGIN")
+    return response
+  }
+
   // Public routes - no auth check needed
   const publicRoutes = [
     "/",

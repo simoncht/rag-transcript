@@ -3,7 +3,6 @@ LLM provider abstraction for multiple backends.
 
 Supports:
 - DeepSeek (DeepSeek-V3 chat and reasoner models)
-- Ollama (local LLMs via HTTP API)
 - OpenAI (GPT models)
 - Anthropic (Claude models)
 - Azure OpenAI
@@ -14,7 +13,6 @@ from abc import ABC, abstractmethod
 from typing import List, Dict, Optional, Iterator
 from dataclasses import dataclass
 import time
-import httpx
 
 from app.core.config import settings
 
@@ -93,135 +91,6 @@ class LLMProvider(ABC):
     def get_model_info(self) -> Dict:
         """Get information about the model."""
         pass
-
-
-class OllamaProvider(LLMProvider):
-    """
-    Ollama LLM provider for local models.
-
-    Connects to Ollama HTTP API (typically running on localhost:11434).
-    """
-
-    def __init__(self, base_url: str = None, model: str = None, timeout: int = 300):
-        """
-        Initialize Ollama provider.
-
-        Args:
-            base_url: Ollama API base URL
-            model: Model name (e.g., "llama2", "mistral")
-            timeout: Request timeout in seconds
-        """
-        self.base_url = base_url or settings.ollama_base_url
-        self.model = model or settings.ollama_model
-        self.timeout = timeout
-        self.client = httpx.Client(base_url=self.base_url, timeout=timeout)
-
-    def complete(
-        self,
-        messages: List[Message],
-        temperature: Optional[float] = None,
-        max_tokens: Optional[int] = None,
-        **kwargs,
-    ) -> LLMResponse:
-        """Generate completion using Ollama."""
-        start_time = time.time()
-
-        # Allow per-request model override (e.g., from API request)
-        override_model = kwargs.pop("model", None)
-
-        # Convert messages to Ollama format
-        ollama_messages = [
-            {"role": msg.role, "content": msg.content} for msg in messages
-        ]
-
-        payload = {
-            "model": override_model or self.model,
-            "messages": ollama_messages,
-            "stream": False,
-            "options": {},
-        }
-
-        if temperature is not None:
-            payload["options"]["temperature"] = temperature
-
-        if max_tokens is not None:
-            payload["options"]["num_predict"] = max_tokens
-
-        # Debug logging
-        import logging
-
-        logger = logging.getLogger(__name__)
-        logger.info(
-            f"Ollama request: model={payload['model']}, num_predict={payload['options'].get('num_predict', 'NOT SET')}, max_tokens_param={max_tokens}"
-        )
-
-        try:
-            response = self.client.post("/api/chat", json=payload)
-            response.raise_for_status()
-            data = response.json()
-
-            response_time = time.time() - start_time
-
-            return LLMResponse(
-                content=data["message"]["content"],
-                model=override_model or self.model,
-                provider="ollama",
-                usage={
-                    "input_tokens": data.get("prompt_eval_count", 0),
-                    "output_tokens": data.get("eval_count", 0),
-                    "total_tokens": data.get("prompt_eval_count", 0)
-                    + data.get("eval_count", 0),
-                },
-                finish_reason=data.get("done_reason"),
-                response_time_seconds=response_time,
-            )
-
-        except httpx.HTTPError as e:
-            raise Exception(f"Ollama API error: {str(e)}")
-
-    def stream_complete(
-        self,
-        messages: List[Message],
-        temperature: Optional[float] = None,
-        max_tokens: Optional[int] = None,
-        **kwargs,
-    ) -> Iterator[str]:
-        """Generate streaming completion using Ollama."""
-        override_model = kwargs.pop("model", None)
-        ollama_messages = [
-            {"role": msg.role, "content": msg.content} for msg in messages
-        ]
-
-        payload = {
-            "model": override_model or self.model,
-            "messages": ollama_messages,
-            "stream": True,
-            "options": {},
-        }
-
-        if temperature is not None:
-            payload["options"]["temperature"] = temperature
-
-        if max_tokens is not None:
-            payload["options"]["num_predict"] = max_tokens
-
-        try:
-            with self.client.stream("POST", "/api/chat", json=payload) as response:
-                response.raise_for_status()
-                for line in response.iter_lines():
-                    if line:
-                        import json
-
-                        data = json.loads(line)
-                        if "message" in data and "content" in data["message"]:
-                            yield data["message"]["content"]
-
-        except httpx.HTTPError as e:
-            raise Exception(f"Ollama streaming error: {str(e)}")
-
-    def get_model_info(self) -> Dict:
-        """Get model information."""
-        return {"provider": "ollama", "model": self.model, "base_url": self.base_url}
 
 
 class OpenAIProvider(LLMProvider):
@@ -584,7 +453,12 @@ class DeepSeekProvider(LLMProvider):
         max_tokens: Optional[int] = None,
         **kwargs,
     ) -> Iterator[str]:
-        """Generate streaming completion using DeepSeek API."""
+        """Generate streaming completion using DeepSeek API.
+
+        For deepseek-reasoner, captures reasoning_content from stream
+        and stores it in self._last_stream_reasoning_content for retrieval
+        after streaming completes.
+        """
         override_model = kwargs.pop("model", None)
         effective_model = override_model or self.model
 
@@ -604,15 +478,34 @@ class DeepSeekProvider(LLMProvider):
         if max_tokens is not None:
             params["max_tokens"] = max_tokens
 
+        # Reset reasoning content capture
+        self._last_stream_reasoning_content = None
+        reasoning_parts = []
+
         try:
             stream = self.client.chat.completions.create(**params)
 
             for chunk in stream:
-                if chunk.choices[0].delta.content is not None:
-                    yield chunk.choices[0].delta.content
+                delta = chunk.choices[0].delta
+                # Capture reasoning_content from deepseek-reasoner
+                if hasattr(delta, "reasoning_content") and delta.reasoning_content:
+                    reasoning_parts.append(delta.reasoning_content)
+                if delta.content is not None:
+                    yield delta.content
+
+            # Store accumulated reasoning content for retrieval
+            if reasoning_parts:
+                self._last_stream_reasoning_content = "".join(reasoning_parts)
+                self.logger.info(
+                    f"[DeepSeek Reasoner Stream] Captured {len(self._last_stream_reasoning_content)} chars of reasoning"
+                )
 
         except Exception as e:
             raise Exception(f"DeepSeek streaming error: {str(e)}")
+
+    def get_last_stream_reasoning_content(self) -> Optional[str]:
+        """Get reasoning content from the last stream_complete call (deepseek-reasoner only)."""
+        return getattr(self, "_last_stream_reasoning_content", None)
 
     def get_model_info(self) -> Dict:
         """Get model information."""
@@ -644,7 +537,6 @@ class LLMService:
             self.provider = self._create_provider()
 
         # Cache additional providers for dynamic routing
-        self._ollama_provider = None
         self._anthropic_provider = None
         self._openai_provider = None
         self._deepseek_provider = None
@@ -657,8 +549,6 @@ class LLMService:
 
         if provider_type == "deepseek":
             return DeepSeekProvider()
-        elif provider_type == "ollama":
-            return OllamaProvider()
         elif provider_type == "openai":
             return OpenAIProvider()
         elif provider_type == "anthropic":
@@ -672,7 +562,6 @@ class LLMService:
 
         Routes to:
         - DeepSeek: for models starting with "deepseek-" (e.g., "deepseek-chat", "deepseek-reasoner")
-        - Ollama: for models with ":" in name (e.g., "qwen3-vl:235b", "llama2:7b")
         - Anthropic: for models starting with "claude-"
         - OpenAI: for models starting with "gpt-"
         - Default: configured provider
@@ -691,12 +580,6 @@ class LLMService:
             if self._deepseek_provider is None:
                 self._deepseek_provider = DeepSeekProvider()
             return self._deepseek_provider
-
-        # Ollama models typically use "model:tag" format
-        if ":" in model_name:
-            if self._ollama_provider is None:
-                self._ollama_provider = OllamaProvider()
-            return self._ollama_provider
 
         # Anthropic Claude models
         if model_name.startswith("claude-"):
@@ -726,7 +609,7 @@ class LLMService:
         Generate completion with automatic retry on failure.
 
         Automatically routes to the correct provider based on model name:
-        - Models with ":" (e.g., "qwen3-vl:235b") → Ollama
+        - Models starting with "deepseek-" → DeepSeek
         - Models starting with "claude-" → Anthropic
         - Models starting with "gpt-" → OpenAI
         - No model specified → Default configured provider
@@ -811,9 +694,19 @@ class LLMService:
         # Select provider based on model name
         provider = self._get_provider_for_model(model)
 
+        # Store the provider used for streaming so we can retrieve reasoning_content later
+        self._last_stream_provider = provider
+
         yield from provider.stream_complete(
             messages, temperature, max_tokens, model=model, **kwargs
         )
+
+    def get_last_stream_reasoning_content(self) -> Optional[str]:
+        """Get reasoning content from the last stream_complete call."""
+        provider = getattr(self, "_last_stream_provider", None)
+        if provider and hasattr(provider, "get_last_stream_reasoning_content"):
+            return provider.get_last_stream_reasoning_content()
+        return None
 
     def get_model_info(self) -> Dict:
         """Get model information."""

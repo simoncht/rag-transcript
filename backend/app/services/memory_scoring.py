@@ -50,6 +50,11 @@ DEFAULT_FACT_LIMIT = 15
 # Beyond this, we pre-filter by importance before embedding
 MAX_FACTS_TO_EMBED = 75
 
+# In-memory cache for fact embeddings (facts are immutable after creation)
+# Keyed by fact ID string -> numpy embedding
+_fact_embedding_cache: Dict[str, np.ndarray] = {}
+_FACT_CACHE_MAX_SIZE = 500
+
 
 def calculate_recency_score(
     created_at: datetime,
@@ -241,7 +246,7 @@ def select_facts_multifactor(
             embed_start = _time.time()
 
             # Embed user query
-            query_embedding = embedding_service.embed_text(user_query, use_cache=False)
+            query_embedding = embedding_service.embed_text(user_query, use_cache=False, is_query=True)
             # Handle tuple return from cached embedding (convert to array)
             if isinstance(query_embedding, tuple):
                 query_embedding = np.array(query_embedding)
@@ -260,19 +265,36 @@ def select_facts_multifactor(
                     f"[Memory Scoring] Pre-filtered to {len(facts_to_embed)}/{len(facts)} facts for embedding"
                 )
 
-            # Batch embed fact texts for efficiency
-            # Combine fact_key and fact_value for richer semantic matching
-            fact_texts = [f"{f.fact_key}: {f.fact_value}" for f in facts_to_embed]
-            fact_embeddings = embedding_service.embed_batch(fact_texts)
+            # Use cached embeddings for facts (facts are immutable after creation)
+            uncached_facts = []
+            uncached_texts = []
+            for f in facts_to_embed:
+                fid = str(f.id)
+                if fid not in _fact_embedding_cache:
+                    uncached_facts.append(f)
+                    uncached_texts.append(f"{f.fact_key}: {f.fact_value}")
 
-            # Calculate relevance for each embedded fact
-            for fact, fact_emb in zip(facts_to_embed, fact_embeddings):
-                # Handle tuple return from cached embedding
-                if isinstance(fact_emb, tuple):
-                    fact_emb = np.array(fact_emb)
-                relevance_scores[str(fact.id)] = calculate_query_relevance(
-                    query_embedding, fact_emb
-                )
+            # Only embed uncached facts
+            if uncached_texts:
+                new_embeddings = embedding_service.embed_batch(uncached_texts)
+                for f, emb in zip(uncached_facts, new_embeddings):
+                    fid = str(f.id)
+                    if isinstance(emb, tuple):
+                        emb = np.array(emb)
+                    _fact_embedding_cache[fid] = emb
+                    # Evict oldest entries if cache is too large
+                    if len(_fact_embedding_cache) > _FACT_CACHE_MAX_SIZE:
+                        oldest_key = next(iter(_fact_embedding_cache))
+                        del _fact_embedding_cache[oldest_key]
+
+            # Calculate relevance for each fact using cached embeddings
+            for fact in facts_to_embed:
+                fid = str(fact.id)
+                fact_emb = _fact_embedding_cache.get(fid)
+                if fact_emb is not None:
+                    relevance_scores[fid] = calculate_query_relevance(
+                        query_embedding, fact_emb
+                    )
 
             embed_time = (_time.time() - embed_start) * 1000
             logger.info(

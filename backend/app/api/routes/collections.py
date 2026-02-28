@@ -10,6 +10,7 @@ Endpoints:
 - POST /collections/{collection_id}/videos - Add videos to collection
 - DELETE /collections/{collection_id}/videos/{video_id} - Remove video from collection
 """
+import logging
 import uuid
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -29,7 +30,10 @@ from app.schemas import (
     CollectionVideoInfo,
     CollectionThemesResponse,
     ClusteredThemesResponse,
+    CollectionInsightsResponse,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -627,3 +631,66 @@ async def regenerate_themes(
         "task_id": task.id,
         "collection_id": str(collection_id),
     }
+
+
+@router.get("/{collection_id}/insights", response_model=CollectionInsightsResponse)
+async def get_collection_insights(
+    collection_id: uuid.UUID,
+    refresh: bool = Query(False, description="Force regenerate insights"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Get topic map insights for a collection.
+
+    Generates a mind-map style topic graph across all videos in the collection.
+    Results are cached and reused until the video set changes or refresh is requested.
+    """
+    collection = (
+        db.query(Collection)
+        .filter(
+            Collection.id == collection_id,
+            Collection.user_id == current_user.id,
+            Collection.is_deleted.is_(False),
+        )
+        .first()
+    )
+
+    if not collection:
+        raise HTTPException(status_code=404, detail="Collection not found")
+
+    from app.services.collection_insights import collection_insights_service
+
+    try:
+        insight, was_cached = collection_insights_service.get_or_generate_insights(
+            db=db,
+            collection_id=collection_id,
+            user_id=current_user.id,
+            force_regenerate=refresh,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to generate collection insights: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=502,
+            detail="Failed to generate topic map. The LLM service may be temporarily unavailable.",
+        )
+
+    return CollectionInsightsResponse(
+        collection_id=collection_id,
+        graph={
+            "nodes": (insight.graph_data or {}).get("nodes", []),
+            "edges": (insight.graph_data or {}).get("edges", []),
+        },
+        metadata={
+            "topics_count": insight.topics_count,
+            "total_chunks_analyzed": insight.total_chunks_analyzed,
+            "generation_time_seconds": insight.generation_time_seconds,
+            "cached": was_cached,
+            "created_at": insight.created_at,
+            "llm_provider": insight.llm_provider,
+            "llm_model": insight.llm_model,
+            "extraction_prompt_version": insight.extraction_prompt_version,
+        },
+    )

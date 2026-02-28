@@ -31,10 +31,12 @@ class HyDEService:
         self,
         llm_service: Optional[Any] = None,
         embedding_service: Optional[Any] = None,
+        usage_collector=None,
     ):
         self.llm_service = llm_service
         self.embedding_service = embedding_service
         self.enabled = getattr(settings, "enable_hyde", False)
+        self.usage_collector = usage_collector
 
     def _ensure_services(self):
         if self.llm_service is None:
@@ -79,6 +81,9 @@ class HyDEService:
                 temperature=0.7,  # Some creativity for diverse passages
                 max_tokens=200,
             )
+
+            if self.usage_collector and response.usage:
+                self.usage_collector.record(response, "hyde")
 
             passage = response.content.strip()
             if passage and len(passage) > 20:

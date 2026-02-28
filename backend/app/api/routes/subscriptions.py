@@ -19,6 +19,8 @@ from app.models import User, Subscription
 from app.schemas import (
     CheckoutSessionRequest,
     CheckoutSessionResponse,
+    CancelSubscriptionRequest,
+    CancelSubscriptionResponse,
     CustomerPortalRequest,
     CustomerPortalResponse,
     QuotaUsage,
@@ -26,7 +28,7 @@ from app.schemas import (
     SubscriptionDetail,
 )
 from app.services.subscription import subscription_service
-from app.main import limiter
+from app.core.rate_limit import limiter
 import logging
 
 logger = logging.getLogger(__name__)
@@ -127,6 +129,39 @@ async def create_customer_portal_session(
     except Exception as e:
         logger.error(f"Unexpected error creating customer portal session: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to create customer portal session")
+
+
+@router.post("/cancel", response_model=CancelSubscriptionResponse)
+@limiter.limit("5/minute")
+async def cancel_subscription(
+    request: Request,
+    cancel_request: CancelSubscriptionRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Cancel the current subscription.
+
+    By default, cancels at the end of the current billing period (user keeps
+    access until then). Set cancel_immediately=true to cancel right away.
+    """
+    try:
+        result = subscription_service.cancel_subscription(
+            user=current_user,
+            db=db,
+            cancel_immediately=cancel_request.cancel_immediately,
+        )
+
+        logger.info(f"Subscription canceled for user {current_user.id}: {result['status']}")
+
+        return CancelSubscriptionResponse(**result)
+
+    except ValueError as e:
+        logger.error(f"Error canceling subscription: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Unexpected error canceling subscription: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to cancel subscription")
 
 
 @router.get("/quota", response_model=QuotaUsage)

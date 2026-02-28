@@ -46,8 +46,9 @@ export default function AccountPage() {
     enabled: isAuthenticated,
   });
 
-  // Breadcrumb: subscription tier
-  const breadcrumbDetail = subscription?.tier || (isAuthenticated ? 'free' : undefined);
+  // Breadcrumb: use quota.tier as source of truth (backend always returns correct tier)
+  const currentTier = quota?.tier || subscription?.tier || 'free';
+  const breadcrumbDetail = isAuthenticated ? currentTier : undefined;
   useSetBreadcrumb('account', breadcrumbDetail);
 
   // Show sign-in prompt if not authenticated
@@ -87,9 +88,11 @@ export default function AccountPage() {
           </p>
           {quota && (
             <div className="flex items-center gap-2 text-xs text-gray-500 pt-1">
-              <span className="capitalize">{subscription?.tier || 'free'} plan</span>
+              <span className="capitalize">{currentTier} plan</span>
               <span>•</span>
               <span>{quota.videos_used} video{quota.videos_used !== 1 ? 's' : ''}</span>
+              <span>•</span>
+              <span>{quota.documents_used} document{quota.documents_used !== 1 ? 's' : ''}</span>
               <span>•</span>
               <span>{quota.messages_used} message{quota.messages_used !== 1 ? 's' : ''} this month</span>
             </div>

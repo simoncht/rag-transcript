@@ -181,9 +181,9 @@ class TestDiversityAndChunkLimits:
         assert lim == 50
 
     def test_coverage_chunk_limit_small_collection(self, retriever):
-        """COVERAGE with few videos should match video count."""
+        """COVERAGE with few videos should use floor of 10."""
         lim = retriever._get_chunk_limit(5, "summarize", is_coverage=True)
-        assert lim == 5
+        assert lim == 10
 
     def test_precision_chunk_limit_unchanged(self, retriever):
         """PRECISION queries should still use original capped behavior."""
@@ -735,15 +735,25 @@ class TestChunkLimitEdgeCases:
         lim = retriever._get_chunk_limit(51, "summarize", is_coverage=True)
         assert lim == 50
 
-    def test_coverage_limit_1_video(self, retriever):
-        """1 video, coverage -> returns 1."""
+    def test_coverage_chunk_limit_single_doc_returns_10(self, retriever):
+        """1 video, coverage -> returns 10 (floor of 10, not 1)."""
         lim = retriever._get_chunk_limit(1, "summarize", is_coverage=True)
-        assert lim == 1
+        assert lim == 10
+
+    def test_coverage_chunk_limit_5_videos_returns_10(self, retriever):
+        """5 videos, coverage -> returns 10 (floor of 10)."""
+        lim = retriever._get_chunk_limit(5, "summarize", is_coverage=True)
+        assert lim == 10
+
+    def test_coverage_chunk_limit_many_docs_scales(self, retriever):
+        """25 videos, coverage -> returns 25 (above floor)."""
+        lim = retriever._get_chunk_limit(25, "summarize", is_coverage=True)
+        assert lim == 25
 
     def test_coverage_limit_0_videos(self, retriever):
-        """0 videos, coverage -> returns 0 (no crash)."""
+        """0 videos, coverage -> returns 10 (floor)."""
         lim = retriever._get_chunk_limit(0, "summarize", is_coverage=True)
-        assert lim == 0
+        assert lim == 10
 
     def test_precision_limit_unchanged_for_40_videos(self, retriever):
         """40 videos, precision -> still uses MAX_CHUNK_LIMIT cap."""
@@ -977,6 +987,48 @@ class TestCoverageToSummaryRouting:
 
 
 # ── Extended Intent Routing Tests ───────────────────────────────────
+
+
+class TestDocumentSummaryInjection:
+    """Tests for _maybe_prepend_document_summary."""
+
+    def test_prepends_summary_when_available(self, retriever):
+        """Should prepend document summary to context."""
+        db = MagicMock()
+        vid = uuid.uuid4()
+        video = _make_video(video_id=vid, summary="This document covers AI topics.")
+        video_map = {vid: video}
+
+        result = retriever._maybe_prepend_document_summary(
+            db, vid, "chunk context here", video_map,
+        )
+        assert "Document Overview" in result
+        assert "This document covers AI topics." in result
+        assert "chunk context here" in result
+
+    def test_no_summary_returns_original_context(self, retriever):
+        """Should return original context when no summary exists."""
+        db = MagicMock()
+        vid = uuid.uuid4()
+        video = _make_video(video_id=vid, summary=None)
+        video_map = {vid: video}
+
+        result = retriever._maybe_prepend_document_summary(
+            db, vid, "chunk context here", video_map,
+        )
+        assert result == "chunk context here"
+
+    def test_fetches_from_db_when_not_in_map(self, retriever):
+        """Should query DB if video not in video_map."""
+        db = MagicMock()
+        vid = uuid.uuid4()
+        video = _make_video(video_id=vid, summary="DB summary")
+        db.query.return_value.filter.return_value.first.return_value = video
+
+        result = retriever._maybe_prepend_document_summary(
+            db, vid, "chunk context", {},
+        )
+        assert "DB summary" in result
 
 
 class TestExtendedIntentRouting:

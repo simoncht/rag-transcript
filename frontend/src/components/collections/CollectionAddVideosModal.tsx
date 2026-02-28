@@ -7,76 +7,153 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { addVideosToCollection } from "@/lib/api/collections";
+import { CheckSquare, Square, MinusSquare, Video as VideoIcon, FileText } from "lucide-react";
+import { addContentToCollection } from "@/lib/api/collections";
 import { videosApi } from "@/lib/api/videos";
-import type { Video } from "@/lib/types";
+import { contentApi } from "@/lib/api/content";
+import { getContentTypeLabel, getContentTypeBadgeClass, formatFileSize } from "@/lib/content-type-utils";
+import type { Video, ContentItem } from "@/lib/types";
+import { cn } from "@/lib/utils";
 
 const EMPTY_VIDEOS: Video[] = [];
 
-interface CollectionAddVideosModalProps {
+interface UnifiedContentItem {
+  id: string;
+  title: string;
+  contentType: string;
+  duration_seconds?: number;
+  page_count?: number;
+  file_size_bytes?: number;
+  tags: string[];
+}
+
+interface CollectionAddContentModalProps {
   open: boolean;
   collectionId: string;
   collectionName: string;
-  existingVideoIds: string[];
+  existingItemIds: string[];
   onClose: () => void;
 }
 
-export function CollectionAddVideosModal({
+export function CollectionAddContentModal({
   open,
   collectionId,
   collectionName,
-  existingVideoIds,
+  existingItemIds,
   onClose,
-}: CollectionAddVideosModalProps) {
+}: CollectionAddContentModalProps) {
   const [searchTerm, setSearchTerm] = useState("");
-  const [selectedVideoIds, setSelectedVideoIds] = useState<Set<string>>(new Set());
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [error, setError] = useState("");
   const queryClient = useQueryClient();
 
-  const { data, isLoading, error: queryError } = useQuery({
+  const { data, isLoading: videosLoading, error: queryError } = useQuery({
     queryKey: ["videos-completed-for-collection"],
     queryFn: () => videosApi.list(0, 100, "completed"),
     enabled: open,
-    staleTime: 0, // Always fetch fresh data when modal opens
+    staleTime: 0,
   });
 
+  const { data: documentsData, isLoading: docsLoading } = useQuery({
+    queryKey: ["documents-completed-for-collection"],
+    queryFn: () => contentApi.list(0, 100, undefined, "completed"),
+    enabled: open,
+    staleTime: 0,
+  });
+
+  const isLoading = videosLoading || docsLoading;
+
   const addMutation = useMutation({
-    mutationFn: (videoIds: string[]) => addVideosToCollection(collectionId, { video_ids: videoIds }),
+    mutationFn: (videoIds: string[]) => addContentToCollection(collectionId, { video_ids: videoIds }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["collection", collectionId] });
       queryClient.invalidateQueries({ queryKey: ["collections"] });
       queryClient.invalidateQueries({ queryKey: ["videos"] });
-      setSelectedVideoIds(new Set());
+      setSelectedIds(new Set());
       setSearchTerm("");
       setError("");
       onClose();
     },
     onError: (err: any) => {
-      const message = err?.response?.data?.detail ?? "Failed to add videos to collection";
+      const message = err?.response?.data?.detail ?? "Failed to add content to collection";
       setError(message);
     },
   });
 
   useEffect(() => {
     if (open) {
-      setSelectedVideoIds(new Set());
+      setSelectedIds(new Set());
       setSearchTerm("");
       setError("");
     }
   }, [open]);
 
   const videos = data?.videos ?? EMPTY_VIDEOS;
+  const documents = documentsData?.items ?? [];
+
+  // Merge videos + documents into unified list
+  const allContent: UnifiedContentItem[] = useMemo(() => {
+    const videoItems: UnifiedContentItem[] = videos.map((v) => ({
+      id: v.id,
+      title: v.title,
+      contentType: "youtube",
+      duration_seconds: v.duration_seconds,
+      tags: v.tags || [],
+    }));
+    const docItems: UnifiedContentItem[] = documents.map((d) => ({
+      id: d.id,
+      title: d.title,
+      contentType: d.content_type,
+      page_count: d.page_count ?? undefined,
+      file_size_bytes: d.file_size_bytes ?? undefined,
+      tags: [],
+    }));
+    return [...videoItems, ...docItems];
+  }, [videos, documents]);
 
   const normalizedSearch = searchTerm.trim().toLowerCase();
-  const filteredVideos = useMemo(() => {
-    if (!normalizedSearch) return videos;
-    return videos.filter((video) => video.title.toLowerCase().includes(normalizedSearch));
-  }, [normalizedSearch, videos]);
+  const filteredContent = useMemo(() => {
+    if (!normalizedSearch) return allContent;
+    return allContent.filter((item) => item.title.toLowerCase().includes(normalizedSearch));
+  }, [normalizedSearch, allContent]);
 
-  const selectedCount = selectedVideoIds.size;
+  // Get items that can be selected (not already in collection)
+  const selectableItems = useMemo(() => {
+    return filteredContent.filter((item) => !existingItemIds.includes(item.id));
+  }, [filteredContent, existingItemIds]);
+
+  // Check selection state for the toggle button
+  const allSelectableSelected = selectableItems.length > 0 &&
+    selectableItems.every((item) => selectedIds.has(item.id));
+  const someSelected = selectableItems.some((item) => selectedIds.has(item.id));
+  const selectionState: "all" | "some" | "none" = allSelectableSelected
+    ? "all"
+    : someSelected
+    ? "some"
+    : "none";
+
+  const handleSelectAll = () => {
+    if (allSelectableSelected) {
+      // Deselect all selectable items
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        selectableItems.forEach((item) => next.delete(item.id));
+        return next;
+      });
+    } else {
+      // Select all selectable items
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        selectableItems.forEach((item) => next.add(item.id));
+        return next;
+      });
+    }
+  };
+
+  const selectedCount = selectedIds.size;
 
   const handleToggle = (videoId: string) => {
-    setSelectedVideoIds((prev) => {
+    setSelectedIds((prev) => {
       const next = new Set(prev);
       if (next.has(videoId)) {
         next.delete(videoId);
@@ -89,7 +166,7 @@ export function CollectionAddVideosModal({
 
   const handleAdd = () => {
     if (selectedCount === 0) return;
-    addMutation.mutate(Array.from(selectedVideoIds));
+    addMutation.mutate(Array.from(selectedIds));
   };
 
   const formatDuration = (seconds?: number | null) => {
@@ -108,43 +185,85 @@ export function CollectionAddVideosModal({
     <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
       <DialogContent className="max-w-3xl">
         <DialogHeader>
-          <DialogTitle>Add videos to {collectionName}</DialogTitle>
+          <DialogTitle>Add content to {collectionName}</DialogTitle>
           <DialogDescription>
-            Search your library and select videos to include in this collection.
+            Search your library and select videos or documents to include in this collection.
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4">
           <Input
-            placeholder="Search videos"
+            placeholder="Search videos and documents..."
             value={searchTerm}
             onChange={(event) => setSearchTerm(event.target.value)}
             disabled={isLoading}
           />
+
+          {/* Select All / Deselect All Toggle */}
+          {!isLoading && !queryError && selectableItems.length > 0 && (
+            <div className="flex items-center justify-between rounded-lg border bg-muted/30 px-3 py-2">
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <span className="font-medium text-foreground">{selectableItems.length}</span>
+                <span>item{selectableItems.length === 1 ? "" : "s"} available</span>
+                {selectedCount > 0 && (
+                  <>
+                    <span className="text-muted-foreground/50">•</span>
+                    <span className="font-medium text-primary">{selectedCount} selected</span>
+                  </>
+                )}
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleSelectAll}
+                disabled={addMutation.isPending}
+                className="gap-2 text-sm font-medium"
+              >
+                {selectionState === "all" ? (
+                  <>
+                    <CheckSquare className="h-4 w-4 text-primary" />
+                    Deselect All
+                  </>
+                ) : selectionState === "some" ? (
+                  <>
+                    <MinusSquare className="h-4 w-4 text-primary" />
+                    Select All
+                  </>
+                ) : (
+                  <>
+                    <Square className="h-4 w-4" />
+                    Select All
+                  </>
+                )}
+              </Button>
+            </div>
+          )}
+
           <div className="max-h-[60vh] space-y-2 overflow-y-auto pr-1">
             {isLoading ? (
               <div className="py-8 text-center text-sm text-muted-foreground">
-                Loading videos...
+                Loading content...
               </div>
             ) : queryError ? (
               <div className="py-8 text-center text-sm text-destructive">
-                Failed to load videos. Please try again.
+                Failed to load content. Please try again.
               </div>
-            ) : filteredVideos.length === 0 ? (
+            ) : filteredContent.length === 0 ? (
               <div className="py-8 text-center text-sm text-muted-foreground">
-                {videos.length === 0
-                  ? "No completed videos yet. Videos are ready to add once processing finishes."
-                  : "No videos were found for that search term."}
+                {allContent.length === 0
+                  ? "No completed content yet. Videos and documents are ready to add once processing finishes."
+                  : "No content was found for that search term."}
               </div>
             ) : (
-              filteredVideos.map((video) => {
-                const alreadyAdded = existingVideoIds.includes(video.id);
-                const checkboxId = `collection-add-${collectionId}-${video.id}`;
-                const isSelected = selectedVideoIds.has(video.id);
+              filteredContent.map((item) => {
+                const alreadyAdded = existingItemIds.includes(item.id);
+                const checkboxId = `collection-add-${collectionId}-${item.id}`;
+                const isSelected = selectedIds.has(item.id);
+                const isDocument = item.contentType !== "youtube";
 
                 return (
                   <label
-                    key={video.id}
+                    key={item.id}
                     htmlFor={checkboxId}
                     className={`flex flex-col rounded-lg border p-3 transition ${
                       alreadyAdded
@@ -160,11 +279,11 @@ export function CollectionAddVideosModal({
                           onCheckedChange={(checked) => {
                             if (alreadyAdded) return;
                             if (checked) {
-                              setSelectedVideoIds((prev) => new Set(prev).add(video.id));
+                              setSelectedIds((prev) => new Set(prev).add(item.id));
                             } else {
-                              setSelectedVideoIds((prev) => {
+                              setSelectedIds((prev) => {
                                 const next = new Set(prev);
-                                next.delete(video.id);
+                                next.delete(item.id);
                                 return next;
                               });
                             }
@@ -172,12 +291,31 @@ export function CollectionAddVideosModal({
                           disabled={alreadyAdded || addMutation.isPending}
                           className={alreadyAdded ? "opacity-50" : ""}
                         />
+                        {isDocument ? (
+                          <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+                        ) : (
+                          <VideoIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
+                        )}
                         <div className="min-w-0 flex-1">
                           <p className={`text-sm font-medium ${alreadyAdded ? "text-muted-foreground" : "text-foreground"}`}>
-                            {video.title}
+                            {item.title}
                           </p>
                           <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                            <span>{formatDuration(video.duration_seconds)}</span>
+                            {isDocument ? (
+                              <>
+                                <Badge variant="outline" className={cn("text-[10px]", getContentTypeBadgeClass(item.contentType))}>
+                                  {getContentTypeLabel(item.contentType)}
+                                </Badge>
+                                {item.page_count != null && (
+                                  <span>{item.page_count} page{item.page_count !== 1 ? "s" : ""}</span>
+                                )}
+                                {item.file_size_bytes != null && (
+                                  <span>{formatFileSize(item.file_size_bytes)}</span>
+                                )}
+                              </>
+                            ) : (
+                              <span>{formatDuration(item.duration_seconds)}</span>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -187,9 +325,9 @@ export function CollectionAddVideosModal({
                         </Badge>
                       )}
                     </div>
-                    {video.tags.length > 0 && (
+                    {item.tags.length > 0 && (
                       <div className="mt-3 flex flex-wrap gap-2 pl-7">
-                        {video.tags.map((tag) => (
+                        {item.tags.map((tag) => (
                           <Badge key={tag} variant="secondary" className="text-[11px]">
                             #{tag}
                           </Badge>
@@ -209,8 +347,8 @@ export function CollectionAddVideosModal({
         <DialogFooter className="items-center justify-between gap-2">
           <p className="text-sm text-muted-foreground">
             {selectedCount === 0
-              ? "Select videos to add to the collection."
-              : `${selectedCount} video${selectedCount === 1 ? "" : "s"} ready to add.`}
+              ? "Select content to add to the collection."
+              : `${selectedCount} item${selectedCount === 1 ? "" : "s"} ready to add.`}
           </p>
           <div className="flex gap-2">
             <Button variant="outline" onClick={onClose}>
@@ -224,7 +362,7 @@ export function CollectionAddVideosModal({
                 ? "Adding..."
                 : selectedCount === 0
                 ? "Add to collection"
-                : `Add ${selectedCount} video${selectedCount === 1 ? "" : "s"}`}
+                : `Add ${selectedCount} item${selectedCount === 1 ? "" : "s"}`}
             </Button>
           </div>
         </DialogFooter>

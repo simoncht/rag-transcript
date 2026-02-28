@@ -9,6 +9,9 @@ Analyze the shell script output to evaluate RAG retrieval quality.
 - Any FAIL means a broad query is being misrouted to PRECISION, causing poor coverage
 - For failures: check `backend/app/services/intent_classifier.py` COVERAGE_PATTERNS
 - Common fix: add a new regex pattern or lower the cross-source keyword threshold
+- **Document queries**: "what is this document about?", "summarize this PDF", etc. must route to COVERAGE even with `num_videos=1`
+- The "about" pattern is content-type agnostic (`( \w+)?` optional noun) — no need to enumerate new content types
+- Single-doc summarize mode should route to COVERAGE via mode fallback (no `num_videos > 1` guard)
 
 ### Summary Coverage
 - Check percentage of completed videos with summaries
@@ -18,8 +21,9 @@ Analyze the shell script output to evaluate RAG retrieval quality.
 
 ### Chunk Limit Adequacy
 - For collections with many videos, verify the coverage chunk limit is adequate
-- Coverage limit = min(num_videos, 50)
+- Coverage limit = min(max(num_videos, 10), 50) — floor of 10 for single-doc queries
 - If a collection has >50 videos, only 50 will be represented per query
+- Single-document COVERAGE queries get 10 chunks minimum (not 1)
 
 ### Memory Health
 - Check if long conversations (>30 messages) have facts extracted

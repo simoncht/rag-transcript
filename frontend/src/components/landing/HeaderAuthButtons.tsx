@@ -23,7 +23,7 @@ export default function HeaderAuthButtons() {
     return (
       <div className="flex items-center gap-4">
         <a
-          href="/videos"
+          href="/chat"
           className="text-gray-600 hover:text-primary transition-colors"
         >
           Dashboard
@@ -47,10 +47,10 @@ export default function HeaderAuthButtons() {
         Sign In
       </a>
       <a
-        href="/login"
+        href="/get-started"
         className="bg-primary text-white px-6 py-2 rounded-lg hover:bg-primary-light transition-colors"
       >
-        Get Started
+        Try Free
       </a>
     </div>
   );

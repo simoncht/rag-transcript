@@ -152,7 +152,6 @@ export function usePaginationParams() {
     updateParams({
       q: undefined,
       status: undefined,
-      sort: undefined,
       channel: undefined,
       tags: undefined,
       duration_min: undefined,

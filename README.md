@@ -29,7 +29,7 @@ Production-grade RAG system for YouTube videos with semantic chunking, contextua
 - Backend: FastAPI, SQLAlchemy, Celery
 - Database: PostgreSQL (pgvector), Redis, Qdrant
 - ML: Whisper (transcription), sentence-transformers (embeddings)
-- LLMs: Ollama/OpenAI/Anthropic
+- LLMs: DeepSeek/OpenAI/Anthropic
 - Storage: Local (dev) → Azure Blob (prod)
 
 ---
@@ -43,7 +43,7 @@ Production-grade RAG system for YouTube videos with semantic chunking, contextua
 | `chunking.py` | Semantic text chunking | Token-aware (512t target), sentence boundaries, 80t overlap |
 | `enrichment.py` | Contextual metadata | LLM-generated summaries, titles, keywords |
 | `embeddings.py` | Vector embeddings | Multi-backend (local/OpenAI/Azure), batch processing, caching |
-| `llm_providers.py` | LLM abstraction | Ollama/OpenAI/Anthropic, streaming, retry logic |
+| `llm_providers.py` | LLM abstraction | DeepSeek/OpenAI/Anthropic, streaming, retry logic |
 | `vector_store.py` | Qdrant integration | Cosine similarity, metadata filtering, batch indexing |
 | `transcription.py` | Whisper STT | Multi-model support, timestamps, language detection |
 | `youtube.py` | Video download | yt-dlp, audio extraction, metadata, chapters |
@@ -114,8 +114,8 @@ EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
 EMBEDDING_DIMENSIONS=384
 
 # LLM
-LLM_PROVIDER=ollama  # ollama, openai, anthropic
-LLM_MODEL=llama2
+LLM_PROVIDER=deepseek  # deepseek, openai, anthropic
+LLM_MODEL=deepseek-chat
 
 # RAG
 RETRIEVAL_TOP_K=10

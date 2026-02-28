@@ -24,6 +24,7 @@ import { DeleteConfirmationModal } from "@/components/videos/DeleteConfirmationM
 import { CancelConfirmationModal } from "@/components/videos/CancelConfirmationModal";
 import { AddToCollectionModal } from "@/components/videos/AddToCollectionModal";
 import { ManageTagsModal } from "@/components/videos/ManageTagsModal";
+import { BulkTagModal } from "@/components/videos/BulkTagModal";
 import { SimilarVideos } from "@/components/videos/SimilarVideos";
 import { ActiveFilters } from "@/components/videos/ActiveFilters";
 import { TagFilter } from "@/components/videos/TagFilter";
@@ -45,6 +46,7 @@ import {
   Copy,
   Download,
   Search,
+  SearchX,
   ChevronDown,
   ChevronUp,
   StopCircle,
@@ -78,7 +80,10 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
+  SelectSeparator,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
@@ -124,6 +129,7 @@ function VideosPageContent() {
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [showStorageBreakdown, setShowStorageBreakdown] = useState(false);
   const [isCreatingChat, setIsCreatingChat] = useState(false);
+  const [showBulkTagModal, setShowBulkTagModal] = useState(false);
   const queryClient = useQueryClient();
   const {
     page, pageSize, status: statusFilter, q: searchQuery, sort: sortOrder,
@@ -208,6 +214,22 @@ function VideosPageContent() {
     staleTime: 60_000,
     enabled: canFetch,
   });
+
+  // Status count lookup from filter values
+  const statusCountMap = useMemo(() => {
+    const map: Record<string, number> = {};
+    if (filterValues?.statuses) {
+      for (const s of filterValues.statuses) {
+        map[s.name] = s.count;
+      }
+    }
+    return map;
+  }, [filterValues]);
+
+  const statusLabel = (status: string, label: string) => {
+    const count = statusCountMap[status];
+    return count !== undefined ? `${label} (${count})` : label;
+  };
 
   // Performance: Parallel fetch + increased polling interval
   const {
@@ -382,7 +404,7 @@ function VideosPageContent() {
       try {
         const existing = await conversationsApi.findBySource({ videoId: video.id });
         if (existing.total > 0) {
-          router.push(`/conversations/${existing.conversations[0].id}`);
+          router.push(`/chat/${existing.conversations[0].id}`);
           toast({
             title: "Resumed conversation",
             description: existing.conversations[0].title || video.title,
@@ -394,7 +416,7 @@ function VideosPageContent() {
                     `Chat: ${video.title}`,
                     { selectedVideoIds: [video.id] }
                   );
-                  router.push(`/conversations/${conv.id}`);
+                  router.push(`/chat/${conv.id}`);
                 }}
               >
                 New chat
@@ -410,7 +432,7 @@ function VideosPageContent() {
         `Chat: ${video.title}`,
         { selectedVideoIds: [video.id] }
       );
-      router.push(`/conversations/${conversation.id}`);
+      router.push(`/chat/${conversation.id}`);
     } catch (error) {
       toast({
         title: "Failed to create conversation",
@@ -585,6 +607,26 @@ function VideosPageContent() {
 
   const videos = data?.videos ?? [];
   const selectedVideos = videos.filter((video) => selectedVideoIds.has(video.id));
+
+  const selectableVideos = useMemo(
+    () => videos.filter(isDeletable),
+    [videos]
+  );
+
+  const allSelectableSelected =
+    selectableVideos.length > 0 &&
+    selectableVideos.every((v) => selectedVideoIds.has(v.id));
+
+  const someSelected =
+    selectedVideoIds.size > 0 && !allSelectableSelected;
+
+  const toggleSelectAll = () => {
+    if (allSelectableSelected) {
+      setSelectedVideoIds(new Set());
+    } else {
+      setSelectedVideoIds(new Set(selectableVideos.map((v) => v.id)));
+    }
+  };
 
   // Breadcrumb: total duration of all videos
   const breadcrumbDetail = useMemo(() => {
@@ -1096,6 +1138,15 @@ function VideosPageContent() {
                       <FolderPlus className="h-3.5 w-3.5" />
                       <span className="hidden sm:inline">Add to collection</span>
                     </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="gap-1"
+                      onClick={() => setShowBulkTagModal(true)}
+                    >
+                      <TagIcon className="h-3.5 w-3.5" />
+                      <span className="hidden sm:inline">Tag selected</span>
+                    </Button>
                     {selectedVideos.some(isCancelable) && (
                       <Button
                         variant="outline"
@@ -1150,20 +1201,25 @@ function VideosPageContent() {
                 value={statusFilter ?? "all"}
                 onValueChange={(value) => setStatus(value === "all" ? undefined : value)}
               >
-                <SelectTrigger className="w-[140px] h-8 text-xs">
+                <SelectTrigger className="w-[160px] h-8 text-xs">
                   <SelectValue placeholder="All statuses" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All statuses</SelectItem>
-                  <SelectItem value="completed">Completed</SelectItem>
-                  <SelectItem value="pending">Pending</SelectItem>
-                  <SelectItem value="downloading">Downloading</SelectItem>
-                  <SelectItem value="transcribing">Transcribing</SelectItem>
-                  <SelectItem value="chunking">Chunking</SelectItem>
-                  <SelectItem value="enriching">Enriching</SelectItem>
-                  <SelectItem value="indexing">Indexing</SelectItem>
-                  <SelectItem value="failed">Failed</SelectItem>
-                  <SelectItem value="canceled">Canceled</SelectItem>
+                  <SelectItem value="completed">{statusLabel("completed", "Completed")}</SelectItem>
+                  <SelectSeparator />
+                  <SelectGroup>
+                    <SelectLabel className="text-[11px] text-muted-foreground">Processing</SelectLabel>
+                    <SelectItem value="pending">{statusLabel("pending", "Pending")}</SelectItem>
+                    <SelectItem value="downloading">{statusLabel("downloading", "Downloading")}</SelectItem>
+                    <SelectItem value="transcribing">{statusLabel("transcribing", "Transcribing")}</SelectItem>
+                    <SelectItem value="chunking">{statusLabel("chunking", "Chunking")}</SelectItem>
+                    <SelectItem value="enriching">{statusLabel("enriching", "Enriching")}</SelectItem>
+                    <SelectItem value="indexing">{statusLabel("indexing", "Indexing")}</SelectItem>
+                  </SelectGroup>
+                  <SelectSeparator />
+                  <SelectItem value="failed">{statusLabel("failed", "Failed")}</SelectItem>
+                  <SelectItem value="canceled">{statusLabel("canceled", "Canceled")}</SelectItem>
                 </SelectContent>
               </Select>
 
@@ -1177,7 +1233,7 @@ function VideosPageContent() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">All channels</SelectItem>
-                    {filterValues.channels.map((ch) => (
+                    {filterValues.channels.filter((ch) => ch.name).map((ch) => (
                       <SelectItem key={ch.name} value={ch.name}>
                         {ch.name} ({ch.count})
                       </SelectItem>
@@ -1228,7 +1284,8 @@ function VideosPageContent() {
               </Select>
 
               {hasActiveFilters && (
-                <span className="text-xs text-muted-foreground ml-auto">
+                <span className="text-xs text-muted-foreground ml-auto flex items-center gap-1.5">
+                  {isFetching && !isLoading && <Loader2 className="h-3 w-3 animate-spin" />}
                   {data?.total ?? 0} result{(data?.total ?? 0) !== 1 ? "s" : ""}
                 </span>
               )}
@@ -1259,7 +1316,7 @@ function VideosPageContent() {
                     Filters
                     {hasActiveFilters && (
                       <Badge variant="secondary" className="ml-1 h-4 min-w-4 px-1 text-[10px]">
-                        {[statusFilter, channelFilter, tagsFilter, durationPreset !== "all" ? "d" : null].filter(Boolean).length}
+                        {[statusFilter, channelFilter, searchQuery, durationPreset !== "all" ? "d" : null].filter(Boolean).length + selectedTagsList.length}
                       </Badge>
                     )}
                   </Button>
@@ -1280,15 +1337,20 @@ function VideosPageContent() {
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="all">All statuses</SelectItem>
-                          <SelectItem value="completed">Completed</SelectItem>
-                          <SelectItem value="pending">Pending</SelectItem>
-                          <SelectItem value="downloading">Downloading</SelectItem>
-                          <SelectItem value="transcribing">Transcribing</SelectItem>
-                          <SelectItem value="chunking">Chunking</SelectItem>
-                          <SelectItem value="enriching">Enriching</SelectItem>
-                          <SelectItem value="indexing">Indexing</SelectItem>
-                          <SelectItem value="failed">Failed</SelectItem>
-                          <SelectItem value="canceled">Canceled</SelectItem>
+                          <SelectItem value="completed">{statusLabel("completed", "Completed")}</SelectItem>
+                          <SelectSeparator />
+                          <SelectGroup>
+                            <SelectLabel className="text-[11px] text-muted-foreground">Processing</SelectLabel>
+                            <SelectItem value="pending">{statusLabel("pending", "Pending")}</SelectItem>
+                            <SelectItem value="downloading">{statusLabel("downloading", "Downloading")}</SelectItem>
+                            <SelectItem value="transcribing">{statusLabel("transcribing", "Transcribing")}</SelectItem>
+                            <SelectItem value="chunking">{statusLabel("chunking", "Chunking")}</SelectItem>
+                            <SelectItem value="enriching">{statusLabel("enriching", "Enriching")}</SelectItem>
+                            <SelectItem value="indexing">{statusLabel("indexing", "Indexing")}</SelectItem>
+                          </SelectGroup>
+                          <SelectSeparator />
+                          <SelectItem value="failed">{statusLabel("failed", "Failed")}</SelectItem>
+                          <SelectItem value="canceled">{statusLabel("canceled", "Canceled")}</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
@@ -1304,7 +1366,7 @@ function VideosPageContent() {
                           </SelectTrigger>
                           <SelectContent>
                             <SelectItem value="all">All channels</SelectItem>
-                            {filterValues.channels.map((ch) => (
+                            {filterValues.channels.filter((ch) => ch.name).map((ch) => (
                               <SelectItem key={ch.name} value={ch.name}>
                                 {ch.name} ({ch.count})
                               </SelectItem>
@@ -1371,7 +1433,8 @@ function VideosPageContent() {
                 </SheetContent>
               </Sheet>
               {hasActiveFilters && (
-                <span className="text-xs text-muted-foreground">
+                <span className="text-xs text-muted-foreground flex items-center gap-1.5">
+                  {isFetching && !isLoading && <Loader2 className="h-3 w-3 animate-spin" />}
                   {data?.total ?? 0} results
                 </span>
               )}
@@ -1454,15 +1517,81 @@ function VideosPageContent() {
             ) : videos.length === 0 ? (
               <div className="py-12 text-center text-sm text-muted-foreground">
                 {hasActiveFilters || searchQuery ? (
-                  <>
-                    No videos match your filters.{" "}
-                    <button
-                      className="text-primary hover:underline"
+                  <div className="flex flex-col items-center gap-3">
+                    <SearchX className="h-10 w-10 text-muted-foreground/40" />
+                    <p className="font-medium text-foreground">No videos match your filters</p>
+                    <div className="flex flex-wrap justify-center gap-2">
+                      {searchQuery && (
+                        <Badge variant="secondary" className="gap-1 pl-2 pr-1 text-xs">
+                          <span className="text-muted-foreground">Search:</span> {searchQuery}
+                          <button
+                            type="button"
+                            onClick={() => { setQ(undefined); setSearchInput(""); }}
+                            className="ml-0.5 rounded-full p-0.5 hover:bg-muted-foreground/20"
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        </Badge>
+                      )}
+                      {statusFilter && (
+                        <Badge variant="secondary" className="gap-1 pl-2 pr-1 text-xs">
+                          <span className="text-muted-foreground">Status:</span> {statusFilter}
+                          <button
+                            type="button"
+                            onClick={() => setStatus(undefined)}
+                            className="ml-0.5 rounded-full p-0.5 hover:bg-muted-foreground/20"
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        </Badge>
+                      )}
+                      {channelFilter && (
+                        <Badge variant="secondary" className="gap-1 pl-2 pr-1 text-xs">
+                          <span className="text-muted-foreground">Channel:</span> {channelFilter}
+                          <button
+                            type="button"
+                            onClick={() => setChannel(undefined)}
+                            className="ml-0.5 rounded-full p-0.5 hover:bg-muted-foreground/20"
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        </Badge>
+                      )}
+                      {selectedTagsList.map((tag) => (
+                        <Badge key={tag} variant="secondary" className="gap-1 pl-2 pr-1 text-xs">
+                          <span className="text-muted-foreground">Tag:</span> {tag}
+                          <button
+                            type="button"
+                            onClick={() => handleTagsChange(selectedTagsList.filter((t) => t !== tag))}
+                            className="ml-0.5 rounded-full p-0.5 hover:bg-muted-foreground/20"
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        </Badge>
+                      ))}
+                      {durationPreset !== "all" && (
+                        <Badge variant="secondary" className="gap-1 pl-2 pr-1 text-xs">
+                          <span className="text-muted-foreground">Duration:</span>{" "}
+                          {durationPreset === "short" ? "< 5 min" : durationPreset === "medium" ? "5-15 min" : durationPreset === "long" ? "15-60 min" : "> 60 min"}
+                          <button
+                            type="button"
+                            onClick={() => setDuration(undefined, undefined)}
+                            className="ml-0.5 rounded-full p-0.5 hover:bg-muted-foreground/20"
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        </Badge>
+                      )}
+                    </div>
+                    <p className="text-xs text-muted-foreground">Try broadening your search or removing some filters.</p>
+                    <Button
+                      variant="outline"
+                      size="sm"
                       onClick={() => { clearAllFilters(); setSearchInput(""); }}
                     >
                       Clear all filters
-                    </button>
-                  </>
+                    </Button>
+                  </div>
                 ) : (
                   "No videos yet. Ingest your first YouTube URL to get started."
                 )}
@@ -1473,7 +1602,12 @@ function VideosPageContent() {
                 <TableHeader>
                   <TableRow>
                     <TableHead className="w-12">
-                      <span className="sr-only">Select</span>
+                      <Checkbox
+                        checked={allSelectableSelected ? true : someSelected ? "indeterminate" : false}
+                        onCheckedChange={toggleSelectAll}
+                        aria-label="Select all videos"
+                        disabled={selectableVideos.length === 0}
+                      />
                     </TableHead>
                     <TableHead className="w-[40%]">Video</TableHead>
                     <TableHead className="w-[15%]">Status</TableHead>
@@ -1534,7 +1668,7 @@ function VideosPageContent() {
                                 </Badge>
                               ))}
                             </div>
-                            {video.error_message && (
+                            {video.error_message && video.status !== "completed" && (
                               <p className="text-sm text-destructive">{video.error_message}</p>
                             )}
                           </TableCell>
@@ -1741,6 +1875,13 @@ function VideosPageContent() {
               addToCollectionVideos.length === 1 ? addToCollectionVideos[0].title : undefined
             }
             onClose={() => setAddToCollectionVideos([])}
+          />
+        )}
+
+        {showBulkTagModal && selectedVideoIds.size > 0 && (
+          <BulkTagModal
+            videoIds={Array.from(selectedVideoIds)}
+            onClose={() => setShowBulkTagModal(false)}
           />
         )}
 

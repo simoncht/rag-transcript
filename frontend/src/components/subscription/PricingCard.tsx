@@ -51,10 +51,10 @@ export default function PricingCard({
       if (isAuthenticated && currentTier !== undefined) {
         return 'Current Plan';
       }
-      return 'Get Started';
+      return 'Try It Free';
     }
     // Always show "Upgrade to X" for paid tiers, regardless of auth status
-    return `Upgrade to ${tier.name}`;
+    return `Unlock ${tier.name}`;
   };
 
   const handleCtaClick = () => {
@@ -62,12 +62,12 @@ export default function PricingCard({
 
     if (!isAuthenticated) {
       if (isFree) {
-        // Free tier: just sign up/sign in, redirect to videos after
-        window.location.href = `/login?callbackUrl=${encodeURIComponent('/videos')}`;
+        // Free tier: go to get-started page which shows value prop before auth
+        window.location.href = `/get-started?callbackUrl=${encodeURIComponent('/videos')}`;
       } else {
-        // Paid tiers: redirect to checkout after auth
+        // Paid tiers: go directly to OAuth, then checkout (skip /login page)
         const callbackUrl = `/checkout/start?tier=${tier.tier}`;
-        window.location.href = `/login?callbackUrl=${encodeURIComponent(callbackUrl)}`;
+        window.location.href = `/sign-in?callbackUrl=${encodeURIComponent(callbackUrl)}`;
       }
       return;
     }
@@ -183,8 +183,8 @@ export default function PricingCard({
             </p>
             <p className="text-xs text-gray-500">
               {isFree
-                ? 'Fast responses for quick questions and simple summaries'
-                : 'Thinks step-by-step for complex analysis and finding patterns'}
+                ? 'Fast responses for quick questions (up to ~6,000 words)'
+                : 'Step-by-step reasoning for complex analysis (up to ~48,000 words)'}
             </p>
           </div>
         </div>
@@ -196,6 +196,12 @@ export default function PricingCard({
           <span>Videos:</span>
           <span className="font-medium text-gray-700">
             {tier.video_limit === -1 ? 'Unlimited' : tier.video_limit}
+          </span>
+        </div>
+        <div className="flex justify-between">
+          <span>Documents:</span>
+          <span className="font-medium text-gray-700">
+            {tier.document_limit === -1 ? 'Unlimited' : tier.document_limit}
           </span>
         </div>
         <div className="flex justify-between">

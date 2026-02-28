@@ -18,6 +18,7 @@ from uuid import UUID
 import numpy as np
 from sqlalchemy.orm import Session
 
+from app.api.utils import format_timestamp_display
 from app.core.config import settings
 from app.models import Video
 from app.services.intent_classifier import IntentClassification, QueryIntent
@@ -134,6 +135,7 @@ class TwoLevelRetriever:
     MAX_DIVERSITY = 0.7
     DEFAULT_CHUNK_LIMIT = 4
     MAX_CHUNK_LIMIT = 12
+    MAX_COVERAGE_CHUNK_LIMIT = 50
     MMR_PREFETCH_LIMIT = 100
 
     def retrieve(
@@ -145,6 +147,7 @@ class TwoLevelRetriever:
         mode: str,
         intent: IntentClassification,
         config: Optional[RetrievalConfig] = None,
+        usage_collector=None,
     ) -> RetrievalResult:
         """
         Retrieve based on intent classification with full RAG pipeline.
@@ -157,10 +160,12 @@ class TwoLevelRetriever:
             mode: Conversation mode for formatting
             intent: Classified intent (COVERAGE, PRECISION, HYBRID)
             config: Optional retrieval config (defaults to settings)
+            usage_collector: Optional LLMUsageCollector for tracking costs
 
         Returns:
             RetrievalResult with chunks, summaries, context, and video_map
         """
+        self._usage_collector = usage_collector
         if config is None:
             config = RetrievalConfig.from_settings()
 
@@ -328,7 +333,9 @@ class TwoLevelRetriever:
         from app.services.embeddings import embedding_service
 
         diversity = self._get_diversity_factor(num_videos, mode)
-        chunk_limit = self._get_chunk_limit(num_videos, mode)
+        chunk_limit = self._get_chunk_limit(
+            num_videos, mode, is_coverage=is_coverage_fallback,
+        )
 
         if is_coverage_fallback:
             path_reason = "coverage query with video guarantee (summaries unavailable)"
@@ -338,8 +345,12 @@ class TwoLevelRetriever:
             path_reason = "precision query"
         logger.info(f"[Chunk Retrieval] Starting full pipeline for {path_reason}")
 
-        # Stage 1: Query Expansion
-        query_variants = self._run_query_expansion(query, config)
+        # Stage 1: Query Expansion (skip for COVERAGE — expansion narrows coverage)
+        if is_coverage_fallback:
+            query_variants = [query]
+            logger.info("[Query Expansion] Skipped for coverage query")
+        else:
+            query_variants = self._run_query_expansion(query, config)
 
         # Stage 2: Multi-query embedding + vector search
         all_scored_chunks, embedding_time = self._run_multi_query_search(
@@ -372,9 +383,14 @@ class TwoLevelRetriever:
                 db, query, scored_chunks, user_id, video_ids, config,
             )
 
-        # Stage 5: Reranking
-        if config.enable_reranking and scored_chunks:
+        # Stage 5: Reranking (skip for COVERAGE — reranking cuts to 7 and destroys diversity)
+        if config.enable_reranking and scored_chunks and not is_coverage_fallback:
             scored_chunks = self._run_reranking(query, scored_chunks, config)
+        elif is_coverage_fallback:
+            logger.info(
+                f"[Reranking] Skipped for coverage query "
+                f"(preserving {len(scored_chunks)} chunks for diversity)"
+            )
 
         # Stage 6: Relevance Grading (Self-RAG)
         context_is_weak = False
@@ -418,6 +434,14 @@ class TwoLevelRetriever:
 
         # Stage 9: Build context
         context, video_map = self._build_chunk_context(db, top_chunks)
+
+        # Inject document summary for single-doc PRECISION queries as a safety net.
+        # Even if intent classification is imprecise, the LLM always has the
+        # document overview available alongside the retrieved chunks.
+        if num_videos == 1 and not is_coverage_fallback:
+            context = self._maybe_prepend_document_summary(
+                db, video_ids[0], context, video_map,
+            )
 
         if context_is_weak and top_chunks:
             context = (
@@ -525,6 +549,7 @@ class TwoLevelRetriever:
 
         expansion_start = time.time()
         service = get_query_expansion_service()
+        service.usage_collector = getattr(self, "_usage_collector", None)
         variants = service.expand_query(query)
         expansion_time = time.time() - expansion_start
 
@@ -546,38 +571,67 @@ class TwoLevelRetriever:
         is_coverage_query: bool = False,
     ) -> tuple[dict[UUID, ScoredChunk], float]:
         """Stage 2: Embed each query variant and search, merging by max score."""
+        from concurrent.futures import ThreadPoolExecutor
         from app.services.embeddings import embedding_service
 
         embedding_start = time.time()
         all_scored_chunks: dict[UUID, ScoredChunk] = {}
 
-        for idx, query_text in enumerate(query_variants):
-            query_embedding = embedding_service.embed_text(query_text, is_query=True)
-            if isinstance(query_embedding, tuple):
-                query_embedding = np.array(query_embedding, dtype=np.float32)
+        # Batch embed all variants at once (faster than sequential embed_text calls)
+        query_embeddings = embedding_service.embed_batch(
+            [embedding_service._get_query_text(q) for q in query_variants]
+        ) if len(query_variants) > 1 else [
+            embedding_service.embed_text(query_variants[0], is_query=True)
+        ]
 
+        # Normalize embeddings
+        normalized_embeddings = []
+        for emb in query_embeddings:
+            if isinstance(emb, tuple):
+                emb = np.array(emb, dtype=np.float32)
+            normalized_embeddings.append(emb)
+
+        # For coverage queries, increase prefetch to ensure all videos can be represented
+        prefetch_limit = self.MMR_PREFETCH_LIMIT
+        if is_coverage_query and num_videos > 1:
+            prefetch_limit = max(self.MMR_PREFETCH_LIMIT, num_videos * 3)
+            logger.info(
+                f"[Vector Search] Coverage prefetch: {prefetch_limit} "
+                f"(num_videos={num_videos})"
+            )
+
+        # Search all variants in parallel (Qdrant is HTTP-based, I/O bound)
+        def _search_variant(idx_and_emb):
+            idx, query_embedding = idx_and_emb
             if use_video_guarantee and is_coverage_query and num_videos > 1:
-                variant_chunks = vector_store_service.search_with_video_guarantee(
+                chunks = vector_store_service.search_with_video_guarantee(
                     query_embedding=query_embedding,
                     video_ids=video_ids,
                     user_id=user_id,
                     top_k=chunk_limit,
-                    prefetch_limit=self.MMR_PREFETCH_LIMIT,
+                    prefetch_limit=prefetch_limit,
                 )
             else:
-                variant_chunks = vector_store_service.search_with_diversity(
+                chunks = vector_store_service.search_with_diversity(
                     query_embedding=query_embedding,
                     user_id=user_id,
                     video_ids=video_ids,
                     top_k=config.retrieval_top_k,
                     diversity=diversity,
-                    prefetch_limit=self.MMR_PREFETCH_LIMIT,
+                    prefetch_limit=prefetch_limit,
                 )
-
             logger.info(
-                f"[Vector Search] Variant {idx} retrieved {len(variant_chunks)} chunks"
+                f"[Vector Search] Variant {idx} retrieved {len(chunks)} chunks"
             )
+            return chunks
 
+        with ThreadPoolExecutor(max_workers=min(len(normalized_embeddings), 4)) as executor:
+            all_variant_chunks = list(executor.map(
+                _search_variant,
+                enumerate(normalized_embeddings),
+            ))
+
+        for variant_chunks in all_variant_chunks:
             for chunk in variant_chunks:
                 chunk_id = chunk.chunk_id
                 if chunk_id is None:
@@ -602,6 +656,7 @@ class TwoLevelRetriever:
         from app.services.hyde import get_hyde_service
 
         hyde_service = get_hyde_service()
+        hyde_service.usage_collector = getattr(self, "_usage_collector", None)
         hyde_start = time.time()
         hyde_embedding = hyde_service.generate_hyde_embedding(query)
 
@@ -729,9 +784,9 @@ class TwoLevelRetriever:
         config: RetrievalConfig,
     ) -> tuple[list[ScoredChunk], bool]:
         """Stage 6: LLM-based relevance grading (Self-RAG / Corrective RAG)."""
-        from app.services.relevance_grader import get_relevance_grader, CorrectiveAction
+        from app.services.relevance_grader import RelevanceGraderService, CorrectiveAction
 
-        grader = get_relevance_grader()
+        grader = RelevanceGraderService(usage_collector=getattr(self, "_usage_collector", None))
         grading_result = grader.grade_chunks(query, scored_chunks)
         context_is_weak = False
 
@@ -789,8 +844,17 @@ class TwoLevelRetriever:
             base = min(base + (num_videos - 3) * 0.05, self.MAX_DIVERSITY)
         return base
 
-    def _get_chunk_limit(self, num_videos: int, mode: str) -> int:
-        """Calculate chunk limit based on video count and mode."""
+    def _get_chunk_limit(
+        self, num_videos: int, mode: str, is_coverage: bool = False,
+    ) -> int:
+        """Calculate chunk limit based on video count and mode.
+
+        For COVERAGE queries, scales to cover all videos (up to MAX_COVERAGE_CHUNK_LIMIT).
+        For PRECISION queries, uses existing behavior (capped at MAX_CHUNK_LIMIT).
+        """
+        if is_coverage:
+            return min(max(num_videos, 10), self.MAX_COVERAGE_CHUNK_LIMIT)
+
         base = self.BASE_CHUNK_LIMITS.get(mode, self.DEFAULT_CHUNK_LIMIT)
         if num_videos > 3:
             return min(base + (num_videos - 3), self.MAX_CHUNK_LIMIT)
@@ -823,6 +887,33 @@ class TwoLevelRetriever:
                 deduped.append(chunk)
 
         return deduped
+
+    def _maybe_prepend_document_summary(
+        self,
+        db: Session,
+        video_id: UUID,
+        context: str,
+        video_map: dict[UUID, Video],
+    ) -> str:
+        """Prepend document summary to context for single-doc queries.
+
+        This is a safety net: even if intent classification routes to PRECISION,
+        the LLM always has the document overview alongside retrieved chunks.
+        Only applies when the document has a summary stored.
+        """
+        video = video_map.get(video_id)
+        if not video:
+            video = db.query(Video).filter(Video.id == video_id).first()
+
+        if video and video.summary:
+            summary_block = (
+                f'## Document Overview: "{video.title}"\n'
+                f"{video.summary}\n\n"
+                f"---\n\n"
+            )
+            return summary_block + context
+
+        return context
 
     def _build_chunk_context(
         self,
@@ -878,14 +969,7 @@ class TwoLevelRetriever:
     @staticmethod
     def _format_timestamp(start: float, end: float) -> str:
         """Format seconds into MM:SS or HH:MM:SS range."""
-        start_h, start_rem = divmod(int(start), 3600)
-        start_m, start_s = divmod(start_rem, 60)
-        end_h, end_rem = divmod(int(end), 3600)
-        end_m, end_s = divmod(end_rem, 60)
-
-        if start_h or end_h:
-            return f"{start_h:02d}:{start_m:02d}:{start_s:02d} - {end_h:02d}:{end_m:02d}:{end_s:02d}"
-        return f"{start_m:02d}:{start_s:02d} - {end_m:02d}:{end_s:02d}"
+        return format_timestamp_display(start, end)
 
     @staticmethod
     def _format_location_display(chunk) -> str:

@@ -89,11 +89,11 @@ export default function UseCasesSection() {
         {/* Section header */}
         <div className="text-center mb-12">
           <h2 className="text-4xl font-bold text-[var(--color-text-primary)] mb-4">
-            Built for How You Work
+            People Like You Are Already Saving Hours Every Week
           </h2>
           <p className="text-xl text-[var(--color-text-secondary)] max-w-2xl mx-auto">
-            Whether you&apos;re researching, learning, creating, or training —
-            unlock the knowledge trapped in your video content.
+            Researchers, students, creators, and professionals all face the same
+            problem: too much content, not enough time. Here&apos;s how they solved it.
           </p>
         </div>
 
@@ -184,16 +184,16 @@ export default function UseCasesSection() {
             <div className="h-1 bg-gradient-to-r from-[var(--color-accent)] to-[var(--color-accent-dark)]" />
 
             <div className="p-6 flex flex-col justify-center items-center text-center h-full">
-              <h3 className="text-xl font-bold text-[var(--color-text-primary)] mb-2">Which one are you?</h3>
+              <h3 className="text-xl font-bold text-[var(--color-text-primary)] mb-2">You recognize yourself in these stories.</h3>
               <p className="text-[var(--color-text-secondary)] text-sm mb-5">
-                Start transforming your video workflow today.
+                The question isn&apos;t whether this would help — it&apos;s how soon you start.
               </p>
               <div className="flex flex-col gap-3 w-full max-w-xs">
                 <button
                   onClick={handleGetStarted}
                   className="w-full px-5 py-2.5 bg-[var(--color-primary)] text-white font-medium rounded-xl hover:bg-[var(--color-primary-dark)] transition-colors duration-200 flex items-center justify-center gap-2 group"
                 >
-                  Get Started Free
+                  Start My Free Trial
                   <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
                 </button>
                 <button

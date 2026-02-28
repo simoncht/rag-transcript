@@ -50,7 +50,7 @@ class Message(Base):
     )  # For assistant messages: completion tokens
 
     # LLM metadata (for assistant messages)
-    llm_provider = Column(String(50), nullable=True)  # e.g., "ollama", "openai"
+    llm_provider = Column(String(50), nullable=True)  # e.g., "deepseek", "openai"
     llm_model = Column(String(100), nullable=True)  # e.g., "llama2", "gpt-4"
     response_time_seconds = Column(
         Float, nullable=True

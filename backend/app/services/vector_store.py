@@ -139,21 +139,20 @@ class QdrantVectorStore(VectorStore):
         self.collection_name = collection_name or settings.qdrant_collection_name
 
         # Initialize Qdrant client
-        # Use API key if configured for authentication
-        # prefer_grpc=False and https=False for local development without TLS
+        # prefer_grpc=True uses gRPC (port 6334) for ~30-50% faster search
         if settings.qdrant_api_key:
             self.client = QdrantClient(
                 host=self.host,
                 port=self.port,
                 api_key=settings.qdrant_api_key,
-                prefer_grpc=False,
+                prefer_grpc=True,
                 https=False,
             )
         else:
             self.client = QdrantClient(
                 host=self.host,
                 port=self.port,
-                prefer_grpc=False,
+                prefer_grpc=True,
                 https=False,
             )
 

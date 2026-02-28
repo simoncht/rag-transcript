@@ -63,6 +63,22 @@ def calculate_llm_cost(
     return input_cost + output_cost
 
 
+class CallType:
+    """Constants for LLM call types."""
+
+    CHAT = "chat"
+    CHAT_STREAMING = "chat_streaming"
+    ENRICHMENT = "enrichment"
+    QUERY_EXPANSION = "query_expansion"
+    QUERY_REWRITE = "query_rewrite"
+    INTENT_CLASSIFICATION = "intent_classification"
+    FACT_EXTRACTION = "fact_extraction"
+    FOLLOWUP = "followup"
+    SUMMARIZATION = "summarization"
+    RELEVANCE_GRADING = "relevance_grading"
+    HYDE = "hyde"
+
+
 class LLMUsageEvent(Base):
     """
     LLM usage event for tracking API costs.
@@ -91,6 +107,10 @@ class LLMUsageEvent(Base):
         ForeignKey("messages.id", ondelete="SET NULL"),
         nullable=True,
     )
+
+    # Call classification
+    call_type = Column(String(50), nullable=True, index=True)
+    content_id = Column(UUID(as_uuid=True), nullable=True, index=True)
 
     # Model info
     model = Column(String(100), nullable=False, index=True)
@@ -124,6 +144,7 @@ class LLMUsageEvent(Base):
     __table_args__ = (
         Index("ix_llm_usage_user_created", "user_id", "created_at"),
         Index("ix_llm_usage_model_created", "model", "created_at"),
+        Index("ix_llm_usage_calltype_created", "call_type", "created_at"),
     )
 
     def __repr__(self):
@@ -139,6 +160,8 @@ class LLMUsageEvent(Base):
         conversation_id: uuid.UUID = None,
         message_id: uuid.UUID = None,
         response_time_seconds: float = None,
+        call_type: str = None,
+        content_id: uuid.UUID = None,
     ) -> "LLMUsageEvent":
         """
         Create LLM usage event from an LLM response.
@@ -151,6 +174,8 @@ class LLMUsageEvent(Base):
             conversation_id: Optional conversation ID
             message_id: Optional message ID
             response_time_seconds: Optional response time
+            call_type: Type of LLM call (see CallType constants)
+            content_id: Optional video/document UUID being processed
 
         Returns:
             LLMUsageEvent instance (not yet committed)
@@ -173,6 +198,8 @@ class LLMUsageEvent(Base):
             user_id=user_id,
             conversation_id=conversation_id,
             message_id=message_id,
+            call_type=call_type,
+            content_id=content_id,
             model=model,
             provider=provider,
             input_tokens=input_tokens,

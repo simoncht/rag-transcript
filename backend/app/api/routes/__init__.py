@@ -12,6 +12,9 @@ from app.api.routes import (
     admin,
     webhooks,
     subscriptions,
+    discovery,
+    notifications,
+    content,
 )
 
 __all__ = [
@@ -25,4 +28,7 @@ __all__ = [
     "admin",
     "webhooks",
     "subscriptions",
+    "discovery",
+    "notifications",
+    "content",
 ]

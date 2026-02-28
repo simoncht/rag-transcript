@@ -12,6 +12,7 @@ import FAQSection from '@/components/landing/FAQSection';
 import FinalCTASection from '@/components/landing/FinalCTASection';
 import Footer from '@/components/landing/Footer';
 import HeaderAuthButtons from '@/components/landing/HeaderAuthButtons';
+import { OrganizationSchema, SoftwareSchema, FAQSchema } from '@/components/seo';
 
 export const metadata: Metadata = {
   title: 'RAG Transcript - AI-Powered Video Knowledge Base',
@@ -26,6 +27,11 @@ export const metadata: Metadata = {
 export default function HomePage() {
   return (
     <div className="min-h-screen bg-white">
+      {/* JSON-LD Structured Data */}
+      <OrganizationSchema />
+      <SoftwareSchema />
+      <FAQSchema />
+
       {/* Sticky navigation header */}
       <header className="border-b border-gray-200 bg-white/80 backdrop-blur-sm sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">

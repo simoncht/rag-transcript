@@ -123,8 +123,7 @@ def update_video_status(
     if video:
         video.status = status
         video.progress_percent = progress
-        if error:
-            video.error_message = error
+        video.error_message = error
         if status == "completed":
             video.completed_at = datetime.utcnow()
         db.commit()
@@ -436,15 +435,26 @@ def _chunk_and_enrich(video_id: str, transcript_id: str):
         # Build full transcript text for contextual enrichment
         full_transcript_text = " ".join(seg["text"] for seg in transcript.segments)
 
-        enricher = ContextualEnricher(full_text=full_transcript_text)
-        enricher.set_video_context(video.title, video.description)
-        enriched_chunks = []
-        for i, chunk in enumerate(chunks):
-            enriched = enricher.enrich_chunk(chunk)
-            enriched_chunks.append(enriched)
+        # Track LLM usage for enrichment
+        from app.services.usage_collector import LLMUsageCollector
+        usage_collector = LLMUsageCollector(
+            user_id=video.user_id, content_id=video_uuid
+        )
 
-            progress = 40.0 + (i + 1) / len(chunks) * 50.0
+        enricher = ContextualEnricher(
+            full_text=full_transcript_text,
+            usage_collector=usage_collector,
+            content_id=video_uuid,
+        )
+        enricher.set_video_context(video.title, video.description)
+
+        def _on_enrich_progress(completed: int, total: int):
+            progress = 40.0 + completed / total * 50.0
             update_video_status(db, video_uuid, "enriching", progress)
+
+        enriched_chunks = enricher.enrich_chunks_concurrent(
+            chunks, max_workers=5, on_progress=_on_enrich_progress
+        )
 
         for enriched_chunk in enriched_chunks:
             chunk = enriched_chunk.chunk
@@ -472,10 +482,14 @@ def _chunk_and_enrich(video_id: str, transcript_id: str):
         video.chunk_count = len(enriched_chunks)
         video.status = "chunked"
         video.progress_percent = 90.0
+
+        # Flush LLM usage events
+        usage_count = usage_collector.flush(db)
         db.commit()
 
-        print(
-            f"[pipeline] Chunk/enrich complete for video={video_id}, chunks={len(enriched_chunks)}"
+        logger.info(
+            f"[pipeline] Chunk/enrich complete for video={video_id}, "
+            f"chunks={len(enriched_chunks)}, llm_usage_events={usage_count}"
         )
         return {"chunk_count": len(enriched_chunks)}
     except Exception as e:
@@ -556,6 +570,7 @@ def _embed_and_index(video_id: str, user_id: str, force_reindex: bool = False):
         video.status = "completed"
         video.progress_percent = 100.0
         video.completed_at = datetime.utcnow()
+        video.error_message = None
         db.commit()
 
         try:
@@ -591,10 +606,21 @@ def _generate_video_summary(video_id: str):
 
     try:
         from app.services.video_summarizer import video_summarizer_service
+        from app.services.usage_collector import LLMUsageCollector
 
         logger.info(f"[pipeline] Generating video summary for video={video_id}")
 
-        success = video_summarizer_service.update_video_summary(db, video_uuid)
+        video = db.query(Video).filter(Video.id == video_uuid).first()
+        usage_collector = LLMUsageCollector(
+            user_id=video.user_id if video else None,
+            content_id=video_uuid,
+        )
+
+        success = video_summarizer_service.update_video_summary(
+            db, video_uuid, usage_collector=usage_collector
+        )
+        usage_collector.flush(db)
+        db.commit()
 
         if success:
             logger.info(f"[pipeline] Video summary generated for video={video_id}")
@@ -847,6 +873,104 @@ def process_video_pipeline(video_id: str, youtube_url: str, user_id: str, job_id
 
     except Exception as e:
         update_job_status(db, UUID(job_id), "failed", 0.0, None, str(e))
+        raise
+
+    finally:
+        db.close()
+
+
+@celery_app.task(name="backfill_video_summaries")
+def backfill_video_summaries(batch_size: int = 20):
+    """
+    Backfill summaries for completed videos that don't have one.
+
+    Generates video-level summaries enabling the COVERAGE retrieval path
+    in the two-level retriever. Without summaries, coverage queries fall
+    back to chunk retrieval with limited video representation.
+
+    Args:
+        batch_size: Number of videos to process per run (default 20)
+
+    Returns:
+        Dict with processing results
+    """
+    db = SessionLocal()
+
+    try:
+        from app.services.video_summarizer import video_summarizer_service
+        from app.services.usage_collector import LLMUsageCollector
+
+        # Find completed videos without summaries
+        videos = (
+            db.query(Video)
+            .filter(
+                Video.status == "completed",
+                Video.summary.is_(None),
+                Video.is_deleted.is_(False),
+            )
+            .order_by(Video.completed_at.desc())
+            .limit(batch_size)
+            .all()
+        )
+
+        if not videos:
+            logger.info("[Backfill] No videos need summary backfill")
+            return {"processed": 0, "succeeded": 0, "failed": 0, "remaining": 0}
+
+        # Count remaining for reporting
+        remaining = (
+            db.query(Video)
+            .filter(
+                Video.status == "completed",
+                Video.summary.is_(None),
+                Video.is_deleted.is_(False),
+            )
+            .count()
+        )
+
+        succeeded = 0
+        failed = 0
+
+        for video in videos:
+            try:
+                usage_collector = LLMUsageCollector(
+                    user_id=video.user_id, content_id=video.id,
+                )
+                success = video_summarizer_service.update_video_summary(
+                    db, video.id, usage_collector=usage_collector
+                )
+                usage_collector.flush(db)
+                db.commit()
+
+                if success:
+                    succeeded += 1
+                    logger.info(
+                        f"[Backfill] Summary generated for video={video.id} "
+                        f"'{video.title[:40]}'"
+                    )
+                else:
+                    failed += 1
+            except Exception as e:
+                failed += 1
+                logger.error(
+                    f"[Backfill] Failed to generate summary for video={video.id}: {e}"
+                )
+                db.rollback()
+
+        logger.info(
+            f"[Backfill] Complete: {succeeded}/{len(videos)} succeeded, "
+            f"{failed} failed, ~{remaining - len(videos)} remaining"
+        )
+
+        return {
+            "processed": len(videos),
+            "succeeded": succeeded,
+            "failed": failed,
+            "remaining": max(0, remaining - len(videos)),
+        }
+
+    except Exception as e:
+        logger.error(f"[Backfill] Task failed: {e}")
         raise
 
     finally:

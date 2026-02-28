@@ -182,6 +182,57 @@ export default function LLMUsagePage() {
         )}
       </Card>
 
+      {/* Cost by Call Type */}
+      <Card className="p-6">
+        <h2 className="text-xl font-semibold mb-4">Cost by Call Type</h2>
+        {isLoading ? (
+          <div className="space-y-2">
+            {[...Array(3)].map((_, i) => (
+              <Skeleton key={i} className="h-12 w-full" />
+            ))}
+          </div>
+        ) : data?.by_call_type && data.by_call_type.length > 0 ? (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Call Type</TableHead>
+                <TableHead className="text-right">Requests</TableHead>
+                <TableHead className="text-right">Tokens</TableHead>
+                <TableHead className="text-right">Cost</TableHead>
+                <TableHead className="text-right">% of Total</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {data.by_call_type.map((ct) => (
+                <TableRow key={ct.call_type || "unknown"}>
+                  <TableCell className="font-medium">
+                    <Badge variant="outline">
+                      {ct.call_type || "unknown"}
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="text-right">
+                    {formatNumber(ct.total_requests)}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    {formatTokens(ct.total_tokens)}
+                  </TableCell>
+                  <TableCell className="text-right font-medium">
+                    {formatCurrency(ct.total_cost_usd)}
+                  </TableCell>
+                  <TableCell className="text-right text-muted-foreground">
+                    {((ct.total_cost_usd / (data?.stats.total_cost_usd || 1)) * 100).toFixed(1)}%
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        ) : (
+          <p className="text-muted-foreground text-center py-8">
+            No call type data available
+          </p>
+        )}
+      </Card>
+
       {/* Per-User Breakdown */}
       <Card className="p-6">
         <div className="flex items-center gap-2 mb-4">
@@ -257,6 +308,7 @@ export default function LLMUsagePage() {
                 <TableRow>
                   <TableHead>Time</TableHead>
                   <TableHead>User</TableHead>
+                  <TableHead>Type</TableHead>
                   <TableHead>Model</TableHead>
                   <TableHead className="text-right">Input</TableHead>
                   <TableHead className="text-right">Output</TableHead>
@@ -273,6 +325,11 @@ export default function LLMUsagePage() {
                     </TableCell>
                     <TableCell className="text-sm">
                       {event.user_email || event.user_id.slice(0, 8)}
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="secondary" className="text-xs">
+                        {event.call_type || "unknown"}
+                      </Badge>
                     </TableCell>
                     <TableCell>
                       <Badge variant="outline">{event.model}</Badge>

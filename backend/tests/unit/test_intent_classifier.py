@@ -799,6 +799,123 @@ class TestExtendedCrossSourceKeywords:
         assert result_3kw.confidence >= result_1kw.confidence
 
 
+class TestDocumentCoveragePatterns:
+    """Tests that document/file/PDF queries route to COVERAGE."""
+
+    @pytest.fixture
+    def classifier(self):
+        """Create a fresh classifier instance."""
+        return IntentClassifier()
+
+    def test_what_is_this_document_about_classifies_as_coverage(self, classifier):
+        """'what is this document all about?' should route to COVERAGE."""
+        result = classifier.classify_sync(
+            query="what is this document all about?",
+            mode="summarize",
+            num_videos=1,
+        )
+        assert result.intent == QueryIntent.COVERAGE
+
+    def test_what_is_this_about_generic_classifies_as_coverage(self, classifier):
+        """'what is this about?' (no noun) should route to COVERAGE."""
+        result = classifier.classify_sync(
+            query="what is this about?",
+            mode="summarize",
+            num_videos=1,
+        )
+        assert result.intent == QueryIntent.COVERAGE
+
+    def test_summarize_this_pdf_classifies_as_coverage(self, classifier):
+        """'summarize this PDF' should route to COVERAGE."""
+        result = classifier.classify_sync(
+            query="summarize this PDF",
+            mode="summarize",
+            num_videos=1,
+        )
+        assert result.intent == QueryIntent.COVERAGE
+
+    def test_what_is_this_file_about_classifies_as_coverage(self, classifier):
+        """'what is this file about?' should route to COVERAGE."""
+        result = classifier.classify_sync(
+            query="what is this file about?",
+            mode="summarize",
+            num_videos=1,
+        )
+        assert result.intent == QueryIntent.COVERAGE
+
+    def test_what_is_it_about_classifies_as_coverage(self, classifier):
+        """'what is it about?' should route to COVERAGE."""
+        result = classifier.classify_sync(
+            query="what is it about?",
+            mode="summarize",
+            num_videos=1,
+        )
+        assert result.intent == QueryIntent.COVERAGE
+
+    def test_each_document_pattern(self, classifier):
+        """'each document' should match the expanded COVERAGE pattern."""
+        result = classifier.classify_sync(
+            query="what is each document about?",
+            mode="summarize",
+            num_videos=5,
+        )
+        assert result.intent == QueryIntent.COVERAGE
+
+    def test_what_is_this_podcast_about(self, classifier):
+        """'what is this podcast about?' — future content type, no noun enumeration needed."""
+        result = classifier.classify_sync(
+            query="what is this podcast about?",
+            mode="summarize",
+            num_videos=1,
+        )
+        assert result.intent == QueryIntent.COVERAGE
+
+    def test_what_are_these_recordings_about(self, classifier):
+        """'what are these recordings about?' — structural match, not noun-specific."""
+        result = classifier.classify_sync(
+            query="what are these recordings about?",
+            mode="summarize",
+            num_videos=3,
+        )
+        assert result.intent == QueryIntent.COVERAGE
+
+
+class TestSingleDocCoverageRouting:
+    """Tests that single-document queries with summarize mode route to COVERAGE."""
+
+    @pytest.fixture
+    def classifier(self):
+        """Create a fresh classifier instance."""
+        return IntentClassifier()
+
+    def test_single_doc_summarize_mode_routes_to_coverage(self, classifier):
+        """Single doc + summarize mode + ambiguous query -> COVERAGE (not PRECISION)."""
+        result = classifier.classify_sync(
+            query="tell me about this content",
+            mode="summarize",
+            num_videos=1,
+        )
+        assert result.intent == QueryIntent.COVERAGE
+
+    def test_single_doc_deep_dive_still_routes_to_precision(self, classifier):
+        """Single doc + deep_dive mode + ambiguous query -> PRECISION (unchanged)."""
+        result = classifier.classify_sync(
+            query="tell me about this content",
+            mode="deep_dive",
+            num_videos=1,
+        )
+        assert result.intent == QueryIntent.PRECISION
+
+    def test_single_doc_summarize_with_what_is_this(self, classifier):
+        """'what is this document about' + summarize mode + 1 doc -> COVERAGE."""
+        result = classifier.classify_sync(
+            query="what is this document about?",
+            mode="summarize",
+            num_videos=1,
+        )
+        assert result.intent == QueryIntent.COVERAGE
+
+
 class TestIntegrationScenarios:
     """Integration-style tests for realistic scenarios."""
 

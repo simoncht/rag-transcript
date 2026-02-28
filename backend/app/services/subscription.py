@@ -64,6 +64,7 @@ class SubscriptionService:
         if user.is_superuser:
             limits = {
                 "video_limit": -1,
+                "document_limit": -1,
                 "message_limit": -1,
                 "storage_limit_mb": -1,
                 "minutes_limit": -1,
@@ -73,9 +74,17 @@ class SubscriptionService:
             # Get tier limits
             limits = get_quota_limits(user.subscription_tier)
 
-        # Calculate videos used (exclude soft-deleted)
+        # Calculate videos used (YouTube only, exclude soft-deleted)
         videos_used = db.query(func.count(Video.id)).filter(
             Video.user_id == user_id,
+            Video.content_type == "youtube",
+            Video.is_deleted.is_(False)
+        ).scalar() or 0
+
+        # Calculate documents used (non-YouTube content, exclude soft-deleted)
+        documents_used = db.query(func.count(Video.id)).filter(
+            Video.user_id == user_id,
+            Video.content_type != "youtube",
             Video.is_deleted.is_(False)
         ).scalar() or 0
 
@@ -113,6 +122,7 @@ class SubscriptionService:
 
         # Calculate remaining quotas
         videos_remaining = max(0, limits["video_limit"] - videos_used) if limits["video_limit"] != -1 else -1
+        documents_remaining = max(0, limits["document_limit"] - documents_used) if limits["document_limit"] != -1 else -1
         messages_remaining = max(0, limits["message_limit"] - messages_used) if limits["message_limit"] != -1 else -1
         storage_remaining_mb = max(0.0, limits["storage_limit_mb"] - storage_used_mb) if limits["storage_limit_mb"] != -1 else -1.0
         minutes_remaining = max(0, limits["minutes_limit"] - minutes_used) if limits["minutes_limit"] != -1 else -1
@@ -122,6 +132,9 @@ class SubscriptionService:
             videos_used=videos_used,
             videos_limit=limits["video_limit"],
             videos_remaining=videos_remaining if videos_remaining != -1 else 999999,
+            documents_used=documents_used,
+            documents_limit=limits["document_limit"],
+            documents_remaining=documents_remaining if documents_remaining != -1 else 999999,
             messages_used=messages_used,
             messages_limit=limits["message_limit"],
             messages_remaining=messages_remaining if messages_remaining != -1 else 999999,
@@ -146,6 +159,20 @@ class SubscriptionService:
         """
         quota = self.get_user_quota(user_id, db)
         return quota.videos_remaining > 0
+
+    def check_document_quota(self, user_id: uuid.UUID, db: Session) -> bool:
+        """
+        Check if user can upload another document.
+
+        Args:
+            user_id: User ID
+            db: Database session
+
+        Returns:
+            True if allowed, False if quota exceeded
+        """
+        quota = self.get_user_quota(user_id, db)
+        return quota.documents_remaining > 0
 
     def check_message_quota(self, user_id: uuid.UUID, db: Session) -> bool:
         """
@@ -413,7 +440,13 @@ class SubscriptionService:
         user.subscription_status = "active"
 
         # Get subscription details from Stripe
-        subscription_id = session.get("subscription")
+        # Note: session.subscription is expanded to full object, so extract ID
+        subscription_obj = session.get("subscription")
+        subscription_id = (
+            subscription_obj.id if hasattr(subscription_obj, "id")
+            else subscription_obj.get("id") if isinstance(subscription_obj, dict)
+            else subscription_obj  # Already a string ID
+        ) if subscription_obj else None
         if subscription_id:
             # Check if subscription record exists (webhook may have created it)
             existing_sub = db.query(Subscription).filter(
@@ -531,6 +564,118 @@ class SubscriptionService:
 
         logger.info(f"Subscription deleted for user {subscription.user_id}: reverted to free tier")
 
+    def handle_payment_failed(
+        self,
+        invoice_data: Dict[str, Any],
+        db: Session,
+    ) -> None:
+        """
+        Handle failed payment event from Stripe.
+
+        Marks the subscription as past_due so the app can show a
+        "please update your payment method" warning to the user.
+
+        Args:
+            invoice_data: Stripe invoice object from the webhook event
+            db: Database session
+        """
+        stripe_subscription_id = invoice_data.get("subscription")
+        if not stripe_subscription_id:
+            logger.warning("Payment failed event missing subscription ID")
+            return
+
+        # Find subscription record
+        subscription = db.query(Subscription).filter(
+            Subscription.stripe_subscription_id == stripe_subscription_id
+        ).first()
+
+        if not subscription:
+            logger.warning(f"Subscription not found for failed payment: {stripe_subscription_id}")
+            return
+
+        # Mark subscription as past_due
+        subscription.status = "past_due"
+
+        # Update user status so the frontend can show a warning banner
+        user = db.query(User).filter(User.id == subscription.user_id).first()
+        if user:
+            user.subscription_status = "past_due"
+
+        db.commit()
+
+        logger.warning(
+            f"Payment failed for user {subscription.user_id} "
+            f"(subscription {stripe_subscription_id}): marked as past_due"
+        )
+
+    def cancel_subscription(
+        self,
+        user: User,
+        db: Session,
+        cancel_immediately: bool = False,
+    ) -> Dict[str, Any]:
+        """
+        Cancel a user's Stripe subscription.
+
+        Args:
+            user: The authenticated user
+            db: Database session
+            cancel_immediately: If True, cancel now. If False, cancel at period end.
+
+        Returns:
+            Dict with cancellation details
+
+        Raises:
+            ValueError: If user has no active subscription
+        """
+        # Find active subscription
+        subscription = db.query(Subscription).filter(
+            Subscription.user_id == user.id,
+            Subscription.status.in_(["active", "past_due"]),
+        ).order_by(Subscription.created_at.desc()).first()
+
+        if not subscription:
+            raise ValueError("No active subscription found")
+
+        if not subscription.stripe_subscription_id:
+            raise ValueError("Subscription has no Stripe ID")
+
+        # Cancel via Stripe API
+        stripe.api_key = settings.stripe_secret_key
+
+        if cancel_immediately:
+            stripe_sub = stripe.Subscription.delete(
+                subscription.stripe_subscription_id
+            )
+        else:
+            stripe_sub = stripe.Subscription.modify(
+                subscription.stripe_subscription_id,
+                cancel_at_period_end=True,
+            )
+
+        # Update local records
+        if cancel_immediately:
+            subscription.status = "canceled"
+            subscription.canceled_at = datetime.utcnow()
+            user.subscription_tier = "free"
+            user.subscription_status = "canceled"
+        else:
+            subscription.cancel_at_period_end = 1
+            subscription.canceled_at = datetime.utcnow()
+
+        db.commit()
+
+        logger.info(
+            f"Subscription canceled for user {user.id}: "
+            f"immediate={cancel_immediately}, sub={subscription.stripe_subscription_id}"
+        )
+
+        return {
+            "status": "canceled" if cancel_immediately else "cancel_at_period_end",
+            "cancel_at_period_end": not cancel_immediately,
+            "current_period_end": subscription.current_period_end.isoformat() if subscription.current_period_end else None,
+        }
+
     def get_pricing_tiers(self) -> list[PricingTier]:
         """
         Get all available pricing tiers.
@@ -550,6 +695,7 @@ class SubscriptionService:
                     stripe_price_id_yearly=config.get("stripe_price_id_yearly", ""),
                     features=config["features"],
                     video_limit=config["video_limit"],
+                    document_limit=config["document_limit"],
                     message_limit=config["message_limit"],
                     storage_limit_mb=config["storage_limit_mb"],
                     minutes_limit=config["minutes_limit"],

@@ -62,3 +62,9 @@ class TopicChunksResponse(BaseModel):
     topic_id: str
     topic_label: str
     chunks: List[TopicChunk]
+
+
+class CollectionInsightsResponse(BaseModel):
+    collection_id: UUID
+    graph: InsightGraph
+    metadata: ConversationInsightsMetadata

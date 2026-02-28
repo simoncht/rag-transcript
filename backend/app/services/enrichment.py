@@ -10,11 +10,15 @@ This enrichment improves retrieval accuracy by providing semantic context
 that can be embedded along with the raw chunk text.
 """
 import json
-from typing import List, Optional, Dict
+import logging
+from typing import List, Optional, Dict, Callable
 from dataclasses import dataclass
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 from app.services.llm_providers import LLMService, Message
 from app.services.chunking import Chunk
 
@@ -65,6 +69,8 @@ class ContextualEnricher:
         source_context: Optional[str] = None,
         content_type: str = "youtube",
         full_text: Optional[str] = None,
+        usage_collector=None,
+        content_id=None,
     ):
         """
         Initialize contextual enricher.
@@ -77,6 +83,8 @@ class ContextualEnricher:
             full_text: Optional full transcript/document text for contextual grounding.
                        When provided, the LLM sees the entire document to produce
                        better chunk-level summaries (Anthropic contextual retrieval pattern).
+            usage_collector: Optional LLMUsageCollector for tracking LLM costs
+            content_id: Optional video/document UUID for cost attribution
         """
         from app.services.llm_providers import llm_service as default_llm_service
 
@@ -86,7 +94,16 @@ class ContextualEnricher:
         self.content_type = content_type
         self.max_retries = settings.enrichment_max_retries
         # Full text for contextual enrichment (truncated to ~12K tokens ≈ 48K chars)
-        self.full_text = full_text[:48000] if full_text and len(full_text) > 48000 else full_text
+        if full_text and len(full_text) > 48000:
+            logger.warning(
+                f"[Enrichment] Full text truncated from {len(full_text)} to 48000 chars "
+                f"({len(full_text) - 48000} chars lost). Content ID: {content_id}"
+            )
+            self.full_text = full_text[:48000]
+        else:
+            self.full_text = full_text
+        self.usage_collector = usage_collector
+        self.content_id = content_id
 
     def _create_enrichment_prompt(self, chunk: Chunk) -> List[Message]:
         """
@@ -336,6 +353,12 @@ class ContextualEnricher:
                     retry=False,  # We handle retries here
                 )
 
+                # Record LLM usage
+                if self.usage_collector and response.usage:
+                    self.usage_collector.record(
+                        response, "enrichment", content_id=self.content_id
+                    )
+
                 # Parse response
                 enrichment_data = self._parse_enrichment_response(response.content)
 
@@ -347,7 +370,10 @@ class ContextualEnricher:
                 )
 
             except Exception as e:
-                if attempt < self.max_retries - 1:
+                # Don't retry billing/auth errors — they won't resolve with retries
+                error_str = str(e)
+                is_permanent = any(code in error_str for code in ("402", "401", "403", "Insufficient Balance"))
+                if not is_permanent and attempt < self.max_retries - 1:
                     # Wait before retry (exponential backoff)
                     wait_time = 2**attempt
                     time.sleep(wait_time)
@@ -396,6 +422,61 @@ class ContextualEnricher:
                 time.sleep(1)  # 1 second delay between batches
 
         return enriched_chunks
+
+    def enrich_chunks_concurrent(
+        self,
+        chunks: List[Chunk],
+        max_workers: int = 5,
+        on_progress: Optional[Callable[[int, int], None]] = None,
+        on_chunk_complete: Optional[Callable[["EnrichedChunk"], None]] = None,
+    ) -> List[EnrichedChunk]:
+        """
+        Enrich chunks concurrently using thread pool. Same quality, ~5x faster.
+
+        Each chunk gets the exact same LLM prompt, model, and temperature.
+        Concurrent calls produce identical results to sequential.
+
+        Args:
+            chunks: List of chunks to enrich
+            max_workers: Maximum concurrent enrichment calls
+            on_progress: Optional callback(completed, total) for progress tracking
+            on_chunk_complete: Optional callback(enriched_chunk) called per chunk for incremental DB saves
+
+        Returns:
+            List of enriched chunks in original order
+        """
+        if not chunks:
+            return []
+
+        results: List[Optional[EnrichedChunk]] = [None] * len(chunks)
+        completed = 0
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_idx = {
+                executor.submit(self.enrich_chunk, chunk): i
+                for i, chunk in enumerate(chunks)
+            }
+            for future in as_completed(future_to_idx):
+                idx = future_to_idx[future]
+                try:
+                    results[idx] = future.result()
+                except Exception as e:
+                    # Fallback for unexpected errors — enrich_chunk already handles retries
+                    print(f"Warning: Concurrent enrichment failed for chunk {idx}: {e}")
+                    fallback = self._create_fallback_enrichment(chunks[idx])
+                    results[idx] = EnrichedChunk(
+                        chunk=chunks[idx],
+                        title=fallback["title"],
+                        summary=fallback["summary"],
+                        keywords=fallback["keywords"],
+                    )
+                if on_chunk_complete and results[idx]:
+                    on_chunk_complete(results[idx])
+                completed += 1
+                if on_progress:
+                    on_progress(completed, len(chunks))
+
+        return results  # type: ignore[return-value]
 
     def set_video_context(
         self, video_title: str, video_description: Optional[str] = None

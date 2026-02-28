@@ -13,16 +13,15 @@ export default function HeroSection() {
         <div className="text-center">
           {/* Headline */}
           <h1 className="text-5xl lg:text-6xl font-bold text-gray-900 mb-6">
-            Transform YouTube Videos into
+            The Answer Is in There Somewhere.
             <br />
-            <span className="text-primary">Searchable Knowledge</span>
+            <span className="text-primary">Until Now.</span>
           </h1>
 
           {/* Subheadline */}
           <p className="text-xl lg:text-2xl text-gray-600 mb-8 max-w-3xl mx-auto">
-            Build a searchable knowledge base from your video library. Query
-            across entire collections and get synthesized answers with precise
-            citations.
+            Add a video or document. Ask any question about what&apos;s inside. Get
+            the exact answer with a citation that proves it. Every time.
           </p>
 
           {/* CTAs */}
@@ -30,10 +29,10 @@ export default function HeroSection() {
             <Button
               variant="primary"
               size="lg"
-              onClick={() => (window.location.href = '/login')}
+              onClick={() => (window.location.href = '/get-started')}
               className="w-full sm:w-auto"
             >
-              Start Free
+              Find Your First Answer Free
             </Button>
             <Button
               variant="outline"
@@ -48,7 +47,7 @@ export default function HeroSection() {
               }}
               className="w-full sm:w-auto"
             >
-              View Pricing
+              See What&apos;s Included
             </Button>
           </div>
 
@@ -80,7 +79,7 @@ export default function HeroSection() {
               >
                 <path d="M5 13l4 4L19 7" />
               </svg>
-              <span>Free tier available</span>
+              <span>10 videos + 50 documents free</span>
             </div>
             <div className="flex items-center gap-2">
               <svg
@@ -94,7 +93,7 @@ export default function HeroSection() {
               >
                 <path d="M5 13l4 4L19 7" />
               </svg>
-              <span>Cancel anytime</span>
+              <span>14-day money-back guarantee</span>
             </div>
           </div>
         </div>

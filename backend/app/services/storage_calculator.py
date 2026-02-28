@@ -9,11 +9,47 @@ from uuid import UUID
 from sqlalchemy import func, String
 from sqlalchemy.orm import Session
 
-from app.models import Chunk, Message, ConversationFact, ConversationInsight, Conversation, Video
+from app.models import (
+    Chunk,
+    Message,
+    ConversationFact,
+    ConversationInsight,
+    Conversation,
+    Video,
+)
 
 
-# Estimated bytes per vector in Qdrant (1536 dimensions * 4 bytes + metadata overhead)
-BYTES_PER_VECTOR = 5 * 1024  # ~5 KB per vector
+def _calculate_bytes_per_vector() -> int:
+    """Calculate bytes per vector from the configured embedding model dimensions.
+
+    Known model dimensions:
+    - BAAI/bge-base-en-v1.5: 768
+    - BAAI/bge-small-en-v1.5: 384
+    - BAAI/bge-large-en-v1.5: 1024
+    - sentence-transformers/all-MiniLM-L6-v2: 384
+    - text-embedding-3-small: 1536
+    - text-embedding-3-large: 3072
+    """
+    from app.core.config import settings
+
+    MODEL_DIMENSIONS = {
+        "baai/bge-base-en-v1.5": 768,
+        "baai/bge-small-en-v1.5": 384,
+        "baai/bge-large-en-v1.5": 1024,
+        "sentence-transformers/all-minilm-l6-v2": 384,
+        "text-embedding-3-small": 1536,
+        "text-embedding-3-large": 3072,
+    }
+
+    model_key = settings.embedding_model.lower()
+    dimensions = MODEL_DIMENSIONS.get(model_key, 768)  # Default to 768 (BGE-base)
+
+    # 4 bytes per float32 dimension + ~1KB metadata overhead (payload, IDs, index)
+    return (dimensions * 4) + 1024
+
+
+# Lazily computed on first import — matches actual embedding model
+BYTES_PER_VECTOR = _calculate_bytes_per_vector()
 
 
 class StorageCalculator:
@@ -65,10 +101,14 @@ class StorageCalculator:
 
         # Message storage: content
         # Need to join through Conversation to filter by user_id
+        # Exclude deleted conversations from quota calculation
         message_bytes = (
             self.db.query(func.coalesce(func.sum(func.length(Message.content)), 0))
             .join(Conversation, Message.conversation_id == Conversation.id)
-            .filter(Conversation.user_id == user_id)
+            .filter(
+                Conversation.user_id == user_id,
+                Conversation.is_deleted.is_(False),
+            )
             .scalar()
             or 0
         )
@@ -92,7 +132,9 @@ class StorageCalculator:
                 func.coalesce(
                     func.sum(
                         func.length(func.cast(ConversationInsight.graph_data, String))
-                        + func.length(func.cast(ConversationInsight.topic_chunks, String))
+                        + func.length(
+                            func.cast(ConversationInsight.topic_chunks, String)
+                        )
                     ),
                     0,
                 )

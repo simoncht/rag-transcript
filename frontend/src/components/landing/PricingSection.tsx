@@ -13,10 +13,10 @@ export default function PricingSection() {
         {/* Section header */}
         <div className="text-center mb-16">
           <h2 className="text-4xl font-bold text-gray-900 mb-4">
-            Simple, Transparent Pricing
+            What Is Your Time Worth?
           </h2>
           <p className="text-xl text-gray-600 max-w-2xl mx-auto">
-            Start free, upgrade anytime. No hidden fees, no surprises.
+            The free plan proves the value. Pro unlocks everything. Either way, you stop wasting hours.
           </p>
         </div>
 

@@ -578,10 +578,10 @@ export default function HowItWorksSection() {
           transition={{ duration: 0.5 }}
         >
           <h2 className="text-3xl sm:text-4xl font-bold text-[var(--color-text-primary)] mb-3">
-            From Video to Verified Answer
+            From &ldquo;I Think They Mentioned It&rdquo; to &ldquo;Here&rsquo;s Exactly Where They Said It&rdquo;
           </h2>
           <p className="text-lg text-[var(--color-text-secondary)] max-w-xl mx-auto">
-            Paste a link. Our AI does the rest. Every answer comes with proof.
+            Four steps. Under five minutes. You will never lose a piece of knowledge again.
           </p>
         </motion.div>
 
@@ -644,7 +644,7 @@ export default function HowItWorksSection() {
           animate={isVisible ? { opacity: 1 } : { opacity: 0 }}
           transition={{ delay: 0.8 }}
         >
-          Powered by semantic search, AI reranking, and cross-source synthesis — working together on every question.
+          The result: answers you can stake your reputation on, because every claim links back to the source.
         </motion.p>
       </div>
     </section>

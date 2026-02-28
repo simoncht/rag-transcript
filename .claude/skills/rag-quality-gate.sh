@@ -26,12 +26,13 @@ run_intent_test() {
     local query="$1"
     local expected="$2"
     local num_videos="$3"
+    local mode="${4:-summarize}"
     INTENT_TOTAL=$((INTENT_TOTAL + 1))
 
     result=$(docker compose exec -T app python -c "
 from app.services.intent_classifier import IntentClassifier
 c = IntentClassifier()
-r = c.classify_sync('$query', 'summarize', $num_videos)
+r = c.classify_sync('$query', '$mode', $num_videos)
 print(r.intent.value)
 " 2>/dev/null | tr -d '\r' || echo "error")
 
@@ -44,7 +45,7 @@ print(r.intent.value)
     fi
 }
 
-# Broad queries -> COVERAGE
+# Broad queries -> COVERAGE (multi-video)
 run_intent_test "what are the different themes can each of these sources be grouped by?" "coverage" 40
 run_intent_test "what topics do these videos cover?" "coverage" 40
 run_intent_test "group these by subject matter" "coverage" 40
@@ -57,11 +58,20 @@ run_intent_test "list the main ideas from every source" "coverage" 40
 run_intent_test "give me an overview of everything" "coverage" 40
 run_intent_test "summarize all the videos" "coverage" 40
 
+# Document/single-source queries -> COVERAGE
+run_intent_test "what is this document all about?" "coverage" 1
+run_intent_test "what is this about?" "coverage" 1
+run_intent_test "summarize this PDF" "coverage" 1
+run_intent_test "what is this file about?" "coverage" 1
+run_intent_test "what is it about?" "coverage" 1
+run_intent_test "what is this podcast about?" "coverage" 1
+
 # Specific queries -> PRECISION
 run_intent_test "why do schools kill creativity?" "precision" 10
 run_intent_test "what did Ken Robinson say about mistakes?" "precision" 10
 run_intent_test "find the part about procrastination" "precision" 5
 run_intent_test "when did they discuss AI?" "precision" 5
+run_intent_test "what is the dispute handling process?" "precision" 1 "deep_dive"
 
 echo ""
 echo "Intent Classification: $INTENT_PASS/$INTENT_TOTAL passed ($INTENT_FAIL failed)"
@@ -84,8 +94,8 @@ db.close()
 
 echo "  Videos with summaries: $SUMMARY_STATS"
 
-# Extract percentage for threshold check
-SUMMARY_PCT=$(echo "$SUMMARY_STATS" | grep -oP '\d+(?=%)' || echo "0")
+# Extract percentage for threshold check (macOS-compatible, no grep -P)
+SUMMARY_PCT=$(echo "$SUMMARY_STATS" | grep -o '[0-9]*%' | grep -o '[0-9]*' || echo "0")
 if [ "$SUMMARY_PCT" -lt 50 ]; then
     echo "  WARNING: <50% summary coverage - COVERAGE path degraded"
     echo "  ACTION: Run POST /api/v1/admin/videos/backfill-summaries"

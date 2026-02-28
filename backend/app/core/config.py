@@ -101,6 +101,7 @@ class Settings(BaseSettings):
     enable_contextual_enrichment: bool = True
     enrichment_batch_size: int = 10
     enrichment_max_retries: int = 3
+    enrichment_max_workers: int = 20  # Concurrent enrichment threads (tune via ENRICHMENT_MAX_WORKERS env)
 
     # Embedding Configuration
     embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
@@ -109,9 +110,10 @@ class Settings(BaseSettings):
     embedding_provider: Literal["local", "openai", "azure"] = "local"
 
     # LLM Provider Configuration
-    llm_provider: Literal["deepseek", "ollama", "openai", "anthropic", "azure"] = "deepseek"
+    llm_provider: Literal["deepseek", "openai", "anthropic", "azure"] = "deepseek"
     llm_model: str = "deepseek-chat"
     llm_max_tokens: int = 1500
+    llm_max_tokens_reasoner: int = 8192  # Reasoning models: CoT + content share budget
     llm_temperature: float = 0.7
 
     # Tier-Based Model Configuration (see pricing.py for full config)
@@ -119,10 +121,6 @@ class Settings(BaseSettings):
     llm_model_free: str = "deepseek-chat"  # DeepSeek Chat - fast, non-thinking mode
     llm_model_pro: str = "deepseek-reasoner"  # DeepSeek Reasoner - thinking mode
     llm_model_enterprise: str = "deepseek-reasoner"  # Same as Pro with SLA
-
-    # Ollama
-    ollama_base_url: str = "http://localhost:11434"
-    ollama_model: str = "llama2"
 
     # OpenAI
     openai_api_key: str = ""
@@ -160,6 +158,7 @@ class Settings(BaseSettings):
     # RAG Query Expansion (Performance Optimization)
     enable_query_expansion: bool = True
     query_expansion_variants: int = 2  # Number of query variants to generate
+    query_expansion_min_words: int = 6  # Skip expansion below this word count
 
     # Self-RAG / Corrective RAG
     enable_relevance_grading: bool = True  # LLM grades chunk relevance after reranking
@@ -178,6 +177,9 @@ class Settings(BaseSettings):
     rrf_vector_weight: float = 1.0
     rrf_bm25_weight: float = 0.3
 
+    # Conversation History Optimization
+    history_assistant_truncate_chars: int = 300  # Truncate old assistant msgs (0=disabled)
+
     # RAG Query Rewriting (History-Aware Retrieval)
     enable_query_rewriting: bool = True
     query_rewrite_history_limit: int = 6  # Messages to include for context
@@ -193,6 +195,9 @@ class Settings(BaseSettings):
     allowed_file_types: List[str] = [
         "pdf", "docx", "pptx", "xlsx", "txt", "md", "html", "epub", "csv", "rtf", "eml",
     ]
+
+    # YouTube Cookies (for anti-bot authentication)
+    youtube_cookies_file: str = ""  # Path to Netscape-format cookies.txt (export from browser)
 
     # Caption Extraction (YouTube auto-captions)
     enable_caption_extraction: bool = True  # Try YouTube captions before Whisper
@@ -217,6 +222,9 @@ class Settings(BaseSettings):
 
     # YouTube Data API
     youtube_api_key: str = ""  # Required for YouTube search/discovery
+
+    # RAG Intelligence Features
+    enable_followup_questions: bool = True  # Generate follow-up question suggestions after responses
 
     # Logging
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"

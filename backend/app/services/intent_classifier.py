@@ -75,16 +75,37 @@ class IntentClassifier:
         r"\boverview\b",
         r"\bmain points?\b",
         r"\bkey (points?|takeaways?|themes?|topics?|ideas?)\b",
-        r"\bwhat (are|is) (this|these|the) (videos?|transcripts?) about\b",
+        r"\bwhat (is|are) (this|these|it|the)( \w+)? (all )?about\b",
         r"\bgist\b",
         r"\bhighlights?\b",
         r"\btl;?dr\b",
         r"\bin (short|brief|summary)\b",
-        r"\ball (the )?(videos?|sources?|transcripts?)\b",
+        r"\ball (the )?(videos?|sources?|transcripts?|documents?|files?)\b",
         r"\bacross (all|the|these)\b",
-        r"\beach (video|source|transcript)\b",
-        r"\bevery (video|source|transcript)\b",
+        r"\beach (video|source|transcript|document|file|podcast|recording)\b",
+        r"\bevery (video|source|transcript|document|file|podcast|recording)\b",
         r"\bcompare\b.*\b(videos?|sources?|speakers?)\b",
+        # Cross-source synthesis patterns
+        r"\b(relationship|connection|relate|connect|common|shared|overlap|link|tie)\b.*\b(between|across|among)\b",
+        r"\b(between|across|among)\b.*\b(sources?|videos?|documents?|transcripts?)\b",
+        r"\b(common|shared|overlapping|similar)\b.*\b(themes?|topics?|ideas?|points?|messages?)\b",
+        r"\bhow (do|does|are)\b.*\b(relate|connect|overlap|tie together|intersect)\b",
+        r"\b(similarities?|differences?|contrasts?|parallels?)\b.*\b(between|across|among)\b",
+        r"\bwhat do .+ have in common\b",
+        # Broad categorization/grouping patterns
+        r"\b(different|various|main|major)\s+(themes?|topics?|categories)\b",
+        r"\bgrouped?\b.*\b(by|into)\b",
+        r"\bcategoriz(e|ed?|ing)\b",
+        r"\bclassif(y|ied|ying)\b",
+        r"\borganiz(e|ed?|ing)\b.*\b(by|into)\b",
+        r"\bwhat (themes?|topics?|kind)\b.*\b(do|does|can|are)\b",
+        r"\beach of (these|the|those|my)\b",
+        r"\bwhat (topics?|subjects?)\b.*\bcover\b",
+        r"\bbreak\s*down\b.*\b(content|all|these|the)\b",
+        r"\bwhat can I learn\b",
+        r"\bhow would you (organize|group|categorize|classify)\b",
+        # "all N videos" pattern (handles numbers between "all" and "videos")
+        r"\ball\s+\d+\s+(videos?|sources?|transcripts?|documents?|files?|podcasts?|recordings?)\b",
     ]
 
     PRECISION_PATTERNS = [
@@ -138,8 +159,9 @@ class IntentClassifier:
         r"\bwhat specifically\b",
     ]
 
-    def __init__(self):
+    def __init__(self, usage_collector=None):
         """Initialize intent classifier."""
+        self.usage_collector = usage_collector
         # Compile regex patterns for efficiency
         self._coverage_regex = [
             re.compile(p, re.IGNORECASE) for p in self.COVERAGE_PATTERNS
@@ -371,6 +393,9 @@ Output JSON only:
             model="deepseek-chat",  # Use chat model for classification
         )
 
+        if self.usage_collector and response.usage:
+            self.usage_collector.record(response, "intent_classification")
+
         # Parse JSON response
         try:
             # Extract JSON from response (handle potential markdown code blocks)
@@ -450,11 +475,35 @@ Output JSON only:
                 reasoning=f"Mixed signals (coverage={coverage_matches}, precision={precision_matches})",
             )
 
+        # Multi-source safety net: if multiple sources and query contains
+        # cross-source keywords, route to COVERAGE regardless of mode
+        if num_videos > 1:
+            cross_source_keywords = [
+                "relationship", "connection", "relate", "connect", "common",
+                "shared", "overlap", "between", "across", "among",
+                "similarities", "differences", "compare", "contrast",
+                "parallel", "theme", "link", "tie",
+                "group", "categorize", "organize", "classify", "topics",
+                "different", "various", "content", "learn", "cover",
+            ]
+            keyword_hits = sum(
+                1 for kw in cross_source_keywords if kw in query_lower
+            )
+            # Lower threshold for many-video collections: 1 keyword is enough
+            # when there are >5 videos since the user likely wants broad coverage
+            min_hits = 1 if num_videos > 5 else 2
+            if keyword_hits >= min_hits:
+                return IntentClassification(
+                    intent=QueryIntent.COVERAGE,
+                    confidence=min(0.7, 0.5 + keyword_hits * 0.1),
+                    reasoning=f"Cross-source keywords detected ({keyword_hits}) with {num_videos} sources",
+                )
+
         # No clear patterns - use mode as fallback
         mode_prefers_coverage = mode in ("summarize", "compare_sources")
         mode_prefers_precision = mode in ("deep_dive", "extract_actions")
 
-        if mode_prefers_coverage and num_videos > 1:
+        if mode_prefers_coverage:
             return IntentClassification(
                 intent=QueryIntent.COVERAGE,
                 confidence=0.5,

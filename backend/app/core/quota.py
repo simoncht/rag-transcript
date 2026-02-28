@@ -63,6 +63,32 @@ async def check_video_quota(user: User, db: Session) -> None:
         )
 
 
+async def check_document_quota(user: User, db: Session) -> None:
+    """
+    Check if user can upload another document.
+
+    Args:
+        user: User object
+        db: Database session
+
+    Raises:
+        QuotaExceededException: If document quota exceeded
+    """
+    # Admin users bypass all quotas
+    if user.is_superuser:
+        logger.info(f"Admin user {user.id} bypassing document quota check")
+        return
+
+    if not subscription_service.check_document_quota(user.id, db):
+        quota = subscription_service.get_user_quota(user.id, db)
+        logger.warning(f"Document quota exceeded for user {user.id}: {quota.documents_used}/{quota.documents_limit}")
+
+        raise QuotaExceededException(
+            quota_type="document",
+            quota_usage=quota.dict(),
+        )
+
+
 async def check_message_quota(user: User, db: Session) -> None:
     """
     Check if user can send another message.
@@ -149,75 +175,3 @@ async def check_minutes_quota(user: User, duration_minutes: int, db: Session) ->
         )
 
 
-def check_quota_warning_needed(user: User, db: Session) -> dict:
-    """
-    Check if any quota warnings should be sent to user.
-
-    Args:
-        user: User object
-        db: Database session
-
-    Returns:
-        Dictionary with warning information:
-        {
-            "should_warn": bool,
-            "warnings": [
-                {"type": "video", "percentage": 85.0, "level": "warning"},
-                ...
-            ]
-        }
-    """
-    from app.core.pricing import (
-        get_usage_percentage,
-        QUOTA_WARNING_THRESHOLD_LOW,
-        QUOTA_WARNING_THRESHOLD_HIGH,
-        QUOTA_WARNING_THRESHOLD_CRITICAL,
-    )
-
-    quota = subscription_service.get_user_quota(user.id, db)
-
-    warnings = []
-
-    # Check each quota type
-    quota_types = [
-        ("video", quota.videos_used, quota.videos_limit),
-        ("message", quota.messages_used, quota.messages_limit),
-        ("storage", quota.storage_used_mb, quota.storage_limit_mb),
-        ("minutes", quota.minutes_used, quota.minutes_limit),
-    ]
-
-    for quota_type, used, limit in quota_types:
-        if limit == -1:  # Skip unlimited quotas
-            continue
-
-        percentage = get_usage_percentage(used, limit)
-
-        if percentage >= QUOTA_WARNING_THRESHOLD_CRITICAL:
-            warnings.append({
-                "type": quota_type,
-                "percentage": percentage,
-                "level": "critical",
-                "used": used,
-                "limit": limit,
-            })
-        elif percentage >= QUOTA_WARNING_THRESHOLD_HIGH:
-            warnings.append({
-                "type": quota_type,
-                "percentage": percentage,
-                "level": "urgent",
-                "used": used,
-                "limit": limit,
-            })
-        elif percentage >= QUOTA_WARNING_THRESHOLD_LOW:
-            warnings.append({
-                "type": quota_type,
-                "percentage": percentage,
-                "level": "warning",
-                "used": used,
-                "limit": limit,
-            })
-
-    return {
-        "should_warn": len(warnings) > 0,
-        "warnings": warnings,
-    }

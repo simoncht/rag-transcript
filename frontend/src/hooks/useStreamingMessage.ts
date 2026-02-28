@@ -1,7 +1,13 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { streamMessage, StreamDoneData } from "@/lib/api/streaming";
-import type { ChunkReference, ConversationWithMessages, Message } from "@/lib/types";
+import { streamMessage, StreamDoneData, StreamStatusData } from "@/lib/api/streaming";
+import type {
+  ChunkReference,
+  ConfidenceInfo,
+  RetrievalMetadata,
+  ConversationWithMessages,
+  Message,
+} from "@/lib/types";
 
 interface StreamingState {
   isStreaming: boolean;
@@ -10,6 +16,14 @@ interface StreamingState {
   error: string | null;
   messageId: string | null;
   startTime: number | null;
+  confidence: ConfidenceInfo | null;
+  retrievalMetadata: RetrievalMetadata | null;
+  reasoningContent: string | null;
+  reasoningTokens: number | null;
+  followupQuestions: string[];
+  newFactsCount: number;
+  statusStage: string | null;
+  statusMessage: string | null;
 }
 
 const initialState: StreamingState = {
@@ -19,6 +33,14 @@ const initialState: StreamingState = {
   error: null,
   messageId: null,
   startTime: null,
+  confidence: null,
+  retrievalMetadata: null,
+  reasoningContent: null,
+  reasoningTokens: null,
+  followupQuestions: [],
+  newFactsCount: 0,
+  statusStage: null,
+  statusMessage: null,
 };
 
 /**
@@ -54,11 +76,8 @@ export function useStreamingMessage(conversationId: string) {
       contentRef.current = "";
 
       setState({
+        ...initialState,
         isStreaming: true,
-        content: "",
-        sources: [],
-        error: null,
-        messageId: null,
         startTime: Date.now(),
       });
 
@@ -92,20 +111,45 @@ export function useStreamingMessage(conversationId: string) {
           model,
           mode,
           signal: abortRef.current.signal,
+          onStatus: (data) => {
+            setState((s) => ({
+              ...s,
+              statusStage: data.stage,
+              statusMessage: data.message,
+            }));
+          },
           onContent: (chunk: string) => {
             contentRef.current += chunk;
             setState((s) => ({
               ...s,
               content: s.content + chunk,
+              // Clear status once content starts flowing
+              statusStage: null,
+              statusMessage: null,
             }));
           },
           onDone: (data: StreamDoneData) => {
-            const { messageId, sources, tokenCount, responseTime } = data;
+            const {
+              messageId,
+              sources,
+              tokenCount,
+              responseTime,
+              confidence,
+              retrievalMetadata,
+              reasoningContent,
+              reasoningTokens,
+              newFactsCount,
+            } = data;
             setState((s) => ({
               ...s,
               isStreaming: false,
               messageId,
               sources: sources as ChunkReference[],
+              confidence: confidence ?? null,
+              retrievalMetadata: retrievalMetadata ?? null,
+              reasoningContent: reasoningContent ?? null,
+              reasoningTokens: reasoningTokens ?? null,
+              newFactsCount: newFactsCount ?? 0,
             }));
 
             // Add assistant message to cache
@@ -123,6 +167,10 @@ export function useStreamingMessage(conversationId: string) {
                   response_time_seconds: responseTime,
                   created_at: new Date().toISOString(),
                   chunk_references: sources as ChunkReference[],
+                  confidence: confidence,
+                  retrieval_metadata: retrievalMetadata,
+                  reasoning_content: reasoningContent,
+                  reasoning_tokens: reasoningTokens,
                 };
                 return {
                   ...prev,
@@ -133,6 +181,9 @@ export function useStreamingMessage(conversationId: string) {
 
             // Invalidate quota cache to reflect the new message count
             queryClient.invalidateQueries({ queryKey: ["subscription-quota"] });
+          },
+          onFollowUpQuestions: (questions: string[]) => {
+            setState((s) => ({ ...s, followupQuestions: questions }));
           },
           onError: (error: string) => {
             setState((s) => ({
@@ -173,6 +224,14 @@ export function useStreamingMessage(conversationId: string) {
     error: state.error,
     messageId: state.messageId,
     elapsedTime,
+    confidence: state.confidence,
+    retrievalMetadata: state.retrievalMetadata,
+    reasoningContent: state.reasoningContent,
+    reasoningTokens: state.reasoningTokens,
+    followupQuestions: state.followupQuestions,
+    newFactsCount: state.newFactsCount,
+    statusStage: state.statusStage,
+    statusMessage: state.statusMessage,
     sendMessage,
     cancelStream,
   };

@@ -161,6 +161,29 @@ class ChunkReference(BaseModel):
         }
 
 
+class ConfidenceInfo(BaseModel):
+    """Answer confidence indicator derived from retrieval signals."""
+
+    level: str = Field(..., description="strong, moderate, or limited")
+    avg_relevance: float = Field(0.0, description="Average relevance score of sources")
+    chunk_count: int = Field(0, description="Number of source chunks used")
+    unique_videos: int = Field(0, description="Number of unique videos referenced")
+
+
+class RetrievalMetadata(BaseModel):
+    """Retrieval pipeline transparency metadata."""
+
+    original_query: Optional[str] = None
+    effective_query: Optional[str] = Field(None, description="Rewritten query (if different)")
+    retrieval_type: Optional[str] = None
+    total_retrieved: Optional[int] = None
+    total_after_filter: Optional[int] = None
+    total_after_rerank: Optional[int] = None
+    final_chunks: Optional[int] = None
+    unique_videos: Optional[int] = None
+    timing: Optional[dict] = None
+
+
 class Message(BaseModel):
     """Chat message."""
 
@@ -173,6 +196,12 @@ class Message(BaseModel):
     # For assistant messages
     chunks_retrieved_count: Optional[int] = None
     response_time_seconds: Optional[float] = None
+
+    # RAG intelligence metadata (from message_metadata JSONB)
+    confidence: Optional[ConfidenceInfo] = None
+    retrieval_metadata: Optional[RetrievalMetadata] = None
+    reasoning_content: Optional[str] = Field(None, description="Chain-of-thought from DeepSeek Reasoner")
+    reasoning_tokens: Optional[int] = None
 
     class Config:
         from_attributes = True

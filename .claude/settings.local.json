@@ -55,9 +55,13 @@
       "Bash(pip install:*)",
       "Bash(docker inspect:*)",
       "Bash(python3:*)",
-      "WebSearch"
+      "WebSearch",
+      "Bash(bash .claude/skills/citation-accuracy.sh 2>&1)",
+      "Bash(bash .claude/skills/conversation-quality.sh 2>&1)",
+      "Bash(bash .claude/skills/content-parity.sh 2>&1)"
     ],
     "deny": [],
     "ask": []
-  }
+  },
+  "spinnerTipsEnabled": true
 }

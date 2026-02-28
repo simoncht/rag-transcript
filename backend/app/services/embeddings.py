@@ -103,9 +103,8 @@ class SentenceTransformerEmbedding(EmbeddingProvider):
 
     def embed_text(self, text: str) -> np.ndarray:
         """Generate embedding for a single text."""
-        embedding = self.model.encode(text, convert_to_numpy=True)
-        # Normalize to unit vector
-        return self._normalize(embedding)
+        embedding = self.model.encode(text, convert_to_numpy=True, normalize_embeddings=True)
+        return embedding
 
     def embed_batch(self, texts: List[str]) -> List[np.ndarray]:
         """Generate embeddings for a batch of texts."""
@@ -114,9 +113,9 @@ class SentenceTransformerEmbedding(EmbeddingProvider):
             convert_to_numpy=True,
             batch_size=settings.embedding_batch_size,
             show_progress_bar=False,
+            normalize_embeddings=True,
         )
-        # Normalize all embeddings
-        return [self._normalize(emb) for emb in embeddings]
+        return list(embeddings)
 
     def get_model_info(self) -> Dict:
         """Get model information."""
@@ -401,6 +400,12 @@ class EmbeddingService:
         """Check if the current model needs a query prefix."""
         model_name = (self.model_info.get("model") or "").lower()
         return model_name in BGE_MODEL_PREFIXES
+
+    def _get_query_text(self, text: str) -> str:
+        """Return text with BGE query prefix if needed (for batch embedding queries)."""
+        if self._needs_query_prefix():
+            return BGE_QUERY_PREFIX + text
+        return text
 
     def embed_text(
         self, text: str, use_cache: bool = True, is_query: bool = False

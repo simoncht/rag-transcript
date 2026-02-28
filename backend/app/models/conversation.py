@@ -3,7 +3,7 @@ Conversation model for managing chat sessions.
 """
 import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, DateTime, ForeignKey, Integer
+from sqlalchemy import Column, String, DateTime, ForeignKey, Integer, Boolean
 from sqlalchemy.dialects.postgresql import UUID, ARRAY
 from sqlalchemy.orm import relationship
 
@@ -50,6 +50,10 @@ class Conversation(Base):
     )
     last_message_at = Column(DateTime, nullable=True)
 
+    # Soft delete
+    is_deleted = Column(Boolean, default=False, nullable=False, index=True)
+    deleted_at = Column(DateTime, nullable=True)
+
     # Relationships
     user = relationship("User", back_populates="conversations")
     messages = relationship(
@@ -69,6 +73,11 @@ class Conversation(Base):
         back_populates="conversation",
         cascade="all, delete-orphan",
         order_by="ConversationFact.confidence_score.desc()",
+    )
+    insights = relationship(
+        "ConversationInsight",
+        back_populates="conversation",
+        cascade="all, delete-orphan",
     )
 
     def __repr__(self):

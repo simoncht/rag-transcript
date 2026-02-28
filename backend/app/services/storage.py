@@ -4,7 +4,9 @@ Storage service abstraction for local and cloud storage.
 Provides a unified interface for file storage operations that can be backed by
 either local filesystem or Azure Blob Storage.
 """
+import logging
 import shutil
+import subprocess
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import BinaryIO, Optional
@@ -119,6 +121,43 @@ class StorageService(ABC):
         """
         pass
 
+    @abstractmethod
+    def generate_pdf_preview(
+        self, user_id: UUID, content_id: UUID, original_path: str, content_type: str
+    ) -> Optional[str]:
+        """
+        Generate a PDF preview for the document viewer.
+
+        For PDFs, copies the original. For other formats, converts via LibreOffice headless.
+
+        Args:
+            user_id: User ID
+            content_id: Content UUID
+            original_path: Path to the original uploaded file
+            content_type: MIME-like content type (e.g. 'pdf', 'docx')
+
+        Returns:
+            Path to the preview PDF, or None on failure
+        """
+        pass
+
+    @abstractmethod
+    def get_preview_path(self, user_id: UUID, content_id: UUID) -> Optional[str]:
+        """
+        Get the path to the preview PDF for a content item.
+
+        Args:
+            user_id: User ID
+            content_id: Content UUID
+
+        Returns:
+            Absolute path to preview.pdf if it exists, else None
+        """
+        pass
+
+
+logger = logging.getLogger(__name__)
+
 
 class LocalStorageService(StorageService):
     """
@@ -135,16 +174,23 @@ class LocalStorageService(StorageService):
           {video_id}/
             transcript.json
             chunks.json
+      documents/
+        {user_id}/
+          {content_id}/
+            original.pdf
+            extracted.json
     """
 
     def __init__(self, base_path: str = None):
         self.base_path = Path(base_path or settings.local_storage_path)
         self.audio_path = self.base_path / "audio"
         self.transcript_path = self.base_path / "transcripts"
+        self.document_path = self.base_path / "documents"
 
         # Create directories if they don't exist
         self.audio_path.mkdir(parents=True, exist_ok=True)
         self.transcript_path.mkdir(parents=True, exist_ok=True)
+        self.document_path.mkdir(parents=True, exist_ok=True)
 
     def _get_audio_dir(self, user_id: UUID, video_id: UUID) -> Path:
         """Get audio directory path for a video."""
@@ -222,6 +268,138 @@ class LocalStorageService(StorageService):
         with open(file_path, "r", encoding="utf-8") as f:
             return json.load(f)
 
+    def _get_document_dir(self, user_id: UUID, content_id: UUID) -> Path:
+        """Get document directory path for a content item."""
+        return self.document_path / str(user_id) / str(content_id)
+
+    def save_document(
+        self, user_id: UUID, content_id: UUID, file_stream: BinaryIO, filename: str
+    ) -> str:
+        """Save uploaded document file to local storage."""
+        ext = Path(filename).suffix or ""
+        doc_dir = self._get_document_dir(user_id, content_id)
+        doc_dir.mkdir(parents=True, exist_ok=True)
+
+        file_path = doc_dir / f"original{ext}"
+        with open(file_path, "wb") as f:
+            shutil.copyfileobj(file_stream, f)
+
+        return str(file_path)
+
+    def save_extracted_text(
+        self, user_id: UUID, content_id: UUID, extracted_data: dict
+    ) -> str:
+        """Save extracted text JSON for a document."""
+        import json
+
+        doc_dir = self._get_document_dir(user_id, content_id)
+        doc_dir.mkdir(parents=True, exist_ok=True)
+
+        file_path = doc_dir / "extracted.json"
+        with open(file_path, "w", encoding="utf-8") as f:
+            json.dump(extracted_data, f, indent=2, ensure_ascii=False)
+
+        return str(file_path)
+
+    def load_extracted_text(self, user_id: UUID, content_id: UUID) -> Optional[dict]:
+        """Load extracted text JSON for a document."""
+        import json
+
+        doc_dir = self._get_document_dir(user_id, content_id)
+        file_path = doc_dir / "extracted.json"
+
+        if not file_path.exists():
+            return None
+
+        with open(file_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+
+    def delete_document(self, user_id: UUID, content_id: UUID) -> bool:
+        """Delete all files for a document."""
+        doc_dir = self._get_document_dir(user_id, content_id)
+        if doc_dir.exists():
+            shutil.rmtree(doc_dir)
+            return True
+        return False
+
+    def generate_pdf_preview(
+        self, user_id: UUID, content_id: UUID, original_path: str, content_type: str
+    ) -> Optional[str]:
+        """Generate a PDF preview for the document viewer."""
+        doc_dir = self._get_document_dir(user_id, content_id)
+        doc_dir.mkdir(parents=True, exist_ok=True)
+        preview_path = doc_dir / "preview.pdf"
+
+        if preview_path.exists():
+            logger.info(f"[PDF Preview] Already exists for content={content_id}")
+            return str(preview_path)
+
+        original = Path(original_path)
+        if not original.exists():
+            logger.warning(f"[PDF Preview] Original file not found: {original_path}")
+            return None
+
+        if content_type == "pdf":
+            shutil.copy2(original, preview_path)
+            logger.info(f"[PDF Preview] Copied PDF original for content={content_id}")
+            return str(preview_path)
+
+        # Convert non-PDF formats using LibreOffice headless
+        try:
+            result = subprocess.run(
+                [
+                    "libreoffice",
+                    "--headless",
+                    "--convert-to",
+                    "pdf",
+                    "--outdir",
+                    str(doc_dir),
+                    str(original),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+
+            if result.returncode != 0:
+                logger.warning(
+                    f"[PDF Preview] LibreOffice conversion failed for content={content_id}: "
+                    f"{result.stderr}"
+                )
+                return None
+
+            # LibreOffice outputs as {stem}.pdf - rename to preview.pdf
+            converted = doc_dir / f"{original.stem}.pdf"
+            if converted.exists():
+                converted.rename(preview_path)
+                logger.info(
+                    f"[PDF Preview] Converted {content_type} to PDF for content={content_id}"
+                )
+                return str(preview_path)
+
+            logger.warning(
+                f"[PDF Preview] Converted file not found at expected path: {converted}"
+            )
+            return None
+
+        except subprocess.TimeoutExpired:
+            logger.warning(
+                f"[PDF Preview] LibreOffice conversion timed out for content={content_id}"
+            )
+            return None
+        except FileNotFoundError:
+            logger.warning(
+                "[PDF Preview] LibreOffice not installed - PDF preview unavailable"
+            )
+            return None
+
+    def get_preview_path(self, user_id: UUID, content_id: UUID) -> Optional[str]:
+        """Get the path to the preview PDF for a content item."""
+        preview = self._get_document_dir(user_id, content_id) / "preview.pdf"
+        if preview.exists():
+            return str(preview)
+        return None
+
     def get_storage_usage(self, user_id: UUID) -> float:
         """Get total storage usage for a user in MB."""
         total_bytes = 0
@@ -237,6 +415,13 @@ class LocalStorageService(StorageService):
         user_transcript_dir = self.transcript_path / str(user_id)
         if user_transcript_dir.exists():
             for file_path in user_transcript_dir.rglob("*"):
+                if file_path.is_file():
+                    total_bytes += file_path.stat().st_size
+
+        # Check document directory
+        user_document_dir = self.document_path / str(user_id)
+        if user_document_dir.exists():
+            for file_path in user_document_dir.rglob("*"):
                 if file_path.is_file():
                     total_bytes += file_path.stat().st_size
 
@@ -287,6 +472,14 @@ class AzureBlobStorageService(StorageService):
         raise NotImplementedError()
 
     def file_exists(self, path: str) -> bool:
+        raise NotImplementedError()
+
+    def generate_pdf_preview(
+        self, user_id: UUID, content_id: UUID, original_path: str, content_type: str
+    ) -> Optional[str]:
+        raise NotImplementedError()
+
+    def get_preview_path(self, user_id: UUID, content_id: UUID) -> Optional[str]:
         raise NotImplementedError()
 
 

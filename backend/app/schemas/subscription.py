@@ -75,6 +75,21 @@ class CheckoutSessionResponse(BaseModel):
 
 
 # Customer portal schema
+class CancelSubscriptionRequest(BaseModel):
+    """Request to cancel a subscription."""
+    cancel_immediately: bool = Field(
+        default=False,
+        description="If true, cancel immediately. If false, cancel at end of billing period.",
+    )
+
+
+class CancelSubscriptionResponse(BaseModel):
+    """Response after canceling a subscription."""
+    status: str = Field(..., description="Resulting status: 'canceled' or 'cancel_at_period_end'")
+    cancel_at_period_end: bool = Field(..., description="Whether cancellation is deferred to period end")
+    current_period_end: Optional[str] = Field(None, description="When the current period ends (ISO format)")
+
+
 class CustomerPortalRequest(BaseModel):
     """Request to create a Stripe customer portal session."""
     return_url: str = Field(..., description="URL to return to after managing subscription")
@@ -94,6 +109,11 @@ class QuotaUsage(BaseModel):
     videos_used: int
     videos_limit: int
     videos_remaining: int
+
+    # Document quotas
+    documents_used: int
+    documents_limit: int
+    documents_remaining: int
 
     # Message quotas
     messages_used: int
@@ -122,6 +142,7 @@ class PricingTier(BaseModel):
     stripe_price_id_yearly: Optional[str] = None
     features: list[str]
     video_limit: int
+    document_limit: int
     message_limit: int
     storage_limit_mb: int
     minutes_limit: int

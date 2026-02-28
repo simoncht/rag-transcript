@@ -1,0 +1,9 @@
+{
+  "name": "RAG Transcript",
+  "short_name": "RAG Transcript",
+  "description": "AI-powered video knowledge base with semantic search",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#3b82f6"
+}

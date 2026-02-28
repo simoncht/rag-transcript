@@ -12,7 +12,12 @@ const faqs: FAQItem[] = [
   {
     question: "What's included in the free tier?",
     answer:
-      'The free tier includes 2 videos, 50 messages per month, 1 GB storage, and 60 minutes of transcription per month. Perfect for trying out the platform and small projects.',
+      'The free tier includes 10 videos, 200 messages per month, 1 GB storage, and 1000 minutes of transcription per month. Perfect for trying out the platform and small projects.',
+  },
+  {
+    question: "What if it doesn't work for my use case?",
+    answer:
+      "Start with the free tier — no credit card, no commitment. Add a video or document, ask a question, and see the answer with citations. If the quality isn't there, you've lost nothing. Most users know within their first three questions whether this changes their workflow.",
   },
   {
     question: 'Can I upgrade anytime?',
@@ -42,7 +47,7 @@ const faqs: FAQItem[] = [
   {
     question: 'What AI models do you use?',
     answer:
-      'We use OpenAI Whisper for transcription, state-of-the-art embedding models for semantic search, and support multiple LLM providers (OpenAI, Anthropic, Ollama) for conversations.',
+      'We use proprietary AI for transcription, state-of-the-art models for semantic search, and advanced language models for conversations.',
   },
   {
     question: 'What video sources do you support?',
@@ -52,7 +57,7 @@ const faqs: FAQItem[] = [
   {
     question: 'How accurate is the transcription?',
     answer:
-      'Our Whisper-based transcription achieves approximately 95% accuracy for clear English audio. When YouTube captions are available, we use those for even faster processing. You can always view and verify the full transcript.',
+      'Our AI transcription achieves approximately 95% accuracy for clear English audio. When YouTube captions are available, we use those for even faster processing. You can always view and verify the full transcript.',
   },
   {
     question: 'Can I search across multiple videos at once?',
@@ -92,10 +97,10 @@ export default function FAQSection() {
         {/* Section header */}
         <div className="text-center mb-16">
           <h2 className="text-4xl font-bold text-gray-900 mb-4">
-            Frequently Asked Questions
+            Everything You Need to Know Before You Start
           </h2>
           <p className="text-xl text-gray-600">
-            Got questions? We&apos;ve got answers.
+            We built this for skeptics. Here are the questions they asked.
           </p>
         </div>
 

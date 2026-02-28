@@ -99,14 +99,15 @@ export default function SubscriptionManager() {
     );
   }
 
-  const isFree = subscription?.tier === 'free' || !subscription;
-  const isPro = subscription?.tier === 'pro';
-  const isEnterprise = subscription?.tier === 'enterprise';
+  // Use quota.tier as source of truth (backend always returns correct tier)
+  // Fall back to subscription.tier for billing info display
+  const currentTier = quota?.tier || subscription?.tier || 'free';
+  const isFree = currentTier === 'free';
+  const isPro = currentTier === 'pro';
+  const isEnterprise = currentTier === 'enterprise';
 
   // Determine tier display name
-  const tierName = subscription?.tier
-    ? subscription.tier.charAt(0).toUpperCase() + subscription.tier.slice(1)
-    : 'Free';
+  const tierName = currentTier.charAt(0).toUpperCase() + currentTier.slice(1);
 
   // Format renewal date
   const renewalDate = subscription?.current_period_end
@@ -228,8 +229,8 @@ export default function SubscriptionManager() {
               Ready for More?
             </h3>
             <p className="text-gray-600 mb-6 max-w-2xl mx-auto">
-              Upgrade to Pro for unlimited videos, 1,000 messages/month, and
-              10 GB storage. Perfect for power users and professionals.
+              Upgrade to Pro for unlimited videos, unlimited messages, and
+              50 GB storage. Perfect for power users and professionals.
             </p>
             <Button
               variant="primary"

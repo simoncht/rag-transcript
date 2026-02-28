@@ -93,9 +93,8 @@ async def stripe_webhook(request: Request):
                 logger.info(f"Payment succeeded for subscription: {event_data.get('subscription')}")
 
             elif event_type == "invoice.payment_failed":
-                # Payment failed - update subscription status
-                logger.warning(f"Payment failed for subscription: {event_data.get('subscription')}")
-                # TODO: Send email notification about payment failure
+                # Payment failed - mark subscription as past_due
+                subscription_service.handle_payment_failed(event_data, db)
 
             else:
                 # Log unhandled event type

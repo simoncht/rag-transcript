@@ -30,6 +30,9 @@ from app.api.routes import (
     admin,
     webhooks,
     subscriptions,
+    discovery,
+    notifications,
+    content,
 )
 
 # Configure logging
@@ -181,6 +184,18 @@ app.include_router(
 
 app.include_router(
     subscriptions.router, prefix=f"{settings.api_v1_prefix}/subscriptions", tags=["subscriptions"]
+)
+
+app.include_router(
+    discovery.router, prefix=f"{settings.api_v1_prefix}/discovery", tags=["discovery"]
+)
+
+app.include_router(
+    notifications.router, prefix=f"{settings.api_v1_prefix}/notifications", tags=["notifications"]
+)
+
+app.include_router(
+    content.router, prefix=f"{settings.api_v1_prefix}/content", tags=["content"]
 )
 
 

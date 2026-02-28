@@ -73,8 +73,8 @@ def _estimate_response_cost(
     input_tokens = input_tokens or 0
     output_tokens = output_tokens or 0
 
-    llm_input_cost = (input_tokens / 1_000_000) * 3.0
-    llm_output_cost = (output_tokens / 1_000_000) * 15.0
+    llm_input_cost = (input_tokens / 1_000_000) * 0.28  # DeepSeek pricing
+    llm_output_cost = (output_tokens / 1_000_000) * 0.42  # DeepSeek pricing
     total = llm_input_cost + llm_output_cost
     return round(total, 4)
 
@@ -109,9 +109,7 @@ def _extract_flags(metadata: Optional[dict]) -> List[str]:
     return sorted(set(flags))
 
 
-def _load_sources(
-    db: Session, message_id: UUID, limit: int = 5
-) -> List[QASource]:
+def _load_sources(db: Session, message_id: UUID, limit: int = 5) -> List[QASource]:
     """Load a limited set of chunk references for an assistant message."""
     refs = (
         db.query(MessageChunkReference, Chunk, Video)
@@ -168,28 +166,44 @@ def calculate_user_metrics(db: Session, user_id: UUID) -> UserDetailMetrics:
         or 0
     ) / 60.0
 
-    # Collection metrics
+    # Collection metrics (exclude deleted)
     collections_total = (
-        db.query(Collection).filter(Collection.user_id == user_id).count()
+        db.query(Collection)
+        .filter(
+            Collection.user_id == user_id,
+            Collection.is_deleted.is_(False),
+        )
+        .count()
     )
     collections_with_videos = (
         db.query(Collection)
         .join(Collection.collection_videos)
-        .filter(Collection.user_id == user_id)
+        .filter(
+            Collection.user_id == user_id,
+            Collection.is_deleted.is_(False),
+        )
         .distinct()
         .count()
     )
 
-    # Conversation metrics
-    conversations_query = db.query(Conversation).filter(Conversation.user_id == user_id)
+    # Conversation metrics (exclude deleted)
+    conversations_query = db.query(Conversation).filter(
+        Conversation.user_id == user_id,
+        Conversation.is_deleted.is_(False),
+    )
     conversations_total = conversations_query.count()
     conversations_active = conversations_query.filter(
         Conversation.last_message_at >= datetime.utcnow() - timedelta(days=30)
     ).count()
 
-    # Message metrics
+    # Message metrics (exclude deleted conversations)
     messages_query = (
-        db.query(Message).join(Conversation).filter(Conversation.user_id == user_id)
+        db.query(Message)
+        .join(Conversation)
+        .filter(
+            Conversation.user_id == user_id,
+            Conversation.is_deleted.is_(False),
+        )
     )
     messages_sent = messages_query.filter(Message.role == "user").count()
     messages_received = messages_query.filter(Message.role == "assistant").count()
@@ -217,7 +231,11 @@ def calculate_user_metrics(db: Session, user_id: UUID) -> UserDetailMetrics:
     disk_usage_mb = storage_service.get_storage_usage(user_id)
 
     # Total storage = disk files + database text + vectors
-    total_storage_mb = disk_usage_mb + storage_breakdown["database_mb"] + storage_breakdown["vector_mb"]
+    total_storage_mb = (
+        disk_usage_mb
+        + storage_breakdown["database_mb"]
+        + storage_breakdown["vector_mb"]
+    )
 
     # Get user quota
     quota = db.query(UserQuota).filter(UserQuota.user_id == user_id).first()
@@ -274,8 +292,8 @@ def calculate_user_costs(
     # Pricing constants (should move to config later)
     WHISPER_COST_PER_MINUTE = 0.006
     EMBEDDING_COST_PER_1M_TOKENS = 0.02
-    LLM_INPUT_COST_PER_1M = 3.0
-    LLM_OUTPUT_COST_PER_1M = 15.0
+    LLM_INPUT_COST_PER_1M = 0.28  # DeepSeek pricing
+    LLM_OUTPUT_COST_PER_1M = 0.42  # DeepSeek pricing
     STORAGE_COST_PER_GB_MONTH = 0.02
 
     # Calculate costs
@@ -381,9 +399,13 @@ async def get_admin_dashboard(
         .count()
     )
 
-    total_conversations = db.query(Conversation).count()
+    total_conversations = (
+        db.query(Conversation).filter(Conversation.is_deleted.is_(False)).count()
+    )
     total_messages = db.query(Message).count()
-    total_collections = db.query(Collection).count()
+    total_collections = (
+        db.query(Collection).filter(Collection.is_deleted.is_(False)).count()
+    )
 
     # Usage stats
     total_minutes = (
@@ -422,10 +444,13 @@ async def get_admin_dashboard(
     month_ago = datetime.utcnow() - timedelta(days=30)
     three_months_ago = datetime.utcnow() - timedelta(days=90)
 
-    # Get users with their last activity
+    # Get users with their last activity (exclude deleted conversations)
     users_with_activity = (
         db.query(User.id, func.max(Message.created_at).label("last_activity"))
-        .outerjoin(Conversation, Conversation.user_id == User.id)
+        .outerjoin(
+            Conversation,
+            (Conversation.user_id == User.id) & (Conversation.is_deleted.is_(False)),
+        )
         .outerjoin(Message, Message.conversation_id == Conversation.id)
         .group_by(User.id)
         .subquery()
@@ -565,17 +590,30 @@ async def list_users(
         )
 
         collection_count = (
-            db.query(Collection).filter(Collection.user_id == user.id).count()
+            db.query(Collection)
+            .filter(
+                Collection.user_id == user.id,
+                Collection.is_deleted.is_(False),
+            )
+            .count()
         )
 
         conversation_count = (
-            db.query(Conversation).filter(Conversation.user_id == user.id).count()
+            db.query(Conversation)
+            .filter(
+                Conversation.user_id == user.id,
+                Conversation.is_deleted.is_(False),
+            )
+            .count()
         )
 
         message_count = (
             db.query(func.count(Message.id))
             .join(Conversation)
-            .filter(Conversation.user_id == user.id)
+            .filter(
+                Conversation.user_id == user.id,
+                Conversation.is_deleted.is_(False),
+            )
             .scalar()
             or 0
         )
@@ -583,7 +621,10 @@ async def list_users(
         token_sum = (
             db.query(func.sum(Message.input_tokens) + func.sum(Message.output_tokens))
             .join(Conversation)
-            .filter(Conversation.user_id == user.id)
+            .filter(
+                Conversation.user_id == user.id,
+                Conversation.is_deleted.is_(False),
+            )
             .scalar()
             or 0
         )
@@ -592,11 +633,14 @@ async def list_users(
         quota = db.query(UserQuota).filter(UserQuota.user_id == user.id).first()
         storage_mb = quota.storage_mb_used if quota else 0.0
 
-        # Get last activity
+        # Get last activity (exclude deleted conversations)
         last_activity = (
             db.query(func.max(Message.created_at))
             .join(Conversation)
-            .filter(Conversation.user_id == user.id)
+            .filter(
+                Conversation.user_id == user.id,
+                Conversation.is_deleted.is_(False),
+            )
             .scalar()
         )
 
@@ -668,7 +712,7 @@ async def get_user_detail(
         email=user.email,
         full_name=user.full_name,
         oauth_provider=user.oauth_provider,
-                oauth_provider_id=user.oauth_provider_id,
+        oauth_provider_id=user.oauth_provider_id,
         subscription_tier=user.subscription_tier,
         subscription_status=user.subscription_status,
         is_active=user.is_active,
@@ -727,7 +771,7 @@ async def update_user(
         email=user.email,
         full_name=user.full_name,
         oauth_provider=user.oauth_provider,
-                oauth_provider_id=user.oauth_provider_id,
+        oauth_provider_id=user.oauth_provider_id,
         subscription_tier=user.subscription_tier,
         subscription_status=user.subscription_status,
         is_active=user.is_active,
@@ -792,7 +836,7 @@ async def override_user_quota(
         email=user.email,
         full_name=user.full_name,
         oauth_provider=user.oauth_provider,
-                oauth_provider_id=user.oauth_provider_id,
+        oauth_provider_id=user.oauth_provider_id,
         subscription_tier=user.subscription_tier,
         subscription_status=user.subscription_status,
         is_active=user.is_active,
@@ -866,7 +910,9 @@ async def delete_user(
 
 @router.post("/quotas/recalculate", response_model=QuotaRecalculateResponse)
 async def recalculate_quotas(
-    user_id: Optional[UUID] = Query(None, description="Recalculate for specific user only"),
+    user_id: Optional[UUID] = Query(
+        None, description="Recalculate for specific user only"
+    ),
     db: Session = Depends(get_db),
     admin_user: User = Depends(get_admin_user),
 ):
@@ -898,17 +944,23 @@ async def recalculate_quotas(
         calculator = StorageCalculator(db)
         storage_breakdown = calculator.calculate_total_storage_mb(quota.user_id)
         disk_usage_mb = storage_service.get_storage_usage(quota.user_id)
-        actual_storage = disk_usage_mb + storage_breakdown["database_mb"] + storage_breakdown["vector_mb"]
+        actual_storage = (
+            disk_usage_mb
+            + storage_breakdown["database_mb"]
+            + storage_breakdown["vector_mb"]
+        )
 
         # Allow small differences (< 0.1 MB) to avoid excessive corrections
         if abs(float(quota.storage_mb_used) - actual_storage) > 0.1:
-            corrections.append({
-                "user_id": str(quota.user_id),
-                "user_email": user_email,
-                "field": "storage_mb_used",
-                "old_value": float(quota.storage_mb_used),
-                "new_value": round(actual_storage, 3),
-            })
+            corrections.append(
+                {
+                    "user_id": str(quota.user_id),
+                    "user_email": user_email,
+                    "field": "storage_mb_used",
+                    "old_value": float(quota.storage_mb_used),
+                    "new_value": round(actual_storage, 3),
+                }
+            )
             quota.storage_mb_used = Decimal(str(round(actual_storage, 3)))
 
         # Recalculate videos_used from active videos
@@ -923,13 +975,15 @@ async def recalculate_quotas(
         ) or 0
 
         if quota.videos_used != actual_videos:
-            corrections.append({
-                "user_id": str(quota.user_id),
-                "user_email": user_email,
-                "field": "videos_used",
-                "old_value": quota.videos_used,
-                "new_value": actual_videos,
-            })
+            corrections.append(
+                {
+                    "user_id": str(quota.user_id),
+                    "user_email": user_email,
+                    "field": "videos_used",
+                    "old_value": quota.videos_used,
+                    "new_value": actual_videos,
+                }
+            )
             quota.videos_used = actual_videos
 
         # Recalculate minutes_used from completed videos
@@ -945,13 +999,15 @@ async def recalculate_quotas(
         actual_minutes = actual_minutes / 60.0  # Convert to minutes
 
         if abs(float(quota.minutes_used) - actual_minutes) > 0.01:
-            corrections.append({
-                "user_id": str(quota.user_id),
-                "user_email": user_email,
-                "field": "minutes_used",
-                "old_value": float(quota.minutes_used),
-                "new_value": actual_minutes,
-            })
+            corrections.append(
+                {
+                    "user_id": str(quota.user_id),
+                    "user_email": user_email,
+                    "field": "minutes_used",
+                    "old_value": float(quota.minutes_used),
+                    "new_value": actual_minutes,
+                }
+            )
             quota.minutes_used = Decimal(str(actual_minutes))
 
     db.commit()
@@ -974,6 +1030,9 @@ async def get_qa_feed(
     search: Optional[str] = Query(None, description="Search question text"),
     start: Optional[datetime] = Query(None, description="Start datetime"),
     end: Optional[datetime] = Query(None, description="End datetime"),
+    include_deleted: bool = Query(
+        True, description="Include deleted conversations (default True for audit)"
+    ),
     db: Session = Depends(get_db),
     admin_user: User = Depends(get_admin_user),
 ):
@@ -988,6 +1047,9 @@ async def get_qa_feed(
         .join(User, Conversation.user_id == User.id)
         .filter(Message.role == "user")
     )
+
+    if not include_deleted:
+        query = query.filter(Conversation.is_deleted.is_(False))
 
     if user_id:
         query = query.filter(Conversation.user_id == user_id)
@@ -1006,10 +1068,7 @@ async def get_qa_feed(
     offset = (page - 1) * page_size
 
     questions = (
-        query.order_by(Message.created_at.desc())
-        .offset(offset)
-        .limit(page_size)
-        .all()
+        query.order_by(Message.created_at.desc()).offset(offset).limit(page_size).all()
     )
 
     items: List[QAFeedItem] = []
@@ -1099,7 +1158,9 @@ async def list_audit_messages(
     """
     Return paginated audit log events for chat monitoring.
     """
-    query = db.query(AdminAuditLog, User.email).outerjoin(User, AdminAuditLog.user_id == User.id)
+    query = db.query(AdminAuditLog, User.email).outerjoin(
+        User, AdminAuditLog.user_id == User.id
+    )
 
     if event_type:
         query = query.filter(AdminAuditLog.event_type == event_type)
@@ -1122,7 +1183,10 @@ async def list_audit_messages(
         )
     elif has_flags is False:
         query = query.filter(
-            or_(AdminAuditLog.flags.is_(None), func.cardinality(AdminAuditLog.flags) == 0)
+            or_(
+                AdminAuditLog.flags.is_(None),
+                func.cardinality(AdminAuditLog.flags) == 0,
+            )
         )
 
     total = query.count()
@@ -1172,6 +1236,9 @@ async def list_admin_conversations(
     user_id: Optional[UUID] = Query(None, description="Filter by user"),
     collection_id: Optional[UUID] = Query(None, description="Filter by collection"),
     search: Optional[str] = Query(None, description="Search conversation title"),
+    include_deleted: bool = Query(
+        True, description="Include deleted conversations (default True for audit)"
+    ),
     db: Session = Depends(get_db),
     admin_user: User = Depends(get_admin_user),
 ):
@@ -1181,6 +1248,9 @@ async def list_admin_conversations(
     query = db.query(Conversation, User.email).join(
         User, Conversation.user_id == User.id
     )
+
+    if not include_deleted:
+        query = query.filter(Conversation.is_deleted.is_(False))
 
     if user_id:
         query = query.filter(Conversation.user_id == user_id)
@@ -1211,6 +1281,8 @@ async def list_admin_conversations(
                 total_tokens=conversation.total_tokens_used or 0,
                 started_at=conversation.created_at,
                 last_message_at=conversation.last_message_at,
+                is_deleted=conversation.is_deleted,
+                deleted_at=conversation.deleted_at,
             )
         )
 
@@ -1279,6 +1351,8 @@ async def get_admin_conversation_detail(
         created_at=conversation.created_at,
         updated_at=conversation.updated_at,
         last_message_at=conversation.last_message_at,
+        is_deleted=conversation.is_deleted,
+        deleted_at=conversation.deleted_at,
         messages=timeline,
     )
 
@@ -1322,16 +1396,20 @@ async def get_content_overview(
         for video, email in recent_videos
     ]
 
-    total_collections = db.query(Collection).count()
+    total_collections = (
+        db.query(Collection).filter(Collection.is_deleted.is_(False)).count()
+    )
     with_videos = (
         db.query(func.count(func.distinct(Collection.id)))
         .join(Collection.collection_videos)
+        .filter(Collection.is_deleted.is_(False))
         .scalar()
         or 0
     )
     empty = max(total_collections - with_videos, 0)
     recent_created_rows = (
         db.query(Collection.id)
+        .filter(Collection.is_deleted.is_(False))
         .order_by(Collection.created_at.desc())
         .limit(10)
         .all()
@@ -1362,18 +1440,93 @@ async def get_admin_alerts(
     admin_user: User = Depends(get_admin_user),
 ):
     """
-    Placeholder alerts endpoint for admin review.
+    Check for heavy users exceeding cost thresholds.
 
-    Returns an empty list until alerting is implemented.
+    Queries paid users, counts messages/videos in last 30 days,
+    and flags users who exceed HEAVY_USER_THRESHOLDS from pricing.py.
     """
-    return AbuseAlertResponse(total=0, alerts=[])
+    from app.schemas.admin import AbuseAlert
+    from app.tasks.cleanup_tasks import _find_heavy_users
+
+    result = _find_heavy_users(db)
+
+    alerts = []
+    for hu in result["heavy_users"]:
+        severity = "high" if len(hu["breaches"]) >= 2 else "medium"
+        alerts.append(
+            AbuseAlert(
+                user_id=hu["user_id"],
+                user_email=hu["email"],
+                alert_type="heavy_usage",
+                severity=severity,
+                description=(
+                    f"{hu['tier'].title()} user exceeding thresholds: "
+                    f"{', '.join(hu['breaches'])}. "
+                    f"30d totals: {hu['messages_30d']} msgs, "
+                    f"{hu['videos_30d']} videos, {hu['storage_gb']}GB storage."
+                ),
+                detected_at=datetime.utcnow(),
+            )
+        )
+
+    return AbuseAlertResponse(total=len(alerts), alerts=alerts)
+
+
+@router.post("/videos/backfill-summaries")
+async def trigger_backfill_summaries(
+    batch_size: int = Query(20, ge=1, le=100, description="Videos per batch"),
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_admin_user),
+):
+    """
+    Trigger backfill of video summaries for two-level retrieval.
+
+    Generates summaries for completed videos that don't have one yet.
+    This enables the COVERAGE retrieval path in the two-level retriever,
+    so broad queries like "what are the themes across all videos?" can
+    use video summaries instead of falling back to limited chunk retrieval.
+
+    Admin only. Dispatches as a Celery task for background processing.
+    """
+    from app.tasks.video_tasks import backfill_video_summaries
+
+    # Count how many videos need summaries
+    missing_count = (
+        db.query(Video)
+        .filter(
+            Video.status == "completed",
+            Video.summary.is_(None),
+            Video.is_deleted.is_(False),
+        )
+        .count()
+    )
+
+    if missing_count == 0:
+        return {
+            "success": True,
+            "message": "All completed videos already have summaries",
+            "videos_needing_summaries": 0,
+        }
+
+    # Dispatch background task
+    task = backfill_video_summaries.delay(batch_size=batch_size)
+
+    return {
+        "success": True,
+        "message": f"Backfill task dispatched for up to {batch_size} videos",
+        "task_id": task.id,
+        "videos_needing_summaries": missing_count,
+        "batch_size": batch_size,
+    }
 
 
 @router.post("/backfill-facts/{conversation_id}")
 async def backfill_conversation_facts(
     conversation_id: UUID,
     start_turn: int = Query(1, ge=1, description="First turn to process (1-indexed)"),
-    end_turn: Optional[int] = Query(None, ge=1, description="Last turn to process (None = all)"),
+    end_turn: Optional[int] = Query(
+        None, ge=1, description="Last turn to process (None = all)"
+    ),
     dry_run: bool = Query(False, description="If true, log but don't save facts"),
     db: Session = Depends(get_db),
     admin_user: User = Depends(get_admin_user),
@@ -1389,7 +1542,9 @@ async def backfill_conversation_facts(
     from app.services.fact_extraction import backfill_historical_facts
 
     # Verify conversation exists
-    conversation = db.query(Conversation).filter(Conversation.id == conversation_id).first()
+    conversation = (
+        db.query(Conversation).filter(Conversation.id == conversation_id).first()
+    )
     if not conversation:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -1420,8 +1575,12 @@ async def backfill_conversation_facts(
 async def get_llm_usage(
     db: Session = Depends(get_db),
     admin_user: User = Depends(get_admin_user),
-    days: int = Query(default=30, ge=1, le=365, description="Number of days to look back"),
-    limit: int = Query(default=50, ge=1, le=500, description="Max recent events to return"),
+    days: int = Query(
+        default=30, ge=1, le=365, description="Number of days to look back"
+    ),
+    limit: int = Query(
+        default=50, ge=1, le=500, description="Max recent events to return"
+    ),
 ):
     """
     Get LLM usage statistics and cost tracking.
@@ -1434,6 +1593,7 @@ async def get_llm_usage(
         LLMUsageResponse,
         LLMUsageStats,
         LLMUsageByUser,
+        LLMUsageByCallType,
         LLMUsageItem,
     )
 
@@ -1472,7 +1632,9 @@ async def get_llm_usage(
 
     # Cache hit rate
     total_prompt_tokens = total_cache_hit + total_cache_miss
-    cache_hit_rate = total_cache_hit / total_prompt_tokens if total_prompt_tokens > 0 else 0.0
+    cache_hit_rate = (
+        total_cache_hit / total_prompt_tokens if total_prompt_tokens > 0 else 0.0
+    )
 
     # Requests by model
     model_counts: Dict[str, int] = {}
@@ -1480,8 +1642,12 @@ async def get_llm_usage(
         model_counts[e.model] = model_counts.get(e.model, 0) + 1
 
     # Average response time
-    response_times = [float(e.response_time_seconds) for e in events if e.response_time_seconds]
-    avg_response_time = sum(response_times) / len(response_times) if response_times else None
+    response_times = [
+        float(e.response_time_seconds) for e in events if e.response_time_seconds
+    ]
+    avg_response_time = (
+        sum(response_times) / len(response_times) if response_times else None
+    )
 
     stats = LLMUsageStats(
         total_input_tokens=total_input,
@@ -1493,7 +1659,9 @@ async def get_llm_usage(
         estimated_savings_usd=round(estimated_savings, 4),
         total_requests=len(events),
         requests_by_model=model_counts,
-        avg_response_time_seconds=round(avg_response_time, 3) if avg_response_time else None,
+        avg_response_time_seconds=round(avg_response_time, 3)
+        if avg_response_time
+        else None,
         cache_hit_rate=round(cache_hit_rate, 4),
         period_start=period_start,
         period_end=period_end,
@@ -1523,40 +1691,81 @@ async def get_llm_usage(
     user_email_map = {u.id: u.email for u in users}
 
     by_user = []
-    for uid, data in sorted(user_usage.items(), key=lambda x: x[1]["total_cost_usd"], reverse=True):
+    for uid, data in sorted(
+        user_usage.items(), key=lambda x: x[1]["total_cost_usd"], reverse=True
+    ):
         total_prompt = data["cache_hit_tokens"] + data["cache_miss_tokens"]
-        user_cache_rate = data["cache_hit_tokens"] / total_prompt if total_prompt > 0 else 0.0
-        by_user.append(LLMUsageByUser(
-            user_id=uid,
-            user_email=user_email_map.get(uid),
+        user_cache_rate = (
+            data["cache_hit_tokens"] / total_prompt if total_prompt > 0 else 0.0
+        )
+        by_user.append(
+            LLMUsageByUser(
+                user_id=uid,
+                user_email=user_email_map.get(uid),
+                total_requests=data["total_requests"],
+                total_tokens=data["total_tokens"],
+                total_cost_usd=round(data["total_cost_usd"], 4),
+                cache_hit_rate=round(user_cache_rate, 4),
+            )
+        )
+
+    # Per call_type breakdown
+    call_type_usage: Dict[str, dict] = {}
+    for e in events:
+        ct = e.call_type or "unknown"
+        if ct not in call_type_usage:
+            call_type_usage[ct] = {
+                "total_requests": 0,
+                "total_tokens": 0,
+                "total_cost_usd": 0.0,
+            }
+        call_type_usage[ct]["total_requests"] += 1
+        call_type_usage[ct]["total_tokens"] += e.total_tokens
+        call_type_usage[ct]["total_cost_usd"] += float(e.cost_usd)
+
+    by_call_type = [
+        LLMUsageByCallType(
+            call_type=ct,
             total_requests=data["total_requests"],
             total_tokens=data["total_tokens"],
             total_cost_usd=round(data["total_cost_usd"], 4),
-            cache_hit_rate=round(user_cache_rate, 4),
-        ))
+        )
+        for ct, data in sorted(
+            call_type_usage.items(),
+            key=lambda x: x[1]["total_cost_usd"],
+            reverse=True,
+        )
+    ]
 
     # Recent events
     recent_events = []
     for e in events[:limit]:
-        recent_events.append(LLMUsageItem(
-            id=e.id,
-            user_id=e.user_id,
-            user_email=user_email_map.get(e.user_id),
-            conversation_id=e.conversation_id,
-            model=e.model,
-            provider=e.provider,
-            input_tokens=e.input_tokens,
-            output_tokens=e.output_tokens,
-            total_tokens=e.total_tokens,
-            cache_hit_tokens=e.cache_hit_tokens,
-            cache_miss_tokens=e.cache_miss_tokens,
-            cost_usd=float(e.cost_usd),
-            response_time_seconds=float(e.response_time_seconds) if e.response_time_seconds else None,
-            created_at=e.created_at,
-        ))
+        recent_events.append(
+            LLMUsageItem(
+                id=e.id,
+                user_id=e.user_id,
+                user_email=user_email_map.get(e.user_id),
+                conversation_id=e.conversation_id,
+                call_type=e.call_type,
+                content_id=e.content_id,
+                model=e.model,
+                provider=e.provider,
+                input_tokens=e.input_tokens,
+                output_tokens=e.output_tokens,
+                total_tokens=e.total_tokens,
+                cache_hit_tokens=e.cache_hit_tokens,
+                cache_miss_tokens=e.cache_miss_tokens,
+                cost_usd=float(e.cost_usd),
+                response_time_seconds=float(e.response_time_seconds)
+                if e.response_time_seconds
+                else None,
+                created_at=e.created_at,
+            )
+        )
 
     return LLMUsageResponse(
         stats=stats,
         by_user=by_user,
+        by_call_type=by_call_type,
         recent_events=recent_events,
     )
