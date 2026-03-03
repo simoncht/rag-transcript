@@ -7,11 +7,12 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.core.admin_auth import get_admin_user
+from app.core.rate_limit import limiter
 from app.db.base import get_db
 from app.models import (
     User,
@@ -1473,7 +1474,9 @@ async def get_admin_alerts(
 
 
 @router.post("/videos/backfill-summaries")
+@limiter.limit("5/hour")
 async def trigger_backfill_summaries(
+    request: Request,
     batch_size: int = Query(20, ge=1, le=100, description="Videos per batch"),
     db: Session = Depends(get_db),
     admin_user: User = Depends(get_admin_user),
@@ -1521,8 +1524,10 @@ async def trigger_backfill_summaries(
 
 
 @router.post("/backfill-facts/{conversation_id}")
+@limiter.limit("10/hour")
 async def backfill_conversation_facts(
     conversation_id: UUID,
+    request: Request,
     start_turn: int = Query(1, ge=1, description="First turn to process (1-indexed)"),
     end_turn: Optional[int] = Query(
         None, ge=1, description="Last turn to process (None = all)"

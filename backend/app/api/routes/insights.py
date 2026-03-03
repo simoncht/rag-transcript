@@ -8,10 +8,11 @@ Endpoints:
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 
 from app.core.nextauth import get_current_user
+from app.core.rate_limit import limiter
 from app.db.base import get_db
 from app.models import Conversation, ConversationSource, User
 from app.schemas import ConversationInsightsResponse, TopicChunksResponse
@@ -22,8 +23,10 @@ router = APIRouter()
 
 
 @router.get("/{conversation_id}/insights", response_model=ConversationInsightsResponse)
+@limiter.limit("20/hour")
 async def get_conversation_insights(
     conversation_id: uuid.UUID,
+    request: Request,
     regenerate: bool = Query(
         False, description="Force regeneration even if cache exists"
     ),

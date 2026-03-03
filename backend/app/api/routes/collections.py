@@ -13,11 +13,12 @@ Endpoints:
 import logging
 import uuid
 from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 
 from app.core.nextauth import get_current_user
+from app.core.rate_limit import limiter
 from app.db.base import get_db
 from app.models import Collection, CollectionVideo, Video, User
 from app.schemas import (
@@ -590,8 +591,10 @@ async def get_clustered_themes(
 
 
 @router.post("/{collection_id}/themes/regenerate")
+@limiter.limit("5/hour")
 async def regenerate_themes(
     collection_id: uuid.UUID,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -634,8 +637,10 @@ async def regenerate_themes(
 
 
 @router.get("/{collection_id}/insights", response_model=CollectionInsightsResponse)
+@limiter.limit("20/hour")
 async def get_collection_insights(
     collection_id: uuid.UUID,
+    request: Request,
     refresh: bool = Query(False, description="Force regenerate insights"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),

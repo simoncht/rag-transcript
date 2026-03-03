@@ -100,9 +100,21 @@ async def stripe_webhook(request: Request):
                 # Log unhandled event type
                 logger.debug(f"Unhandled Stripe event type: {event_type}")
 
+        except (KeyError, ValueError, TypeError) as e:
+            # Permanent errors (bad data shape) — return 200 so Stripe doesn't retry
+            logger.error(
+                f"Permanent error processing Stripe webhook {event_type}: {str(e)}",
+                exc_info=True,
+            )
         except Exception as e:
-            logger.error(f"Error processing Stripe webhook {event_type}: {str(e)}", exc_info=True)
-            # Don't raise exception - return 200 to Stripe to avoid retries
-            # But log the error for investigation
+            # Transient errors (DB down, network issue) — return 500 so Stripe retries
+            logger.error(
+                f"Transient error processing Stripe webhook {event_type}: {str(e)}",
+                exc_info=True,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Webhook processing failed, please retry",
+            ) from e
 
     return {"status": "ok"}

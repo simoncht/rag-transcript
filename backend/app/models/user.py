@@ -33,6 +33,12 @@ class User(Base):
     )  # active, canceled, suspended
     stripe_customer_id = Column(String(255), nullable=True, unique=True)
 
+    # Notification & recommendation preferences (migration 015)
+    email_digest_enabled = Column(Boolean, default=True, nullable=True)
+    email_digest_frequency = Column(String(50), default="daily", nullable=True)
+    timezone = Column(String(50), default="UTC", nullable=True)
+    recommendations_enabled = Column(Boolean, default=True, nullable=True)
+
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(
