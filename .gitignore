@@ -93,6 +93,10 @@ dmypy.json
 # Ruff
 .ruff_cache/
 
+# Cookies (YouTube session cookies - never commit)
+cookies.txt
+*.cookies
+
 # Celery
 celerybeat-schedule
 celerybeat.pid

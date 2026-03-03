@@ -19,7 +19,6 @@ yt-dlp>=2025.11.12
 # Speech-to-Text
 faster-whisper==1.1.0
 torch==2.2.0
-torchaudio==2.2.0
 
 # Embeddings & ML
 sentence-transformers==2.3.1
@@ -50,14 +49,12 @@ pypdf>=4.0.0
 
 # Utilities
 python-jose[cryptography]==3.3.0
-passlib[bcrypt]==1.7.4
 python-dateutil==2.8.2
 
 # Testing
 pytest==7.4.4
 pytest-asyncio==0.23.3
 pytest-cov==4.1.0
-pytest-httpx==0.30.0
 
 # Development
 black==23.12.1

@@ -83,14 +83,14 @@ npm run type-check
 - Next.js 14 App Router with Shadcn UI components
 - **`app/`**: Page routes (videos, collections, conversations, admin)
 - **`components/`**: Reusable UI components
-- State management: Zustand + React Query
+- State management: React Query + React Context
 - Auth: NextAuth.js
   - Dev middleware treats `/videos`, `/collections`, `/conversations`, `/admin` as public in local mode; pages show sign-in CTAs when unauthenticated.
 
 ### Key Services
 | Service | Purpose |
 |---------|---------|
-| `chunking.py` | Semantic text chunking (512 token target, 80 overlap) |
+| `chunking.py` | Semantic text chunking (256 token target, 80 overlap) |
 | `enrichment.py` | LLM-generated summaries, titles, keywords per chunk |
 | `embeddings.py` | Vector embeddings (local sentence-transformers, OpenAI, or Azure) |
 | `llm_providers.py` | LLM abstraction (DeepSeek/OpenAI/Anthropic) with streaming |
@@ -173,8 +173,12 @@ Cleanup operations automatically credit freed storage back to user quota.
 **Configuration:**
 - `ENABLE_QUERY_EXPANSION=True` - Multi-query retrieval for better recall
 - `ENABLE_RERANKING=True` - Cross-encoder for precision
-- `RETRIEVAL_TOP_K=10` - Candidates per query variant
-- `RERANKING_TOP_K=5` - Final chunks after reranking
+- `ENABLE_RELEVANCE_GRADING=True` - Self-RAG: LLM grades chunk relevance
+- `ENABLE_HYDE=True` - HyDE: hypothetical document embeddings for coverage queries
+- `ENABLE_QUERY_REWRITING=True` - Rewrites follow-up questions using conversation history
+- `ENABLE_BM25_SEARCH=True` - BM25 hybrid search
+- `RETRIEVAL_TOP_K=20` - Candidates per query variant
+- `RERANKING_TOP_K=7` - Final chunks after reranking
 
 ### Database (PostgreSQL + pgvector)
 

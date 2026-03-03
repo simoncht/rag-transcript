@@ -1681,7 +1681,7 @@ async def send_message(
     except Exception as e:
         llm_time = time.time() - llm_start
         logger.error(f"[LLM Generation] Failed after {llm_time:.3f}s: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"LLM error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to generate response. Please try again.")
 
     # 8b. Validate citation markers (CIT-002) and extract used markers (CIT-001)
     _validate_citation_markers(assistant_content, len(top_chunks))
@@ -2676,7 +2676,7 @@ async def send_message_stream(
             logger.error(f"[Streaming] Error: {str(e)}")
             import traceback
             logger.error(traceback.format_exc())
-            yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
+            yield f"data: {json.dumps({'type': 'error', 'error': 'An error occurred while generating the response.'})}\n\n"
 
     return StreamingResponse(
         generate_stream(),

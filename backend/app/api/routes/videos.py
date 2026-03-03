@@ -34,6 +34,7 @@ from app.schemas import (
     VideoCancelRequest,
     VideoCancelResponse,
     CleanupSummary,
+    BulkUpdateTagsRequest,
     BulkCancelRequest,
     BulkCancelResponse,
     BulkCancelResultItem,
@@ -170,7 +171,8 @@ async def ingest_video(
         # Re-raise HTTP exceptions as-is (e.g., validation failures, quota errors)
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to ingest video: {str(e)}")
+        logger.error(f"Failed to ingest video: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to ingest video. Please try again later.")
 
 
 SORT_MAP = {
@@ -991,21 +993,14 @@ async def update_video_tags(
 @router.patch("/tags/bulk")
 async def bulk_update_tags(
     request: Request,
-    body: dict,
+    body: BulkUpdateTagsRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """
-    Bulk add/remove tags for multiple videos.
-
-    Body:
-        video_ids: list of video UUIDs
-        add_tags: list of tags to add
-        remove_tags: list of tags to remove
-    """
-    video_ids = body.get("video_ids", [])
-    add_tags = body.get("add_tags", [])
-    remove_tags = body.get("remove_tags", [])
+    """Bulk add/remove tags for multiple videos."""
+    video_ids = body.video_ids
+    add_tags = body.add_tags
+    remove_tags = body.remove_tags
 
     if not video_ids:
         raise HTTPException(status_code=400, detail="No videos specified")

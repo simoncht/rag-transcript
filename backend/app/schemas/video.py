@@ -206,6 +206,14 @@ class VideoCancelResponse(BaseModel):
         }
 
 
+class BulkUpdateTagsRequest(BaseModel):
+    """Request to bulk add/remove tags for multiple videos."""
+
+    video_ids: List[UUID] = Field(..., max_length=100, description="Video UUIDs to update")
+    add_tags: List[str] = Field(default=[], max_length=50, description="Tags to add")
+    remove_tags: List[str] = Field(default=[], max_length=50, description="Tags to remove")
+
+
 class BulkCancelRequest(BaseModel):
     """Request to cancel multiple videos."""
 

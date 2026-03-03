@@ -112,7 +112,7 @@ async def search_youtube(
         logger.error(f"YouTube search failed: {e}")
         raise HTTPException(
             status_code=500,
-            detail=f"Search failed: {str(e)}",
+            detail="Search failed. Please try again later.",
         )
 
     # Increment quota usage
