@@ -156,10 +156,10 @@ class TestFactExtractionService:
 
     # ==================== Test: Deduplication ====================
 
-    def test_deduplication_skips_existing_keys(
+    def test_deduplication_updates_existing_keys_with_new_values(
         self, service, mock_db, test_conversation, test_message
     ):
-        """Test that facts with existing keys are skipped."""
+        """Test that facts with existing keys are updated when values differ (MEM-004)."""
         # Mock existing facts
         existing_fact = ConversationFact(
             id="existing-fact-id",
@@ -169,16 +169,17 @@ class TestFactExtractionService:
             fact_value="Dr. Existing",
             source_turn=1,
             confidence_score=1.0,
+            importance=0.7,
         )
         mock_db.query.return_value.filter.return_value.all.return_value = [
             existing_fact
         ]
 
-        # Mock LLM response with duplicate key
+        # Mock LLM response with duplicate key but new value
         llm_response = LLMResponse(
             content=json.dumps(
                 [
-                    {"key": "instructor", "value": "Dr. New"},  # Duplicate
+                    {"key": "instructor", "value": "Dr. New"},  # Updated value
                     {"key": "topic", "value": "ML"},  # New
                 ]
             ),
@@ -194,10 +195,12 @@ class TestFactExtractionService:
                 user_query="Test",
             )
 
-        # Should only return the new fact
+        # Should return only the new fact (duplicate key was updated in-place)
         assert len(facts) == 1
         assert facts[0].fact_key == "topic"
         assert facts[0].fact_value == "ML"
+        # Existing fact should have been updated in-place
+        assert existing_fact.fact_value == "Dr. New"
 
     # ==================== Test: Edge Cases ====================
 
@@ -576,8 +579,8 @@ class TestFactDeduplication:
 
         assert len(deduplicated) == 2
 
-    def test_deduplicate_with_existing_facts(self, service, mock_db):
-        """Test deduplication removes facts with existing keys."""
+    def test_deduplicate_with_existing_facts_updates_values(self, service, mock_db):
+        """Test deduplication updates existing facts when values differ (MEM-004)."""
         existing_facts = [
             ConversationFact(
                 conversation_id="test-conv-id",
@@ -585,6 +588,7 @@ class TestFactDeduplication:
                 fact_key="key1",
                 fact_value="old_value",
                 source_turn=1,
+                importance=0.5,
             ),
         ]
 
@@ -592,9 +596,10 @@ class TestFactDeduplication:
             ConversationFact(
                 conversation_id="test-conv-id",
                 user_id="test-user-id",
-                fact_key="key1",  # Duplicate
+                fact_key="key1",  # Duplicate key, different value
                 fact_value="new_value",
                 source_turn=5,
+                importance=0.8,
             ),
             ConversationFact(
                 conversation_id="test-conv-id",
@@ -609,12 +614,16 @@ class TestFactDeduplication:
 
         deduplicated = service._deduplicate_facts(mock_db, "test-conv-id", new_facts)
 
-        # Should only keep the new key
+        # Should only return the genuinely new key
         assert len(deduplicated) == 1
         assert deduplicated[0].fact_key == "key2"
+        # Existing fact should have been updated in-place
+        assert existing_facts[0].fact_value == "new_value"
+        assert existing_facts[0].importance == 0.8
+        assert existing_facts[0].source_turn == 5
 
-    def test_deduplicate_all_duplicates(self, service, mock_db):
-        """Test deduplication when all new facts are duplicates."""
+    def test_deduplicate_all_duplicates_updates_values(self, service, mock_db):
+        """Test deduplication when all new facts have existing keys but different values (MEM-004)."""
         existing_facts = [
             ConversationFact(
                 conversation_id="test-conv-id",
@@ -622,6 +631,7 @@ class TestFactDeduplication:
                 fact_key="key1",
                 fact_value="value1",
                 source_turn=1,
+                importance=0.5,
             ),
         ]
 
@@ -629,9 +639,10 @@ class TestFactDeduplication:
             ConversationFact(
                 conversation_id="test-conv-id",
                 user_id="test-user-id",
-                fact_key="key1",  # Duplicate
+                fact_key="key1",  # Duplicate key, different value
                 fact_value="different_value",
                 source_turn=5,
+                importance=0.7,
             ),
         ]
 
@@ -639,8 +650,44 @@ class TestFactDeduplication:
 
         deduplicated = service._deduplicate_facts(mock_db, "test-conv-id", new_facts)
 
-        # Should return empty list
+        # No new facts to add (key already exists)
         assert len(deduplicated) == 0
+        # But existing fact should have been updated
+        assert existing_facts[0].fact_value == "different_value"
+        assert existing_facts[0].importance == 0.7
+
+    def test_deduplicate_same_value_not_updated(self, service, mock_db):
+        """Test deduplication skips update when values are identical."""
+        existing_facts = [
+            ConversationFact(
+                conversation_id="test-conv-id",
+                user_id="test-user-id",
+                fact_key="key1",
+                fact_value="same_value",
+                source_turn=1,
+                importance=0.5,
+            ),
+        ]
+
+        new_facts = [
+            ConversationFact(
+                conversation_id="test-conv-id",
+                user_id="test-user-id",
+                fact_key="key1",
+                fact_value="same_value",  # Same value
+                source_turn=5,
+                importance=0.7,
+            ),
+        ]
+
+        mock_db.query.return_value.filter.return_value.all.return_value = existing_facts
+
+        deduplicated = service._deduplicate_facts(mock_db, "test-conv-id", new_facts)
+
+        assert len(deduplicated) == 0
+        # Existing fact should NOT have been updated (same value)
+        assert existing_facts[0].importance == 0.5
+        assert existing_facts[0].source_turn == 1
 
 
 # ==================== Integration Tests ====================

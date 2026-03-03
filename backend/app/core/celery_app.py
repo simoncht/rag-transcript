@@ -24,6 +24,7 @@ celery_app = Celery(
         "app.tasks.cleanup_tasks",
         "app.tasks.discovery_tasks",
         "app.tasks.document_tasks",
+        "app.tasks.memory_tasks",
     ],
 )
 
@@ -51,6 +52,7 @@ celery_app.conf.task_routes = {
     "app.tasks.video_tasks.*": {"queue": "celery"},
     "app.tasks.cleanup_tasks.*": {"queue": "celery"},
     "app.tasks.document_tasks.*": {"queue": "celery"},
+    "app.tasks.memory_tasks.*": {"queue": "celery"},
 }
 
 # Beat schedule for periodic tasks
@@ -77,7 +79,7 @@ celery_app.conf.beat_schedule = {
     },
     # Video summary backfill (for two-level retrieval COVERAGE path)
     "backfill-video-summaries": {
-        "task": "backfill_video_summaries",
+        "task": "app.tasks.video_tasks.backfill_video_summaries",
         "schedule": crontab(minute=0, hour=4),  # Daily at 4:00 AM UTC
     },
     # Discovery tasks

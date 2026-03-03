@@ -177,14 +177,6 @@
         "manual": true
       },
       "prompt": ".claude/prompts/co-founder.md"
-    },
-    {
-      "name": "behavioral-contracts",
-      "description": "Full audit of all behavioral promises: memory, citations, accuracy, content parity. Subsumes conversation-quality, citation-accuracy, and content-parity checks.",
-      "trigger": {
-        "manual": true
-      },
-      "prompt": ".claude/prompts/behavioral-contracts.md"
     }
   ]
 }

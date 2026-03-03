@@ -879,7 +879,7 @@ def process_video_pipeline(video_id: str, youtube_url: str, user_id: str, job_id
         db.close()
 
 
-@celery_app.task(name="backfill_video_summaries")
+@celery_app.task
 def backfill_video_summaries(batch_size: int = 20):
     """
     Backfill summaries for completed videos that don't have one.

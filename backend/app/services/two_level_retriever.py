@@ -33,7 +33,7 @@ class RetrievalConfig:
 
     enable_query_expansion: bool = True
     enable_bm25: bool = True
-    enable_hyde: bool = False
+    enable_hyde: bool = True
     enable_reranking: bool = True
     enable_relevance_grading: bool = False
     retrieval_top_k: int = 20
@@ -195,12 +195,14 @@ class TwoLevelRetriever:
                 return self._retrieve_chunks(
                     db, query, video_ids, user_id, num_videos, mode, config,
                     use_video_guarantee=True, is_coverage_fallback=True,
+                    is_coverage_query=True,
                 )
 
         elif intent.intent == QueryIntent.PRECISION:
             return self._retrieve_chunks(
                 db, query, video_ids, user_id, num_videos, mode, config,
                 use_video_guarantee=False, is_coverage_fallback=False,
+                is_coverage_query=False,
             )
 
         else:  # HYBRID
@@ -315,6 +317,7 @@ class TwoLevelRetriever:
         config: RetrievalConfig,
         use_video_guarantee: bool = False,
         is_coverage_fallback: bool = False,
+        is_coverage_query: bool = False,
     ) -> RetrievalResult:
         """
         Full chunk retrieval pipeline.
@@ -370,8 +373,8 @@ class TwoLevelRetriever:
             f"from {len(query_variants)} queries in {embedding_time:.3f}s"
         )
 
-        # Stage 3: HyDE for coverage queries
-        if config.enable_hyde and is_coverage_fallback:
+        # Stage 3: HyDE for coverage/broad queries
+        if config.enable_hyde and is_coverage_query:
             scored_chunks = self._run_hyde(
                 query, scored_chunks, all_scored_chunks,
                 user_id, video_ids, diversity, config,
@@ -473,7 +476,7 @@ class TwoLevelRetriever:
                 "pipeline": {
                     "query_expansion": config.enable_query_expansion,
                     "bm25": config.enable_bm25,
-                    "hyde": config.enable_hyde and is_coverage_fallback,
+                    "hyde": config.enable_hyde and is_coverage_query,
                     "reranking": config.enable_reranking,
                     "relevance_grading": config.enable_relevance_grading,
                 },
@@ -502,6 +505,7 @@ class TwoLevelRetriever:
         chunk_result = self._retrieve_chunks(
             db, query, video_ids, user_id, num_videos, mode, config,
             use_video_guarantee=False, is_coverage_fallback=False,
+            is_coverage_query=True,
         )
 
         # Merge video maps

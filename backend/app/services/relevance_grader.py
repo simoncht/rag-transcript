@@ -7,7 +7,6 @@ After retrieval + reranking, grades each chunk as:
 When context is weak (< 50% RELEVANT), applies corrective strategies:
   - REFORMULATE: re-run retrieval with LLM-reformulated query
   - EXPAND_SCOPE: increase top_k, relax diversity
-  - SUMMARY_FALLBACK: use video summaries instead of chunks
   - INSUFFICIENT: honest "not enough context" response
 """
 import json
@@ -31,7 +30,6 @@ class CorrectiveAction(str, Enum):
     NONE = "NONE"
     REFORMULATE = "REFORMULATE"
     EXPAND_SCOPE = "EXPAND_SCOPE"
-    SUMMARY_FALLBACK = "SUMMARY_FALLBACK"
     INSUFFICIENT = "INSUFFICIENT"
 
 

@@ -27,7 +27,18 @@ Detect which mode to operate in based on context:
    - Are there better alternatives or complementary techniques?
    - What tradeoffs should be considered (latency, cost, complexity)?
 
-### Mode 2: Full Audit (invoked via `/rag-architect`)
+### Mode 2: Code-Level Review
+
+**When:** RAG pipeline files have been edited (proactive trigger fires after save).
+
+**Action:**
+1. Read the changed file(s)
+2. Run through the **Code Review Checklist** (Section B) for applicable categories
+3. Produce a brief report: critical issues (must fix), warnings (should fix), and verdict (APPROVE / REQUEST_CHANGES)
+
+If no issues found, output "APPROVE — no RAG-specific issues detected" with a one-line summary.
+
+### Mode 3: Full Audit (invoked via `/rag-architect`)
 
 **Action:**
 1. Read `.claude/references/rag-best-practices.md` for the technique catalog
@@ -105,6 +116,45 @@ For each stage, evaluate: current implementation quality, alignment with best pr
 ### Anti-Patterns Detected
 - [Any concerning patterns found]
 ```
+
+## Section B: Code Review Checklist
+
+When reviewing code changes (Mode 2), check applicable categories:
+
+### Embedding & Vector Issues
+- BGE query prefix: queries must use `"Represent this sentence: "` prefix, documents must NOT
+- Embedding dimension consistency: model dimensions must match Qdrant collection config
+- Batch size: embedding batches should not exceed model's max batch (typically 32-64)
+- Normalization: cosine similarity requires normalized vectors
+
+### Chunking Issues
+- Chunk size within model's max sequence length (512 tokens for BGE-base)
+- Overlap doesn't create duplicate content that inflates relevance scores
+- Metadata preserved through chunking (timestamps, speakers, chapter titles)
+
+### Retrieval Issues
+- MMR diversity factor appropriate for query type (0.3-0.5 single video, 0.5-0.7 multi-video)
+- Score thresholds not too aggressive (0.50 primary, 0.15 fallback)
+- Deduplication window reasonable (30s buckets for same-video chunks)
+- Top-K values balanced (too low = missed context, too high = noise)
+
+### Prompt & Generation Issues
+- System prompt doesn't leak internal metadata to users
+- Citation markers `[N]` properly mapped to chunk indices
+- Context window not exceeded (count tokens, not characters)
+- DeepSeek reasoner `reasoning_content` NOT included in message history (causes 400 errors)
+- Conversation memory facts injected only when threshold met
+
+### Performance Issues
+- No synchronous embedding calls in request path (should be async or batched)
+- DeepSeek cache optimization: static system+transcript prefix, varying chunk suffix
+- Query expansion adds ~1s — verify it's not called redundantly
+- Reranker model loaded once, not per-request
+
+### Security Issues
+- User input not injected raw into LLM prompts (prompt injection risk)
+- Chunk content sanitized before display (XSS in citations)
+- Rate limiting on retrieval endpoints
 
 ## Anti-Patterns to Flag
 

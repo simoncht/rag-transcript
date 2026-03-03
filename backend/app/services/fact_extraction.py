@@ -29,34 +29,47 @@ A: {assistant_response}
 
 Return JSON array with importance (0.0-1.0) and category for each fact:
 [
-  {{"key": "instructor", "value": "Bashar", "importance": 0.95, "category": "identity"}},
-  {{"key": "topic", "value": "consciousness expansion", "importance": 0.7, "category": "topic"}},
-  {{"key": "frequency", "value": "333 kHz", "importance": 0.6, "category": "topic"}}
+  {{"key": "user_medication", "value": "Taking sertraline (SSRI) 50mg", "importance": 0.95, "category": "identity"}},
+  {{"key": "user_age", "value": "45 years old", "importance": 0.90, "category": "identity"}},
+  {{"key": "family_alzheimers", "value": "Mother diagnosed at age 65", "importance": 0.90, "category": "identity"}},
+  {{"key": "topic_mechanism", "value": "MB enhances ATP production via complex IV", "importance": 0.7, "category": "topic"}}
 ]
 
 IMPORTANCE SCORING (critical for memory retrieval):
-- 0.9-1.0: Core identity facts (names, roles, relationships) - MOST IMPORTANT
+- 0.9-1.0: User personal facts AND source identity facts - MOST IMPORTANT
 - 0.7-0.9: Key concepts that define the subject matter
 - 0.5-0.7: Supporting details and context
 - 0.3-0.5: Tangential information
 - 0.0-0.3: Ephemeral/session-specific details
 
 CATEGORIES (for scope separation):
-- "identity": Names, roles, relationships (e.g., "Bashar is a channeled entity")
-- "topic": Core concepts, subjects (e.g., "discusses parallel realities")
-- "preference": User preferences, opinions
+- "identity": ANY personal fact about the USER or the source content creator. This includes:
+  * User medications, dosages, supplements (e.g., "user takes sertraline 50mg")
+  * User health conditions and family medical history (e.g., "family history of Alzheimer's")
+  * User age, weight, biometrics (e.g., "user is 45 years old")
+  * User daily routines and habits (e.g., "takes MB sublingually in the morning")
+  * User's family members and their conditions (e.g., "cousin has long COVID")
+  * Source creator names, roles, credentials (e.g., "Bashar is a channeled entity")
+- "preference": What the user wants, prefers, is concerned about, or their lifestyle choices:
+  * Dietary patterns (e.g., "practices 16:8 intermittent fasting")
+  * Exercise routines (e.g., "runs 5K three times a week")
+  * Goals and motivations (e.g., "interested in neuroprotection")
+  * Concerns and fears (e.g., "worried about SSRI interaction")
+- "topic": Information about the SUBJECT MATTER, not the user (e.g., "MB is a reversible MAOI")
 - "session": Current session context only
 - "ephemeral": Single-use facts
 
 EXTRACTION RULES:
-- Prioritize identity facts (who/what the source is)
-- Extract names (people, entities, organizations)
-- Extract key concepts and frameworks
+- ALWAYS extract user personal details as "identity" (medications, age, family, health)
+- ALWAYS extract user lifestyle as "preference" (diet, exercise, fasting, routines)
+- Extract source creator names and roles as "identity"
+- Extract subject matter knowledge as "topic"
 - Use short, descriptive keys (lowercase, underscore-separated)
+- Prefix user facts with "user_" (e.g., "user_medication", "user_age", "user_fasting")
 - Rate importance honestly - not everything is 0.9+
 - Return empty array if no significant facts
 
-IMPORTANT: Identity facts should almost always have importance >= 0.85"""
+IMPORTANT: User personal facts (identity) and user lifestyle (preference) should have importance >= 0.85"""
 
 
 class FactExtractionService:
@@ -246,10 +259,17 @@ class FactExtractionService:
         """
         identity_patterns = [
             "instructor", "teacher", "speaker", "host", "channeler", "entity",
-            "source", "author", "creator", "name", "person", "who", "role"
+            "source", "author", "creator", "name", "person", "who", "role",
+            "user_medication", "user_age", "user_weight", "user_health",
+            "user_condition", "user_dose", "user_supplement", "family_",
+            "medication", "dosage", "diagnosis", "blood_pressure",
+            "user_routine", "user_takes", "user_using",
         ]
         preference_patterns = [
-            "preference", "favorite", "likes", "dislikes", "wants", "user_"
+            "preference", "favorite", "likes", "dislikes", "wants",
+            "user_goal", "user_concern", "user_interest", "user_focus",
+            "fasting", "exercise", "diet", "lifestyle", "routine",
+            "worried", "concern", "motivation",
         ]
         session_patterns = [
             "current", "today", "now", "this_session", "recent"
@@ -310,17 +330,27 @@ class FactExtractionService:
 
         existing_keys = {fact.fact_key: fact for fact in existing_facts}
 
-        # Filter out duplicates against existing facts
+        # Filter out duplicates against existing facts, updating values when changed
         deduplicated = []
         for fact in deduplicated_new:
             if fact.fact_key not in existing_keys:
                 deduplicated.append(fact)
             else:
-                # Key exists - skip (we could update value here if needed)
-                logger.debug(
-                    f"Skipping duplicate fact key: {fact.fact_key} "
-                    f"(already exists with value: {existing_keys[fact.fact_key].fact_value})"
-                )
+                existing = existing_keys[fact.fact_key]
+                if existing.fact_value != fact.fact_value:
+                    # MEM-004: Update existing fact value instead of silently dropping
+                    existing.fact_value = fact.fact_value
+                    existing.importance = max(existing.importance, fact.importance)
+                    existing.source_turn = fact.source_turn
+                    logger.info(
+                        f"Updated fact {fact.fact_key}: "
+                        f"'{existing.fact_value}' -> '{fact.fact_value}'"
+                    )
+                else:
+                    logger.debug(
+                        f"Skipping duplicate fact key: {fact.fact_key} "
+                        f"(already exists with same value)"
+                    )
 
         return deduplicated
 

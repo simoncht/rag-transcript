@@ -7,7 +7,7 @@ Endpoints:
 - GET /conversations/{conversation_id} - Get conversation details
 - PATCH /conversations/{conversation_id} - Update conversation
 - DELETE /conversations/{conversation_id} - Delete conversation
-- POST /conversations/{conversation_id}/messages - Send message (TODO: Phase 2)
+- POST /conversations/{conversation_id}/messages - Send message
 """
 import logging
 import re
@@ -1288,7 +1288,7 @@ async def send_message(
 
     # Classify query intent using LLM-based classifier
     from app.services.intent_classifier import IntentClassifier
-    intent_classifier = IntentClassifier(usage_collector=usage_collector)
+    intent_classifier = IntentClassifier()
     intent_classification = intent_classifier.classify_sync(
         query=message_request.message,
         mode=message_request.mode,
@@ -1488,7 +1488,7 @@ async def send_message(
         scored_facts = select_facts_multifactor(
             db=db,
             conversation_id=conversation_id,
-            limit=15,  # Increased from 10 for better coverage
+            limit=25,  # Increased from 15 for better personal fact coverage
             user_query=message_request.message,
             embedding_service=_emb_svc,  # Enable query-aware retrieval
         )
@@ -1887,30 +1887,22 @@ async def send_message(
         chunks_retrieved=len(chunk_refs_response),
     )
 
-    # NEW: Phase 2 - Extract facts from conversation turn
+    # Phase 2 - Extract facts from conversation turn (background task)
     try:
-        from app.services.fact_extraction import FactExtractionService
+        from app.tasks.memory_tasks import extract_facts_from_turn
 
-        fact_service = FactExtractionService(usage_collector=usage_collector)
-        extracted_facts = fact_service.extract_facts(
-            db=db,
-            message=assistant_message,
-            conversation=conversation,
+        extract_facts_from_turn.delay(
+            conversation_id=str(conversation_id),
+            message_id=str(assistant_message.id),
             user_query=message_request.message,
         )
-
-        # Save facts to database
-        for fact in extracted_facts:
-            db.add(fact)
-
-        if extracted_facts:
-            db.commit()
-            logger.info(
-                f"Saved {len(extracted_facts)} facts for conversation {conversation_id}"
-            )
+        logger.info(
+            f"[FactTask] Dispatched background fact extraction for "
+            f"conversation {conversation_id}"
+        )
 
     except Exception as e:
-        logger.warning(f"Fact extraction failed: {e}")
+        logger.warning(f"Failed to dispatch fact extraction task: {e}")
         # Continue without facts (graceful degradation)
 
     # Flush any remaining usage events (e.g. from fact extraction)
@@ -2035,7 +2027,7 @@ async def send_message_stream(
 
     # Classify query intent
     from app.services.intent_classifier import IntentClassifier
-    intent_classifier = IntentClassifier(usage_collector=usage_collector)
+    intent_classifier = IntentClassifier()
     intent_classification = intent_classifier.classify_sync(
         query=message_request.message,
         mode=message_request.mode,
@@ -2608,6 +2600,27 @@ async def send_message_stream(
                         logger.info(
                             f"[Stream Facts] Saved {new_facts_count} facts for conversation {_conv_id}"
                         )
+
+                    # MEM-003: Inline consolidation when fact count exceeds threshold
+                    from app.models.conversation_fact import ConversationFact as CF
+                    from sqlalchemy import func as sqlfunc
+
+                    fact_count = (
+                        persist_db.query(sqlfunc.count(CF.id))
+                        .filter(CF.conversation_id == _conv_id)
+                        .scalar()
+                    )
+                    if fact_count > 50:  # MAX_FACTS_PER_CONVERSATION
+                        from app.services.memory_consolidation import memory_consolidation_service
+
+                        logger.info(
+                            f"[Stream Facts] Fact count ({fact_count}) exceeds threshold, "
+                            f"running inline consolidation for {_conv_id}"
+                        )
+                        memory_consolidation_service.consolidate_conversation(
+                            persist_db, str(_conv_id)
+                        )
+
                 except Exception as e:
                     logger.warning(f"[Stream Facts] Fact extraction failed: {e}")
 

@@ -12,8 +12,8 @@ Machine-readable list of behavioral promises the system makes to users. Each con
 |----|---------|----------------|------------|
 | MEM-001 | No memory dead zone: fact injection threshold <= history limit | `conversations.py:1472` threshold `>= 10` (was 15), history `.limit(10)` at `conversations.py:1262` | **FIXED.** Threshold lowered to 10 to match history limit. Facts are extracted every turn unconditionally; threshold only gates injection into prompt. |
 | MEM-002 | Identity facts survive indefinitely | `memory_consolidation.py:24-28` identity skip + `memory_scoring.py:38-44` category priority 1.0 | Identity facts from turn 1 still present at turn 100 — consolidation must not prune identity-category facts |
-| MEM-003 | Consolidation runs during active conversations when fact count > threshold | `memory_consolidation.py` only runs for stale convos (24h inactive via beat task) | Assert consolidation triggered inline when facts > `MAX_FACTS_PER_CONVERSATION` (currently 50) |
-| MEM-004 | Fact values merge on update (not silently dropped) | `fact_extraction.py` dedup checks key only | When fact "speaker=X" is updated to "speaker=X Y", new value replaces old — not skipped as duplicate |
+| MEM-003 | Consolidation runs during active conversations when fact count > threshold | `memory_tasks.py:85-100` inline check after extraction; `conversations.py:2603-2617` streaming inline check | **FIXED.** Both non-streaming (Celery task) and streaming paths check fact count after extraction and run `consolidate_conversation()` when count > 50. |
+| MEM-004 | Fact values merge on update (not silently dropped) | `fact_extraction.py:336-348` updates existing fact value when key matches but value differs | **FIXED.** `_deduplicate_facts()` now compares values on key collision. When values differ, updates `fact_value`, `importance`, and `source_turn` instead of skipping. |
 
 ---
 
