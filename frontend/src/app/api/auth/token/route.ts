@@ -16,10 +16,7 @@ export async function GET(request: NextRequest) {
     console.log("[Token API] Forwarding cookies to session endpoint")
 
     // Fetch session from our own session endpoint
-    // Use localhost for internal server-to-server calls to avoid SSL issues in production
-    const baseUrl = process.env.NODE_ENV === 'production'
-      ? `http://localhost:${process.env.PORT || 3000}`
-      : request.nextUrl.origin
+    const baseUrl = process.env.NEXTAUTH_URL || request.nextUrl.origin
 
     const sessionResponse = await fetch(`${baseUrl}/api/auth/session`, {
       headers: {

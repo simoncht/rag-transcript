@@ -4,11 +4,10 @@ import { cookies } from "next/headers";
 
 export const dynamic = "force-dynamic";
 
-// Server-side URL: inside Docker, backend is at "app:8000", not "localhost:8000"
+// Server-side URL: inside Docker/Railway, backend uses internal networking
 const BACKEND_INTERNAL_URL =
   process.env.BACKEND_INTERNAL_URL ||
-  process.env.NEXT_PUBLIC_API_URL ||
-  "http://localhost:8000";
+  process.env.NEXT_PUBLIC_API_URL;
 
 export async function GET(
   request: NextRequest,
@@ -24,10 +23,8 @@ export async function GET(
       .map((c) => `${c.name}=${c.value}`)
       .join("; ");
 
-    const baseUrl =
-      process.env.NODE_ENV === "production"
-        ? `http://localhost:${process.env.PORT || 3000}`
-        : request.nextUrl.origin;
+    // Server-to-server session call: use internal URL or localhost
+    const baseUrl = process.env.NEXTAUTH_URL || request.nextUrl.origin;
 
     const sessionResponse = await fetch(`${baseUrl}/api/auth/session`, {
       headers: { Cookie: cookieHeader },

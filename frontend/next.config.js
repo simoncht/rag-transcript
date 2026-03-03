@@ -3,7 +3,7 @@ const nextConfig = {
   reactStrictMode: true,
   optimizeFonts: false,
   env: {
-    NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000',
+    NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL,
   },
   webpack: (config, { isServer }) => {
     // Work around an occasional Windows dev/build mismatch where the server runtime
@@ -17,11 +17,12 @@ const nextConfig = {
     return config;
   },
   async rewrites() {
+    const backendUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
     return [
       {
         // Proxy API requests to backend, but exclude NextAuth routes
         source: '/api/v1/:path*',
-        destination: 'http://localhost:8000/api/v1/:path*',
+        destination: `${backendUrl}/api/v1/:path*`,
       },
     ];
   },
