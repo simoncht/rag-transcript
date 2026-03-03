@@ -1128,7 +1128,7 @@ export interface Notification {
 
 export interface NotificationListResponse {
   total: number;
-  unread: number;
+  unread_count: number;
   notifications: Notification[];
 }
 

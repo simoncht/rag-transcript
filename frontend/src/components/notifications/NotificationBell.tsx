@@ -89,7 +89,7 @@ export function NotificationBell() {
     [dismissMutation]
   );
 
-  const unreadCount = unreadData?.count ?? 0;
+  const unreadCount = unreadData?.unread_count ?? 0;
   const notifications = notificationsData?.notifications ?? [];
 
   if (!canFetch) {
