@@ -57,7 +57,7 @@ function ChatPageContent() {
   // Fetch completed videos
   const { data: videosData, isLoading: videosLoading } = useQuery({
     queryKey: ["videos-completed"],
-    queryFn: () => videosApi.list(0, 200, "completed"),
+    queryFn: () => videosApi.list(0, 100, "completed"),
     enabled: canFetch,
     staleTime: 60 * 1000,
   });
@@ -65,7 +65,7 @@ function ChatPageContent() {
   // Fetch completed documents
   const { data: documentsData, isLoading: documentsLoading } = useQuery({
     queryKey: ["content-completed"],
-    queryFn: () => contentApi.list(0, 200, undefined, "completed"),
+    queryFn: () => contentApi.list(0, 100, undefined, "completed"),
     enabled: canFetch,
     staleTime: 60 * 1000,
   });
