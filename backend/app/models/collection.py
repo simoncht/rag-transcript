@@ -109,7 +109,7 @@ class CollectionVideo(Base):
 
 
 class CollectionMember(Base):
-    """Collection sharing permissions (for Phase 4)."""
+    """Collection sharing permissions."""
 
     __tablename__ = "collection_members"
 

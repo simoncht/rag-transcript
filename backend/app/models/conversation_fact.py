@@ -66,7 +66,7 @@ class ConversationFact(Base):
     source_turn = Column(Integer, nullable=False)
     confidence_score = Column(Float, nullable=False, default=1.0)
 
-    # NEW: Multi-factor scoring fields (Phase 2 enhancement)
+    # Multi-factor scoring fields
     # LLM-rated importance (0.0-1.0): identity facts get 0.9+, ephemeral get 0.3-
     importance = Column(Float, nullable=False, default=0.5)
 

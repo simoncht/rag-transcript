@@ -1,10 +1,8 @@
 """
 Theme aggregation and clustering service for collections.
 
-Phase 2: Aggregates key_topics from videos, ranks by frequency,
-         caches in Collection.meta JSONB field.
-Phase 4: Embeds video summaries, clusters with k-means,
-         generates LLM theme labels per cluster.
+Aggregates key_topics from videos, ranks by frequency, caches in Collection.meta JSONB field.
+Also embeds video summaries, clusters with k-means, and generates LLM theme labels per cluster.
 """
 import json
 import logging

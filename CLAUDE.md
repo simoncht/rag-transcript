@@ -94,13 +94,24 @@ npm run type-check
 | `enrichment.py` | LLM-generated summaries, titles, keywords per chunk |
 | `embeddings.py` | Vector embeddings (local sentence-transformers, OpenAI, or Azure) |
 | `llm_providers.py` | LLM abstraction (DeepSeek/OpenAI/Anthropic) with streaming |
-| `vector_store.py` | Qdrant integration for similarity search |
+| `vector_store.py` | Qdrant integration for similarity search + MMR diversity |
+| `two_level_retriever.py` | Intent-based retrieval: routes to summaries (COVERAGE) or chunks (SPECIFIC) |
+| `intent_classifier.py` | Classifies queries as COVERAGE, SPECIFIC, or HYBRID via regex |
+| `query_expansion.py` | Multi-query retrieval - generates 2-3 query variants for better recall |
+| `query_rewriter.py` | Rewrites follow-up questions using conversation history |
+| `reranker.py` | Cross-encoder reranking (`bge-reranker-base`, 110M params) |
+| `relevance_grader.py` | Self-RAG: LLM grades chunk relevance, triggers REFORMULATE/EXPAND actions |
+| `hyde.py` | Hypothetical Document Embeddings for abstract/coverage queries |
+| `bm25_search.py` | BM25 sparse search for hybrid retrieval |
+| `video_summarizer.py` | Generates video-level summaries for two-level retrieval |
 | `transcription.py` | Whisper STT with timestamps |
 | `youtube.py` | yt-dlp video download and metadata extraction |
-| `query_expansion.py` | Multi-query retrieval - generates 2-3 query variants for 20-30% better recall |
-| `reranker.py` | Cross-encoder reranking for improved precision |
 | `fact_extraction.py` | Conversation memory - extracts facts after 15+ message turns |
+| `memory_consolidation.py` | Deduplicates and consolidates conversation facts |
+| `followup_questions.py` | Generates follow-up question suggestions after responses |
 | `insights.py` | Generates conversation summaries and key points |
+| `theme_service.py` | Extracts and clusters themes from video collections |
+| `discovery_service.py` | Content discovery and recommendation engine |
 | `rate_limit.py` | Shared SlowAPI limiter to avoid circular imports across routers |
 | `job_cancellation.py` | Cancel video processing - revoke Celery tasks, cleanup partial data |
 | `storage_calculator.py` | Comprehensive storage calculation (disk + database + vectors) for billing |
@@ -122,12 +133,20 @@ Video status flow: `pending → downloading → transcribing → chunking → en
 - **Cleanup service:** `backend/app/services/job_cancellation.py` - revokes Celery tasks, deletes partial audio/transcript files, removes chunks and vectors
 - **Cancellation checkpoints:** Tasks check for canceled status between pipeline stages to stop gracefully
 
-### Scheduled Cleanup Tasks (Celery Beat)
+### Scheduled Tasks (Celery Beat)
 | Task | Schedule | Purpose |
 |------|----------|---------|
 | `cleanup_stale_videos` | Hourly (:00) | Cancels videos stuck in pending/downloading >24h |
 | `cleanup_orphaned_files` | Every 6h (:30) | Removes orphan audio/transcript files without DB records |
 | `reconcile_storage_quotas` | Daily (3:15 AM) | Fixes quota drift by recalculating actual storage |
+| `consolidate_conversation_memory` | Daily (4:45 AM) | Deduplicates and consolidates conversation facts |
+| `check_heavy_users` | Every 6h (:45) | Monitors high-usage users for quota enforcement |
+| `backfill_video_summaries` | Daily (4:00 AM) | Generates missing video summaries for two-level retrieval |
+| `check_discovery_sources` | Hourly (:15) | Checks discovery sources for new content |
+| `cleanup_expired_discoveries` | Daily (5:00 AM) | Removes expired discovery items |
+| `generate_recommendations` | Mondays (8:00 AM) | Generates weekly content recommendations |
+| `send_notification_digests` (daily) | Daily (9:00 AM) | Sends daily email digests |
+| `send_notification_digests` (weekly) | Mondays (9:30 AM) | Sends weekly email digests |
 
 Configured in `backend/app/core/celery_app.py` beat_schedule.
 
@@ -187,7 +206,7 @@ Cleanup operations automatically credit freed storage back to user quota.
 **Key relationships:**
 - `conversation_sources` links conversations to videos with `is_selected` flag for filtering
 - `message_chunk_references` tracks citations with relevance scores
-- `conversation_facts` stores extracted facts for memory (Phase 2 feature)
+- `conversation_facts` stores extracted facts for conversation memory
 
 **Migrations:** Keep filenames ordered in `backend/alembic/versions/` (e.g., `006_add_conversation_insights.py`).
 
@@ -205,17 +224,27 @@ Cleanup operations automatically credit freed storage back to user quota.
 
 ## Important Implementation Details
 
-### Citation System (Phase 1 Complete)
+### Citation System
 - Citations include metadata: channel name, chapter title, speakers (when available)
 - Citation badges are inline with expandable details
 - Jump URLs navigate to exact YouTube timestamp
 - Located in `frontend/src/components/shared/CitationBadge.tsx`
 
-### Conversation Memory (Phase 2 Complete)
+### Conversation Memory
 - After 15+ messages, system extracts facts using LLM
 - Facts stored in `conversation_facts` table with confidence scores
 - Facts injected into system prompt for context continuity
+- Consolidation task deduplicates facts daily
 - Service: `backend/app/services/fact_extraction.py`
+
+### Two-Level Hierarchical Retrieval
+For large collections, chunk-level retrieval alone has coverage limitations. The system uses intent-based routing:
+- **COVERAGE queries** ("summarize", "what topics"): Routes to video summaries first, falls back to chunks
+- **SPECIFIC queries** ("what did X say about Y"): Routes directly to chunk retrieval
+- **HYBRID queries**: Retrieves both summaries and chunks
+- Video summaries stored in `videos.summary` and `videos.key_topics` columns
+- Backfill task generates missing summaries daily (4:00 AM)
+- Service: `backend/app/services/two_level_retriever.py`
 
 ### Admin Console & Auth Elevation
 - Admin API: `backend/app/api/routes/admin.py` (dashboard stats, user list/search/filter, user detail, subscription/status updates, quota overrides). Protected by `get_admin_user` requiring `is_superuser=True`.
@@ -282,18 +311,7 @@ Before editing memory, citations, or fact extraction behavior, read `.claude/ref
 
 ## Future Enhancements (Planned)
 
-### Two-Level Hierarchical Summarization
-For large collections (50+ videos), current chunk-level retrieval has coverage limitations.
-**Planned approach:** LlamaIndex-style two-level hierarchy:
-- Level 1: Video summaries (for "summarize these 100 videos" queries)
-- Level 2: Chunks (for specific detail queries)
-
-**Implementation requires:**
-1. Add `summary`, `key_topics` columns to `videos` table
-2. Generate video-level summary at end of processing pipeline
-3. Query routing logic to detect collection-level vs specific queries
-
-### RAPTOR (Future - When Multi-Content Support Added)
+### RAPTOR (When Multi-Content Support Added)
 RAPTOR (Recursive Abstractive Processing for Tree-Organized Retrieval) builds full hierarchical trees.
 **When to consider:** When expanding to support PDFs, Word docs, and mixed content collections.
 - More valuable for documents with complex nested structure
@@ -303,14 +321,13 @@ RAPTOR (Recursive Abstractive Processing for Tree-Organized Retrieval) builds fu
 **Multi-content architecture vision:**
 ```
 Collection
-├── 📹 Videos (transcripts)
-├── 📄 PDFs (extracted text + structure)
-└── 📝 Word docs (extracted text)
+├── Videos (transcripts)
+├── PDFs (extracted text + structure)
+└── Word docs (extracted text)
     ↓
 Unified chunks → Hierarchical summaries → Cross-content retrieval
 ```
 
 ### Current Limitations
-- With 100 videos and 12-chunk limit, only ~12% of videos represented in single query
-- No video-level summaries yet (relies on chunk retrieval only)
-- Single content type (videos) supported
+- Single content type (videos) supported; PDF/document support planned
+- Embedding model (`all-MiniLM-L6-v2`, 384 dims) is outdated; BGE upgrade code-ready but not deployed

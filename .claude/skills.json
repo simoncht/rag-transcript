@@ -177,6 +177,23 @@
         "manual": true
       },
       "prompt": ".claude/prompts/co-founder.md"
+    },
+    {
+      "name": "doc-drift-check",
+      "command": ".claude/skills/doc-drift-check.sh",
+      "description": "Detect documentation drift — verifies CLAUDE.md, MEMORY.md, and .env.example match actual code (service counts, config defaults, skill counts, beat schedule)",
+      "trigger": {
+        "proactive": true,
+        "patterns": [
+          "backend/app/core/config.py",
+          "backend/app/core/celery_app.py",
+          "backend/app/services/*.py",
+          "backend/app/models/*.py",
+          ".claude/skills.json",
+          "docker-compose.yml",
+          "backend/.env.example"
+        ]
+      }
     }
   ]
 }

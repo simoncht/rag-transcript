@@ -796,7 +796,7 @@ async def get_conversation(
                     relevance_score=ref.relevance_score,
                     timestamp_display=location,
                     rank=ref.rank,
-                    # Phase 1 enhancement: contextual metadata
+                    # Contextual metadata (channel, chapter, speakers)
                     speakers=chunk.speakers if chunk.speakers else None,
                     chapter_title=chunk.chapter_title if chunk.chapter_title else None,
                     channel_name=video.channel_name
@@ -1471,8 +1471,8 @@ async def send_message(
         f"[Conversation History] Reusing {len(history_messages)} messages from earlier load"
     )
 
-    # NEW: Phase 2 - Load conversation facts with multi-factor scoring
-    # (only for conversations with 10+ messages — lowered from 15 to close MEM-001 dead zone)
+    # Load conversation facts with multi-factor scoring
+    # (conversations with 10+ messages — lowered from 15 to close MEM-001 dead zone)
     facts_start = time.time()
     facts_section = ""
     selected_fact_ids = []  # Track for access reinforcement
@@ -1514,7 +1514,7 @@ async def send_message(
             f"[Conversation Facts] Skipped (message count {conversation.message_count} < 10)"
         )
 
-    # 7. Build LLM messages (streamlined prompt - Phase 2)
+    # 7. Build LLM messages
     # Determine content types present in conversation for adaptive prompting
     content_types = _get_content_types_in_conversation(video_map)
     has_documents = any(ct != "youtube" for ct in content_types)
@@ -1887,7 +1887,7 @@ async def send_message(
         chunks_retrieved=len(chunk_refs_response),
     )
 
-    # Phase 2 - Extract facts from conversation turn (background task)
+    # Extract facts from conversation turn (background task)
     try:
         from app.tasks.memory_tasks import extract_facts_from_turn
 

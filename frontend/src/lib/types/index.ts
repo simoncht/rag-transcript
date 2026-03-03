@@ -192,7 +192,7 @@ export interface ChunkReference {
   relevance_score: number;
   timestamp_display: string;
   rank: number;
-  // Phase 1 enhancement: contextual metadata
+  // Contextual metadata
   speakers?: string[] | null;
   chapter_title?: string | null;
   channel_name?: string | null;

@@ -114,7 +114,7 @@ class ChunkReference(BaseModel):
         ...,
         description="Rank/order used when labeling sources (Source 1, Source 2, etc.)",
     )
-    # Phase 1 enhancement: contextual metadata
+    # Contextual metadata
     speakers: Optional[List[str]] = Field(
         None, description="List of speaker IDs present in this chunk (if available)"
     )

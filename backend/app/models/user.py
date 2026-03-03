@@ -1,5 +1,5 @@
 """
-User model for multi-user support (Phase 5).
+User model for multi-user support with OAuth, subscriptions, and preferences.
 """
 import uuid
 from datetime import datetime
@@ -11,7 +11,7 @@ from app.db.base import Base
 
 
 class User(Base):
-    """User model - placeholder for Phase 1, full implementation in Phase 5."""
+    """User model with OAuth, subscriptions, and notification preferences."""
 
     __tablename__ = "users"
 
@@ -24,7 +24,7 @@ class User(Base):
     is_active = Column(Boolean, default=True, nullable=False)
     is_superuser = Column(Boolean, default=False, nullable=False)
 
-    # Subscription info (Phase 5)
+    # Subscription and billing
     subscription_tier = Column(
         String(50), default="free", nullable=False
     )  # free, pro, enterprise

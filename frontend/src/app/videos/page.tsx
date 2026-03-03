@@ -586,7 +586,7 @@ function VideosPageContent() {
     setOpenTranscriptVideoId((prev) => (prev === videoId ? null : videoId));
   };
 
-  // Activity status helpers for Phase 2 progress feedback
+  // Activity status helpers for processing pipeline feedback
   const getActivityStatus = (video: Video) => {
     if (!["transcribing", "downloading", "chunking", "enriching", "indexing"].includes(video.status)) {
       return null;

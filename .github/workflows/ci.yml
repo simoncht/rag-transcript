@@ -90,6 +90,21 @@ jobs:
           PYTHONPATH: .
         run: pytest tests/integration/ -v --tb=short -q
 
+  doc-drift:
+    name: Documentation Drift Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Check documentation drift
+        run: |
+          chmod +x .claude/skills/doc-drift-check.sh
+          .claude/skills/doc-drift-check.sh || echo "::warning::Documentation drift detected — run doc-drift-check.sh locally to review"
+
   frontend-typecheck:
     name: Frontend Type Check
     runs-on: ubuntu-latest

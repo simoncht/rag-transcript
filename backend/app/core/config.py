@@ -144,12 +144,12 @@ class Settings(BaseSettings):
     # RAG Configuration
     retrieval_top_k: int = 20
 
-    # RAG Relevance Filtering (Phase 1)
+    # RAG Relevance Filtering
     min_relevance_score: float = 0.50
     fallback_relevance_score: float = 0.15
     weak_context_threshold: float = 0.40
 
-    # RAG Re-ranking (Phase 2)
+    # RAG Re-ranking
     enable_reranking: bool = True
     reranking_top_k: int = 7
     reranking_model: str = "BAAI/bge-reranker-base"

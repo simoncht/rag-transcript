@@ -8,7 +8,7 @@ Next.js frontend for the RAG Transcript System.
 - Conversation creation with video selection
 - Real-time chat interface with RAG-powered responses
 - Citation tracking with timestamps and relevance scores
-- Mock authentication (placeholder for Phase 4)
+- Authentication via NextAuth.js (Google OAuth)
 
 ## Tech Stack
 
@@ -85,9 +85,9 @@ NEXT_PUBLIC_API_V1_PREFIX=/api/v1
 
 ## Development Notes
 
-### Mock Authentication
+### Authentication
 
-The current login system is a mock placeholder. It accepts any email and generates a fake token. Real authentication with JWT and OAuth will be implemented in Phase 4.
+Authentication is handled by NextAuth.js with Google OAuth. JWT tokens are generated for backend API calls via `/api/auth/token`.
 
 ### API Integration
 
@@ -111,8 +111,5 @@ All API calls are centralized in `src/lib/api/`. The API client automatically:
 
 ## Next Steps
 
-- Implement streaming responses for chat
-- Add real JWT authentication (backend required)
-- Integrate OAuth providers (Google, GitHub)
 - Add comprehensive testing
 - Optimize performance and accessibility
