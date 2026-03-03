@@ -356,7 +356,7 @@ class MemoryStressTestRunner:
                 print(f"{Colors.YELLOW}Warning: NEXTAUTH_SECRET not found in .env{Colors.END}")
                 return None
 
-            from jose import jwt as jose_jwt
+            import jwt
 
             # Find admin email from env
             admin_emails_str = os.environ.get("ADMIN_EMAILS", "")
@@ -370,7 +370,7 @@ class MemoryStressTestRunner:
                 "iat": int(now.timestamp()),
                 "exp": int((now + timedelta(hours=4)).timestamp()),
             }
-            token = jose_jwt.encode(payload, secret, algorithm="HS256")
+            token = jwt.encode(payload, secret, algorithm="HS256")
             print(f"{Colors.GREEN}OK{Colors.END} Generated JWT for {admin_email}")
             return token
         except Exception as e:

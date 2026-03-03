@@ -8,7 +8,8 @@ from datetime import datetime
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from jose import JWTError, jwt
+import jwt
+from jwt.exceptions import InvalidTokenError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -47,7 +48,7 @@ def verify_nextauth_token(token: str) -> Dict[str, Any]:
             options={"verify_aud": False},  # NextAuth doesn't use aud by default
         )
         return claims
-    except JWTError as exc:
+    except InvalidTokenError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired authorization token",
