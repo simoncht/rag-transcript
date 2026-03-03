@@ -216,14 +216,3 @@ class TranscriptionService:
         info = self.service.get_model_info()
         info["backend"] = self.backend
         return info
-
-
-# Lazy global instance — only loads model when first accessed
-_transcription_service = None
-
-
-def get_transcription_service() -> TranscriptionService:
-    global _transcription_service
-    if _transcription_service is None:
-        _transcription_service = TranscriptionService()
-    return _transcription_service

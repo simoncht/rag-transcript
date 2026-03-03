@@ -489,54 +489,6 @@ class DiscoveryService:
 
         self.db.commit()
 
-    async def auto_follow_channel(
-        self,
-        user_id: UUID,
-        channel_id: str,
-        channel_name: str,
-    ) -> Optional[DiscoverySource]:
-        """
-        Auto-follow a channel after user imports from it.
-
-        Only creates if user has imported 2+ videos from channel.
-        """
-        profile = (
-            self.db.query(UserInterestProfile)
-            .filter(UserInterestProfile.user_id == user_id)
-            .first()
-        )
-
-        if not profile:
-            return None
-
-        # Check import count for this channel
-        channels = profile.channels or []
-        for ch in channels:
-            if ch.get("channel_id") == channel_id:
-                if ch.get("import_count", 0) >= 2:
-                    # Check if not already following
-                    existing = (
-                        self.db.query(DiscoverySource)
-                        .filter(
-                            DiscoverySource.user_id == user_id,
-                            DiscoverySource.source_type == "youtube_channel",
-                            DiscoverySource.source_identifier == channel_id,
-                        )
-                        .first()
-                    )
-                    if existing:
-                        return existing
-
-                    # Create auto-follow
-                    return await self.subscribe(
-                        user_id=user_id,
-                        source_type="youtube_channel",
-                        source_identifier=channel_id,
-                        is_explicit=False,
-                        config={"auto_follow": True},
-                    )
-
-        return None
 
 
 # Convenience function

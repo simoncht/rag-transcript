@@ -253,15 +253,3 @@ class RelevanceGraderService:
             for g in grading_result.graded_chunks
             if g.grade in (RelevanceGrade.RELEVANT, RelevanceGrade.PARTIALLY_RELEVANT)
         ]
-
-
-# Global instance
-_relevance_grader: Optional[RelevanceGraderService] = None
-
-
-def get_relevance_grader() -> RelevanceGraderService:
-    """Get or create global relevance grader instance."""
-    global _relevance_grader
-    if _relevance_grader is None:
-        _relevance_grader = RelevanceGraderService()
-    return _relevance_grader

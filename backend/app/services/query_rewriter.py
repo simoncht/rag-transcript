@@ -225,15 +225,3 @@ Standalone Question:"""
             lines.append(f"{role}: {content}")
 
         return "\n".join(lines)
-
-
-# Global instance
-_query_rewriter_service: Optional[QueryRewriterService] = None
-
-
-def get_query_rewriter_service() -> QueryRewriterService:
-    """Get or create global query rewriter service instance."""
-    global _query_rewriter_service
-    if _query_rewriter_service is None:
-        _query_rewriter_service = QueryRewriterService()
-    return _query_rewriter_service

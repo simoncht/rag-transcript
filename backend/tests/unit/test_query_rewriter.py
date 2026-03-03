@@ -13,7 +13,6 @@ from unittest.mock import MagicMock, patch
 from app.services.query_rewriter import (
     QueryRewriterService,
     needs_rewriting,
-    get_query_rewriter_service,
 )
 
 
@@ -246,22 +245,6 @@ class TestQueryRewriterService:
         prompt = call_args[1]["messages"][0].content if call_args else ""
         # The 1000-char message should be truncated to 500 + "..."
         assert "..." in prompt or len(prompt) < len(long_content) + 500
-
-
-class TestGetQueryRewriterService:
-    """Tests for the global service getter."""
-
-    def test_returns_singleton(self):
-        """Should return same instance on repeated calls."""
-        # Reset global instance for test
-        import app.services.query_rewriter as module
-
-        module._query_rewriter_service = None
-
-        service1 = get_query_rewriter_service()
-        service2 = get_query_rewriter_service()
-
-        assert service1 is service2
 
 
 class TestIntegrationScenarios:

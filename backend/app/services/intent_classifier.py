@@ -332,12 +332,3 @@ class IntentClassifier:
             confidence=0.4,
             reasoning="Default to precision (no clear signals)",
         )
-
-
-# Global service instance
-intent_classifier = IntentClassifier()
-
-
-def get_intent_classifier() -> IntentClassifier:
-    """Get intent classifier instance."""
-    return intent_classifier

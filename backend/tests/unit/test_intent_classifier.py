@@ -17,7 +17,6 @@ from app.services.intent_classifier import (
     IntentClassifier,
     QueryIntent,
     IntentClassification,
-    get_intent_classifier,
 )
 
 
@@ -574,16 +573,6 @@ class TestCrossSourceThreshold:
             num_videos=3,
         )
         assert result.intent == QueryIntent.COVERAGE
-
-
-class TestGetIntentClassifier:
-    """Tests for the global service getter."""
-
-    def test_returns_singleton(self):
-        """Should return same instance on repeated calls."""
-        classifier1 = get_intent_classifier()
-        classifier2 = get_intent_classifier()
-        assert classifier1 is classifier2
 
 
 class TestPatternCollisionGuards:
