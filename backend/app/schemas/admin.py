@@ -209,26 +209,6 @@ class QuotaRecalculateResponse(BaseModel):
     )
 
 
-class AdminNoteCreateRequest(BaseModel):
-    """Request to add an admin note to a user."""
-
-    note: str = Field(..., min_length=1, max_length=1000)
-
-
-class AdminNote(BaseModel):
-    """Admin note attached to a user."""
-
-    id: UUID
-    user_id: UUID
-    admin_id: UUID
-    admin_email: str
-    note: str
-    created_at: datetime
-
-    class Config:
-        from_attributes = True
-
-
 # Dashboard Schemas
 
 
@@ -289,49 +269,6 @@ class DashboardResponse(BaseModel):
     system_stats: SystemStats
     engagement_stats: UserEngagementStats
     generated_at: datetime = Field(default_factory=datetime.utcnow)
-
-
-# Activity Log Schemas
-
-
-class UserActivityLog(BaseModel):
-    """User activity log entry."""
-
-    id: UUID
-    user_id: UUID
-    event_type: str
-    event_metadata: dict
-    created_at: datetime
-
-    class Config:
-        from_attributes = True
-
-
-class UserActivityResponse(BaseModel):
-    """Response with user activity logs."""
-
-    total: int
-    logs: List[UserActivityLog]
-
-
-# Error Log Schemas
-
-
-class UserErrorLog(BaseModel):
-    """Error log for a user."""
-
-    timestamp: datetime
-    error_type: str
-    error_message: str
-    video_id: Optional[UUID] = None
-    conversation_id: Optional[UUID] = None
-
-
-class UserErrorResponse(BaseModel):
-    """Response with user error logs."""
-
-    total: int
-    errors: List[UserErrorLog]
 
 
 # Abuse Detection Schemas

@@ -24,15 +24,6 @@ THEME_CACHE_TTL_SECONDS = 3600  # 1 hour
 MAX_THEMES_PER_COLLECTION = 20
 
 
-class ThemeItem:
-    """A single aggregated theme with frequency and source videos."""
-
-    def __init__(self, topic: str, count: int, video_ids: list[UUID]):
-        self.topic = topic
-        self.count = count
-        self.video_ids = video_ids
-
-
 class ThemeService:
     """Aggregates and caches themes for collections."""
 

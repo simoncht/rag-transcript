@@ -20,47 +20,6 @@ class VideoIngestRequest(BaseModel):
 
 
 # Response schemas
-class VideoMetadata(BaseModel):
-    """Video metadata."""
-
-    id: UUID
-    youtube_id: str
-    youtube_url: str
-    title: str
-    description: Optional[str] = None
-    channel_name: Optional[str] = None
-    channel_id: Optional[str] = None
-    thumbnail_url: Optional[str] = None
-    duration_seconds: Optional[int] = None
-    upload_date: Optional[datetime] = None
-    view_count: Optional[int] = None
-    like_count: Optional[int] = None
-    language: Optional[str] = None
-    chapters: Optional[List[Dict]] = None
-
-    class Config:
-        from_attributes = True
-
-
-class VideoStatus(BaseModel):
-    """Video processing status."""
-
-    id: UUID
-    status: str = Field(
-        ...,
-        description="Processing status: pending, downloading, transcribing, chunking, enriching, indexing, completed, failed, canceled",
-    )
-    progress_percent: float = Field(
-        ..., ge=0, le=100, description="Processing progress percentage"
-    )
-    error_message: Optional[str] = None
-    created_at: datetime
-    completed_at: Optional[datetime] = None
-
-    class Config:
-        from_attributes = True
-
-
 class VideoDetail(BaseModel):
     """Detailed video information."""
 

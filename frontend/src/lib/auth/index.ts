@@ -6,7 +6,7 @@
  */
 
 // Types & Interfaces (ISP - Interface Segregation)
-export type { AuthState, AuthUser, IAuthProvider, ParallelResult } from "./types";
+export type { AuthState, AuthUser, IAuthProvider } from "./types";
 
 // Context & Hooks (DI - Dependency Injection)
 export { AuthProvider, useAuth, useAuthState } from "./AuthContext";

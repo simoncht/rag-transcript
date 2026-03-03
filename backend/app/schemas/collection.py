@@ -189,21 +189,3 @@ class SimilarVideosResponse(BaseModel):
     similar_videos: List[SimilarVideoItem]
 
 
-class VideoWithCollections(BaseModel):
-    """Video/document info with its collections."""
-
-    id: UUID
-    title: str
-    youtube_id: Optional[str] = None
-    content_type: Optional[str] = None
-    duration_seconds: Optional[int]
-    status: str
-    thumbnail_url: Optional[str]
-    tags: List[str]
-    collections: List[CollectionSummary] = Field(
-        default_factory=list, description="Collections this video belongs to"
-    )
-    created_at: datetime
-
-    class Config:
-        from_attributes = True

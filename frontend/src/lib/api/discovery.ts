@@ -91,11 +91,6 @@ export const discoveryApi = {
     return response.data;
   },
 
-  async getSource(sourceId: string): Promise<DiscoverySource> {
-    const response = await apiClient.get(`/discovery/sources/${sourceId}`);
-    return response.data;
-  },
-
   async createSource(
     request: DiscoverySourceCreateRequest
   ): Promise<DiscoverySource> {

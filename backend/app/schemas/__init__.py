@@ -4,8 +4,6 @@ Pydantic schemas for API request/response validation.
 from app.schemas.video import (
     VideoIngestRequest,
     VideoIngestResponse,
-    VideoMetadata,
-    VideoStatus,
     VideoDetail,
     VideoList,
     VideoDeleteRequest,
@@ -50,7 +48,6 @@ from app.schemas.collection import (
     CollectionSummary,
     CollectionDetail,
     CollectionList,
-    VideoWithCollections,
     ThemeItem,
     CollectionThemesResponse,
     SimilarVideoItem,
@@ -80,15 +77,9 @@ from app.schemas.admin import (
     UserUpdateRequest,
     QuotaOverrideRequest,
     QuotaRecalculateResponse,
-    AdminNoteCreateRequest,
-    AdminNote,
     SystemStats,
     UserEngagementStats,
     DashboardResponse,
-    UserActivityLog,
-    UserActivityResponse,
-    UserErrorLog,
-    UserErrorResponse,
     AbuseAlert,
     AbuseAlertResponse,
     QAFeedItem,
@@ -108,8 +99,6 @@ from app.schemas.admin import (
 from app.schemas.subscription import (
     SubscriptionTier,
     SubscriptionStatus,
-    SubscriptionCreate,
-    SubscriptionUpdate,
     SubscriptionDetail,
     CheckoutSessionRequest,
     CheckoutSessionResponse,
@@ -143,16 +132,6 @@ from app.schemas.discovery import (
     RecommendationResponse,
 )
 
-# Quota schemas
-from app.schemas.quota import (
-    QuotaTypeInfo,
-    QuotaUsageInfo,
-    QuotaCheckResult,
-    AllQuotasResponse,
-    TierQuotaLimitsResponse,
-    AdminQuotaOverride,
-)
-
 # Notification schemas
 from app.schemas.notification import (
     NotificationResponse,
@@ -182,8 +161,6 @@ __all__ = [
     # Video
     "VideoIngestRequest",
     "VideoIngestResponse",
-    "VideoMetadata",
-    "VideoStatus",
     "VideoDetail",
     "VideoList",
     "VideoDeleteRequest",
@@ -224,7 +201,6 @@ __all__ = [
     "CollectionSummary",
     "CollectionDetail",
     "CollectionList",
-    "VideoWithCollections",
     "ThemeItem",
     "CollectionThemesResponse",
     "SimilarVideoItem",
@@ -251,15 +227,9 @@ __all__ = [
     "UserUpdateRequest",
     "QuotaOverrideRequest",
     "QuotaRecalculateResponse",
-    "AdminNoteCreateRequest",
-    "AdminNote",
     "SystemStats",
     "UserEngagementStats",
     "DashboardResponse",
-    "UserActivityLog",
-    "UserActivityResponse",
-    "UserErrorLog",
-    "UserErrorResponse",
     "AbuseAlert",
     "AbuseAlertResponse",
     "QAFeedItem",
@@ -278,8 +248,6 @@ __all__ = [
     # Subscription
     "SubscriptionTier",
     "SubscriptionStatus",
-    "SubscriptionCreate",
-    "SubscriptionUpdate",
     "SubscriptionDetail",
     "CheckoutSessionRequest",
     "CheckoutSessionResponse",
@@ -308,13 +276,6 @@ __all__ = [
     "ChannelInfoResponse",
     "RecommendationItem",
     "RecommendationResponse",
-    # Quota
-    "QuotaTypeInfo",
-    "QuotaUsageInfo",
-    "QuotaCheckResult",
-    "AllQuotasResponse",
-    "TierQuotaLimitsResponse",
-    "AdminQuotaOverride",
     # Notification
     "NotificationResponse",
     "NotificationList",

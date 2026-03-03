@@ -18,25 +18,6 @@ class SubscriptionBase(BaseModel):
     status: SubscriptionStatus
 
 
-class SubscriptionCreate(BaseModel):
-    """Schema for creating a subscription."""
-    user_id: uuid.UUID
-    tier: SubscriptionTier
-    stripe_customer_id: str
-    stripe_price_id: str
-    stripe_subscription_id: Optional[str] = None
-
-
-class SubscriptionUpdate(BaseModel):
-    """Schema for updating a subscription."""
-    status: Optional[SubscriptionStatus] = None
-    tier: Optional[SubscriptionTier] = None
-    current_period_start: Optional[datetime] = None
-    current_period_end: Optional[datetime] = None
-    cancel_at_period_end: Optional[bool] = None
-    canceled_at: Optional[datetime] = None
-
-
 class SubscriptionDetail(SubscriptionBase):
     """Detailed subscription information."""
     id: uuid.UUID
