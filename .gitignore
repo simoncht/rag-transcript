@@ -60,8 +60,10 @@ nul
 # Storage (local development)
 storage/audio/*
 storage/transcripts/*
+storage/documents/*
 !storage/audio/.gitkeep
 !storage/transcripts/.gitkeep
+!storage/documents/.gitkeep
 
 # Docker volumes
 postgres_data/
